@@ -10,7 +10,7 @@
  * photo-intake handler; a pinned event travels as the existing plus-address
  * override, exactly as `photos+<slug>@` does for email.
  */
-import { and, gte, inArray, isNotNull, isNull, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte } from "drizzle-orm";
 import { PUBLIC_EVENT_STATUSES } from "@takemetothefair/constants";
 import { chunkedInArray } from "@takemetothefair/utils";
 import { eventDays, events, venues } from "@/lib/db/schema";
@@ -32,7 +32,8 @@ export interface NearbyEvent {
   slug: string;
   name: string;
   venueName: string;
-  distanceMiles: number;
+  /** Miles from the phone; null in the location-free list (findEventsOnDate). */
+  distanceMiles: number | null;
   /** Within SNAP_AT_VENUE_MILES — what the resolver would match by GPS. */
   atVenue: boolean;
 }
@@ -148,4 +149,68 @@ export async function findNearbyEvents(
     })
     .sort((a, b) => a.distanceMiles - b.distanceMiles)
     .slice(0, 12);
+}
+
+/** Upper bound on the location-free list; a summer Saturday is well under it. */
+export const SNAP_DAY_LIST_MAX = 200;
+
+/**
+ * OPE-1549 — every public event running on `localDate`, NO location needed,
+ * alphabetical. The snap page's "Pick the fair" list must work with location
+ * denied or unavailable; before this the picker only ever held the GPS-nearby
+ * list, so with no fix it offered nothing but "Let the server decide".
+ */
+export async function findEventsOnDate(db: Db, localDate: string): Promise<NearbyEvent[]> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(localDate)) return [];
+  const dayMs = Date.parse(`${localDate}T00:00:00Z`);
+  if (Number.isNaN(dayMs)) return [];
+  const rows = await db
+    .select({
+      id: events.id,
+      slug: events.slug,
+      name: events.name,
+      startDate: events.startDate,
+      endDate: events.endDate,
+      venueName: venues.name,
+      venueCity: venues.city,
+      venueState: venues.state,
+    })
+    .from(events)
+    .leftJoin(venues, eq(events.venueId, venues.id))
+    .where(
+      and(
+        inArray(events.status, [...PUBLIC_EVENT_STATUSES]),
+        isNull(events.mergedInto),
+        gte(events.startDate, new Date(dayMs - MAX_EVENT_SPAN_DAYS * 86_400_000)),
+        lte(events.startDate, new Date(dayMs + 86_400_000))
+      )
+    );
+  if (rows.length === 0) return [];
+
+  const days = await chunkedInArray(
+    rows.map((r) => r.id),
+    (batch) =>
+      db
+        .select({ eventId: eventDays.eventId, date: eventDays.date })
+        .from(eventDays)
+        .where(inArray(eventDays.eventId, batch))
+  );
+  const daysByEvent = new Map<string, string[]>();
+  for (const d of days) daysByEvent.set(d.eventId, [...(daysByEvent.get(d.eventId) ?? []), d.date]);
+
+  return rows
+    .filter((r) => runsOn(localDate, daysByEvent.get(r.id) ?? [], r.startDate, r.endDate))
+    .map((r) => ({
+      id: r.id,
+      slug: r.slug,
+      name: r.name,
+      venueName:
+        [r.venueName, [r.venueCity, r.venueState].filter(Boolean).join(", ")]
+          .filter(Boolean)
+          .join(" · ") || "Venue not set",
+      distanceMiles: null,
+      atVenue: false,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, SNAP_DAY_LIST_MAX);
 }

@@ -40,7 +40,18 @@ async function loginAsVendor(page: Page) {
   ]);
 }
 
-test.describe.configure({ mode: "serial" });
+// OPE-1518 — E2E runs against `next dev`, which compiles each route on its
+// first request. This test is the first to touch several of them: the vendor
+// profile page, `GET /api/vendor/profile` (the form stays a skeleton until it
+// returns — page.tsx's `loading` branch), and `POST`/`DELETE
+// /api/vendor-photos/logo`. On a loaded CI runner those first compiles ran past
+// the 5s expect default and the 30s test default: the failure snapshot showed
+// the vendor logged in, the layout rendered, and no form yet. COLD is the wait
+// for anything that can be a route's first request; the budget covers four of
+// them plus retries' reloads.
+const COLD = { timeout: 20_000 };
+
+test.describe.configure({ mode: "serial", timeout: 120_000 });
 
 test.describe("OPE-1112 — vendor self-service logo", () => {
   test("upload, replace, then remove — as the vendor, through the profile page", async ({
@@ -53,7 +64,7 @@ test.describe("OPE-1112 — vendor self-service logo", () => {
     // The form must LOAD the vendor's own data. Until OPE-1112 it threw on
     // `products` before seeding the form, so every field — logo included —
     // rendered blank for every vendor, and nothing below could be trusted.
-    await expect(page.locator('input[name="businessName"]')).toHaveValue("Artisan Crafts");
+    await expect(page.locator('input[name="businessName"]')).toHaveValue("Artisan Crafts", COLD);
     await expect(page.locator('input[name="products"], textarea[name="products"]')).toHaveValue(
       "Pottery, Jewelry, Woodwork"
     );
@@ -65,7 +76,7 @@ test.describe("OPE-1112 — vendor self-service logo", () => {
     if (await removeButton.isVisible()) {
       await removeButton.click();
       await page.getByRole("button", { name: "Remove" }).last().click();
-      await expect(page.getByText("Upload logo")).toBeVisible();
+      await expect(page.getByText("Upload logo")).toBeVisible(COLD);
     }
 
     await expect(page.getByText("Upload logo")).toBeVisible();
@@ -76,7 +87,7 @@ test.describe("OPE-1112 — vendor self-service logo", () => {
     );
     await fileInput.setInputFiles({ name: "logo.png", mimeType: "image/png", buffer: PNG });
     expect((await uploaded).status()).toBe(200);
-    await expect(page.getByText("Replace logo")).toBeVisible();
+    await expect(page.getByText("Replace logo")).toBeVisible(COLD);
     await expect(removeButton).toBeVisible();
 
     // Replace — the same control, now labelled Replace.
@@ -89,7 +100,7 @@ test.describe("OPE-1112 — vendor self-service logo", () => {
 
     // Survives a reload: the page reads the logo back from the server.
     await page.reload();
-    await expect(page.getByText("Replace logo")).toBeVisible();
+    await expect(page.getByText("Replace logo")).toBeVisible(COLD);
 
     // Remove (ConfirmButton: click, then confirm).
     const removed = page.waitForResponse(
@@ -98,9 +109,9 @@ test.describe("OPE-1112 — vendor self-service logo", () => {
     await removeButton.click();
     await page.getByRole("button", { name: "Remove" }).last().click();
     expect((await removed).status()).toBe(200);
-    await expect(page.getByText("Upload logo")).toBeVisible();
+    await expect(page.getByText("Upload logo")).toBeVisible(COLD);
 
     await page.reload();
-    await expect(page.getByText("Upload logo")).toBeVisible();
+    await expect(page.getByText("Upload logo")).toBeVisible(COLD);
   });
 });

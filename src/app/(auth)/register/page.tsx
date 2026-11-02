@@ -8,6 +8,7 @@ import Script from "next/script";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { FormErrorSummary } from "@/components/ui/form-error-summary";
 import {
@@ -522,9 +523,9 @@ function RegisterForm() {
               required
             />
 
-            <Input
+            <PasswordInput
               label="Password"
-              type="password"
+              autoComplete="new-password"
               name="password"
               value={formData.password}
               onChange={handleChange}
@@ -534,9 +535,9 @@ function RegisterForm() {
               required
             />
 
-            <Input
+            <PasswordInput
               label="Confirm Password"
-              type="password"
+              autoComplete="new-password"
               name="confirmPassword"
               value={formData.confirmPassword}
               onChange={handleChange}

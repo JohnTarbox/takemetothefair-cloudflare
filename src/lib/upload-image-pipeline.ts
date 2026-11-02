@@ -38,6 +38,11 @@ import { recordMutation } from "@/lib/audit/record-mutation";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { sha256Hex } from "@takemetothefair/db-schema";
 import {
+  identifyUnsupportedImageFormat,
+  unsupportedImageFormatForMime,
+  unsupportedImageMessage,
+} from "@takemetothefair/utils";
+import {
   stripExifFromJpeg,
   readJpegOrientation,
   transformViaCloudflare,
@@ -273,6 +278,54 @@ function extensionFor(contentType: string): string | null {
   }
 }
 
+/**
+ * OPE-1550 — the refusal for bytes that are no accepted format. Names the format
+ * when it is one we recognise (JPEG XL, AVIF, HEIC, TIFF, BMP) so the person
+ * uploading knows what to do; falls back to the generic text otherwise.
+ * Exported for the two legacy admin routes that now sniff too.
+ */
+export function describeRefusedImageBytes(bytes: Uint8Array): string {
+  const known = identifyUnsupportedImageFormat(bytes);
+  return known
+    ? unsupportedImageMessage(known)
+    : "File bytes don't match any supported image format";
+}
+
+/**
+ * The byte-level gate: the bytes must be an accepted format AND the format the
+ * caller declared. Returns the refusal text, or null when the bytes are fine.
+ *
+ * OPE-1550 — extracted so the two legacy admin routes
+ * (`/api/admin/events/[id]/upload-image`, `/api/admin/vendors/[id]/upload-logo`)
+ * run the same check. They used to trust the browser's `file.type` alone, so a
+ * JPEG XL file renamed `.jpg` (browsers type a file by its extension) was stored
+ * as `image/jpeg` — a 200 for an object that Cloudflare's transform can't read
+ * and most browsers can't draw. `upload_event_image` forwards a fetched URL's
+ * Content-Type to the first of those routes, so a mislabelled remote JXL took
+ * the same path.
+ */
+export function validateImageBytes(bytes: Uint8Array, declaredType: string): string | null {
+  const detected = detectMagicBytes(bytes);
+  if (!detected) return describeRefusedImageBytes(bytes);
+  const norm = (t: string) => (t === "image/jpg" ? "image/jpeg" : t);
+  if (norm(detected) !== norm(declaredType)) {
+    return `Content-type mismatch: declared "${declaredType}" but bytes look like "${detected}".`;
+  }
+  return null;
+}
+
+/**
+ * OPE-1550 — the refusal for a DECLARED type outside PIPELINE_ALLOWED_TYPES,
+ * shared by every route that checks the declared type before reading bytes.
+ * Names the format when it's a known image type ("image/jxl" → JPEG XL).
+ */
+export function describeRefusedDeclaredType(declaredType: string): string {
+  const known = unsupportedImageFormatForMime(declaredType);
+  return known
+    ? unsupportedImageMessage(known)
+    : `Unsupported content_type "${declaredType || "unknown"}". Allowed: jpg/png/webp/svg.`;
+}
+
 /** Magic-byte sniff. Returns the detected content type or null if the
  *  bytes don't match any allowed image format. Catches the declared-jpeg-
  *  but-actually-SVG attack the analyst's spec called out. */
@@ -329,23 +382,9 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
     args;
   let bytes = args.bytes;
 
-  const detected = detectMagicBytes(bytes);
-  if (!detected) {
-    return {
-      ok: false,
-      status: 400,
-      body: { error: "File bytes don't match any supported image format" },
-    };
-  }
-  const norm = (t: string) => (t === "image/jpg" ? "image/jpeg" : t);
-  if (norm(detected) !== norm(declaredType)) {
-    return {
-      ok: false,
-      status: 400,
-      body: {
-        error: `Content-type mismatch: declared "${declaredType}" but bytes look like "${detected}".`,
-      },
-    };
+  const byteError = validateImageBytes(bytes, declaredType);
+  if (byteError) {
+    return { ok: false, status: 400, body: { error: byteError } };
   }
 
   const ext = extensionFor(declaredType);

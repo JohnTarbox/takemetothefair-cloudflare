@@ -285,6 +285,16 @@ export async function POST(request: NextRequest) {
         : data.source === "email"
           ? ["community-suggestion", "email-submission"]
           : ["community-suggestion"];
+    // OPE-1558 — mark the no-login form's rows so "how many self-listed events
+    // got published" is a query on a stored tag. Community submissions only: an
+    // internal or vendor caller has no business claiming this form.
+    if (
+      data.intakeForm === "list-your-event" &&
+      !isInternal &&
+      (data.source ?? "community") === "community"
+    ) {
+      tagList.push("list-your-event");
+    }
 
     // Gate URLs against the domain classification table — community/vendor
     // submissions can include arbitrary URLs, so we filter aggregator domains
@@ -1041,6 +1051,11 @@ export async function POST(request: NextRequest) {
       // content against the EXISTING event (report-only), rather than leaving it
       // only on a PENDING twin an operator will reject.
       possibleDuplicateOf: possibleDuplicateOf ?? null,
+      // OPE-1558 — whether a receipt email was actually queued, so a form can
+      // say "check your inbox" only when there is something to check. False for
+      // the rate-limited second submission in an hour, a suppressed address, or
+      // the ack flag being off — all real outcomes the page must not paper over.
+      receiptSent: ackOutcome === "sent",
     });
   } catch (error) {
     await logError(db, {

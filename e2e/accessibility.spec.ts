@@ -80,8 +80,10 @@ test.describe("Keyboard Navigation - Form Inputs", () => {
     const passwordInput = page.locator('input[type="password"]').first();
     await expect(passwordInput).toBeFocused();
 
-    // After password the form has a "Forgot password?" link before submit, so
-    // two Tabs are needed to reach the submit button.
+    // Next is the password field's show/hide toggle (OPE-1548) — it must be
+    // keyboard-reachable — then the "Forgot password?" link, then submit.
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("button", { name: "Show password" })).toBeFocused();
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
     const submitButton = page.locator('button[type="submit"]').first();

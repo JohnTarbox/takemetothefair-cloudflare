@@ -25,6 +25,7 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { describeRefusedDeclaredType, validateImageBytes } from "@/lib/upload-image-pipeline";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB — events tend to want larger banners than vendor logos.
@@ -99,10 +100,15 @@ export const POST = withAuthorized<{ id: string }>(async ({ request, db, params,
 
   const contentType = file.type || "application/octet-stream";
   if (!ALLOWED_TYPES.has(contentType)) {
-    return NextResponse.json(
-      { error: `Unsupported content type "${contentType}". Allowed: jpg/png/webp/svg.` },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: describeRefusedDeclaredType(contentType) }, { status: 400 });
+  }
+
+  // OPE-1550 — check the BYTES, not just the browser's label. A JPEG XL file
+  // renamed .jpg arrives typed image/jpeg and used to be stored as one.
+  const body = await file.arrayBuffer();
+  const byteError = validateImageBytes(new Uint8Array(body), contentType);
+  if (byteError) {
+    return NextResponse.json({ error: byteError }, { status: 400 });
   }
 
   const ext = extensionFor(contentType);
@@ -126,7 +132,6 @@ export const POST = withAuthorized<{ id: string }>(async ({ request, db, params,
   const key = `events/${id}/image-${Date.now()}.${ext}`;
 
   try {
-    const body = await file.arrayBuffer();
     await bucket.put(key, body, {
       httpMetadata: { contentType },
       customMetadata: { uploadedBy: actorId, originalName: file.name },

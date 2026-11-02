@@ -17,6 +17,7 @@ import type { ReplyKind, ReplyParams } from "./email-handlers/types.js";
 import { resolveReplyKind, type InboundFacts } from "./email-handlers/template-assertions.js";
 // OPE-431 — one definition of "may this event URL go in an email".
 import { isEmailableEventStatus } from "./email-handlers/public-event-url.js";
+import { replySubject } from "@takemetothefair/utils";
 
 interface EmailJobMessage {
   to: string;
@@ -68,7 +69,7 @@ export function buildReply(
   params: ReplyParams = {}
 ): EmailJobMessage {
   const subjectIn = (params.subject as string | undefined) ?? "";
-  const replySubject = `Re: ${subjectIn || "your message"}`.slice(0, 200);
+  const replySubjectLine = replySubject(subjectIn).slice(0, 200);
 
   // OPE-771 — refuse to render a template whose factual claim about the inbound
   // is contradicted by the inbound row itself.
@@ -98,7 +99,7 @@ export function buildReply(
 
   return {
     to,
-    subject: replySubject,
+    subject: replySubjectLine,
     text,
     html,
     // The ledger records what was actually SENT, not what was asked for.

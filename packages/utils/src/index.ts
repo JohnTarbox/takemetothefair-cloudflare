@@ -701,3 +701,5 @@ export * from "./vendor-application-rules";
 export * from "./scraper-sync-lock";
 // OPE-1512 — "vendors wanted" call: category-list normalizer + is-current rule (app + MCP).
 export * from "./vendor-call";
+// OPE-1550 — name a refused image format (JPEG XL first) so no refusal is anonymous.
+export * from "./unsupported-image-format";

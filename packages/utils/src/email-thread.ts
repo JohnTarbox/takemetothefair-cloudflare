@@ -87,6 +87,31 @@ export function normalizeThreadSubject(subject: string | null | undefined): stri
   return s.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+/**
+ * OPE-1540: a reply prefix that is already there. Matches `Re:`, `RE:`, `re:`,
+ * `Re[2]:` and the common localised forms `AW:` (German) and `SV:`
+ * (Scandinavian), case-insensitive, ignoring leading whitespace. `Fwd:` is
+ * deliberately absent, because the reply to "Fwd: X" is "Re: Fwd: X".
+ */
+const REPLY_PREFIX = /^\s*(re|aw|sv)\s*(\[\d+\])?\s*:/i;
+
+/**
+ * OPE-1540: the default subject for a reply to `subject`.
+ *
+ * Every outbound reply path used to build this as `Re: ${subject}`, so a reply
+ * into an ongoing thread went out as "Re: Re: …". John's 2026-10-29 reply to
+ * inbound `a41d30aa` is the specimen. A subject that already carries a reply
+ * prefix comes back unchanged. A blank or missing subject gets `Re: <fallback>`
+ * instead of a bare "Re: ". Callers still apply their own length cap.
+ */
+export function replySubject(
+  subject: string | null | undefined,
+  fallback = "your message"
+): string {
+  if (!subject || !subject.trim()) return `Re: ${fallback}`;
+  return REPLY_PREFIX.test(subject) ? subject : `Re: ${subject}`;
+}
+
 /** Bare lower-cased address from `"Jane <jane@x.com>"` or `jane@x.com`. */
 function extractAddress(a: string | null | undefined): string {
   const v = (a ?? "").trim().toLowerCase();
