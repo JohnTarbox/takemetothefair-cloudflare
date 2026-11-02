@@ -175,6 +175,8 @@ async function getSeriesLandingOnce(slug: string): Promise<SeriesLanding | null>
         openTime: eventDays.openTime,
         closeTime: eventDays.closeTime,
         closed: eventDays.closed,
+        // OPE-1563 — read by isPublicEventDay so a setup row can't set a start.
+        vendorOnly: eventDays.vendorOnly,
       })
       .from(eventDays)
       .where(inArray(eventDays.eventId, ids.slice(i, i + 50)));
