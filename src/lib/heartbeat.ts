@@ -160,6 +160,30 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1558 — the no-login /list-your-event form beacons `list_view` on every
+    // mount (funnel-steps.ts `list`). A page that still renders but whose
+    // beacon silently stopped (allowlist drift, a client error before the
+    // effect) would read as "nobody came", which is the one reading this
+    // funnel exists to rule out.
+    //
+    // Seeded DORMANT (drizzle/0388, enabled_at NULL): the page ships noindex
+    // and unlinked — OPE-1559 owns the nav CTA and indexing, gated on John — so
+    // real traffic is ~0 and a live window would false-fire. ARMING CONDITION:
+    // set enabled_at the day OPE-1559's nav/contextual CTA ships.
+    name: "list-your-event-view",
+    ownerOpe: "OPE-1558",
+    label: "No-login /list-your-event form records its page views",
+    priority: "P1",
+    expectedWindowHours: 7 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        analyticsEvents,
+        analyticsEvents.timestamp,
+        eq(analyticsEvents.eventName, "list_view")
+      ),
+  },
+  {
     // OPE-1480 — proof that venue CREATION still pulls Google's accessibility +
     // parking (geocodeNewVenue → fillVenueGoogleAmenities), so the OPE-1479
     // "About the venue (from Google)" line does not decay into "Not published"
