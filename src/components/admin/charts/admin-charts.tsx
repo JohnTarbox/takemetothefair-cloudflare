@@ -28,13 +28,6 @@ export function MilestoneEChart({ points }: { points: MilestoneChartPoint[] }) {
   return (
     <>
       <EChart buildOption={build} height={260} ariaLabel="Search clicks milestone growth chart" />
-      {/* OPE-602 defect 3 / OPE-1565 — stated, not hidden: the points are
-          evenly spaced by milestone. 10 of the 42 plotted dates on 2026-11-02
-          had no independent source, so date-spacing would look more precise
-          than the data is. */}
-      <p className="mt-1 text-xs text-muted-foreground">
-        Points are evenly spaced by milestone, not by date. Hover a point for its date.
-      </p>
     </>
   );
 }

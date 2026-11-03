@@ -44,6 +44,8 @@ const thresholds = [
 ];
 const LIVE_SHAPE: MilestoneChartPoint[] = thresholds.map((t, i) => ({
   threshold: t,
+  // 2026-05-01 + 3i days — strictly increasing, uneven gaps not needed here.
+  date: new Date(Date.UTC(2026, 4, 1 + i * 3)).toISOString().slice(0, 10),
   dateLabel: `Day ${i + 1}`,
   derived: i % 2 === 0,
 }));
@@ -63,10 +65,13 @@ describe("milestoneChartOption (OPE-1565)", () => {
     expect(o.xAxis.axisLabel.hideOverlap).toBe(true);
   });
 
-  it("x axis is index-spaced (category) — the measured reached_date gap", () => {
+  it("x axis is date-spaced (time): each point sits at its reached date (John, 2026-11-02)", () => {
     const o = milestoneChartOption(LIVE_SHAPE, WIDE);
-    expect(o.xAxis.type).toBe("category");
-    expect(o.xAxis.data).toHaveLength(42);
+    expect(o.xAxis.type).toBe("time");
+    const data = o.series[0].data;
+    expect(data).toHaveLength(42);
+    expect(data[0].value).toEqual(["2026-05-01", 100]);
+    expect(data[41].value).toEqual([LIVE_SHAPE[41].date, 31000]);
   });
 
   it("the last point is labelled by endLabel only, so 29,000 and 31,000 cannot overprint", () => {

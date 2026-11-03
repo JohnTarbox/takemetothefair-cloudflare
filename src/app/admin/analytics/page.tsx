@@ -2121,6 +2121,7 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
     <MilestoneEChart
       points={points.map((p) => ({
         threshold: p.threshold,
+        date: p.date,
         dateLabel: formatDateOnly(p.date) || p.date,
         derived: p.derived,
       }))}

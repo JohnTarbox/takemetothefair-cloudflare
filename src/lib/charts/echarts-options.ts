@@ -72,6 +72,8 @@ export function niceCeil(v: number): number {
 
 export interface MilestoneChartPoint {
   threshold: number;
+  /** ISO calendar date (YYYY-MM-DD) the milestone was reached — the x position. */
+  date: string;
   /** Pre-formatted on the server ("Sep 19, 2026"). */
   dateLabel: string;
   /** True = crossing derived from our daily totals (hollow); false = Google badge. */
@@ -79,11 +81,12 @@ export interface MilestoneChartPoint {
 }
 
 /**
- * X axis is a CATEGORY (index-spaced), not time. OPE-1565 measured prod on
- * 2026-11-02: 10 of the 42 plotted points carry a date nothing independent
+ * X axis is TIME (date-spaced). OPE-1565 first shipped it index-spaced because
+ * 10 of the 42 plotted points (2026-11-02) carry a date nothing independent
  * establishes (2 NULL `reached_date`, 8 with `reached_date = email_date` and no
- * derived crossing). Date-spacing would look more precise than the data is —
- * the ticket's own rule: "if not trustworthy, keep index spacing".
+ * derived crossing). John ruled 2026-11-02 to date-space anyway: a few days of
+ * error on those points is smaller than index spacing's distortion of the whole
+ * curve (it put "Aug 8" at the midpoint of a May→Sep series).
  */
 export function milestoneChartOption(points: MilestoneChartPoint[], ctx: ChartCtx) {
   const p = chartPalette(ctx.dark);
@@ -98,19 +101,21 @@ export function milestoneChartOption(points: MilestoneChartPoint[], ctx: ChartCt
     tooltip: {
       trigger: "item" as const,
       textStyle: { fontSize: 12 },
-      formatter: (params: { data?: { value: number; dateLabel: string; derived: boolean } }) => {
+      formatter: (params: {
+        data?: { value: [string, number]; dateLabel: string; derived: boolean };
+      }) => {
         const d = params.data;
         if (!d) return "";
-        return `${fmtInt(d.value)} clicks — ${d.dateLabel}<br/>${
+        return `${fmtInt(d.value[1])} clicks — ${d.dateLabel}<br/>${
           d.derived ? "Derived from our own daily totals" : "Badge awarded by Google"
         }`;
       },
     },
     xAxis: {
-      type: "category" as const,
-      data: points.map((x) => x.dateLabel),
-      boundaryGap: false,
-      axisLabel: { hideOverlap: true, fontSize: labelSize, color: p.muted },
+      type: "time" as const,
+      splitNumber: ctx.narrow ? 4 : 8,
+      axisLabel: { hideOverlap: true, fontSize: labelSize, color: p.muted, formatter: "{MMM} {d}" },
+      splitLine: { show: false },
       axisLine: { lineStyle: { color: p.grid } },
       axisTick: { show: false },
     },
@@ -134,7 +139,7 @@ export function milestoneChartOption(points: MilestoneChartPoint[], ctx: ChartCt
         lineStyle: { color: p.line, width: 2 },
         areaStyle: { color: p.area },
         data: points.map((x, i) => ({
-          value: x.threshold,
+          value: [x.date, x.threshold] as [string, number],
           dateLabel: x.dateLabel,
           derived: x.derived,
           // OPE-456 — shape, not colour: hollow = derived, solid = Google badge.
