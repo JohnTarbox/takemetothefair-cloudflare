@@ -8,9 +8,11 @@
  */
 export {
   deriveCrossings,
+  rollingWindowTotals,
   auditStoredDates,
   type DailyTotal,
   type Crossing,
+  type WindowTotal,
   type DateAudit,
   type DateVerdict,
 } from "@takemetothefair/utils";

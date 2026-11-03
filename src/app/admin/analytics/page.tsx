@@ -77,6 +77,7 @@ import {
 } from "@/lib/search-console";
 import { MilestoneEChart } from "@/components/admin/charts/admin-charts";
 import { toMilestonePoints, type GscMilestonePoint } from "@/lib/charts/milestone-points";
+import { rollingWindowTotals, type WindowTotal } from "@/lib/analytics/derive-gsc-milestones";
 import { formatDateOnly, formatTimestampForServer } from "@/lib/datetime";
 import {
   isWindowKey,
@@ -1993,7 +1994,13 @@ function Sparkline({
 // "May ramp vs April end" stat needs the April point).
 const MILESTONE_CHART_DEFAULT_START = "2026-05-01";
 
-function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
+function GscMilestoneChartCard({
+  points,
+  rolling = [],
+}: {
+  points: GscMilestonePoint[];
+  rolling?: WindowTotal[];
+}) {
   if (points.length === 0) {
     return (
       <Card className="mb-6">
@@ -2033,6 +2040,11 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
   // with only pre-May milestones) so the chart never renders blank.
   const inRange = sorted.filter((p) => p.date >= MILESTONE_CHART_DEFAULT_START);
   const chartPoints = inRange.length > 0 ? inRange : sorted;
+  // The 28-day total, clipped to the same window the milestones are plotted on.
+  const chartRolling = rolling.filter((r) => r.date >= chartPoints[0].date);
+  const rollingThrough = chartRolling.length
+    ? formatDateOnly(chartRolling[chartRolling.length - 1].date)
+    : "";
 
   return (
     <Card className="mb-6">
@@ -2042,7 +2054,11 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
           <TileInfo id="google.milestones" title="Search clicks milestones" />
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
-          28-day click window · log scale · from May 2026
+          {chartRolling.length > 0
+            ? `Line: clicks in the trailing 28 days · dots: milestones · log scale · from May 2026${
+                rollingThrough ? ` · through ${rollingThrough}` : ""
+              }`
+            : "28-day click window · log scale · from May 2026"}
         </p>
         {/* OPE-456 — the two sources answer different questions and must not be
             conflated. Google skipped several badges outright (it jumped
@@ -2106,7 +2122,7 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
             <p className="text-xs text-muted-foreground">vs. April end</p>
           </div>
         </div>
-        <MilestoneChart points={chartPoints} />
+        <MilestoneChart points={chartPoints} rolling={chartRolling} />
       </CardContent>
     </Card>
   );
@@ -2116,7 +2132,13 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
 // (`@/lib/charts/milestone-layout`, OPE-602) that broke again as the series
 // grew to 42 points, and viewBox-scaled text (~5px on a phone). Now the shared
 // admin ECharts host; label collisions are the library's job.
-function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
+function MilestoneChart({
+  points,
+  rolling,
+}: {
+  points: GscMilestonePoint[];
+  rolling: WindowTotal[];
+}) {
   return (
     <MilestoneEChart
       points={points.map((p) => ({
@@ -2124,6 +2146,11 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
         date: p.date,
         dateLabel: formatDateOnly(p.date) || p.date,
         derived: p.derived,
+      }))}
+      rolling={rolling.map((r) => ({
+        date: r.date,
+        total: r.total,
+        dateLabel: formatDateOnly(r.date) || r.date,
       }))}
     />
   );
@@ -3353,17 +3380,56 @@ async function loadGscMilestones(): Promise<GscMilestonePoint[]> {
   return toMilestonePoints(rows);
 }
 
+/**
+ * The trailing 28-day click total per day, from our own GSC dailies — the line
+ * the milestone dots sit on. A milestone records only a new high, so without
+ * this line a seasonal decline (31.2K on 2026-09-20 → 16.7K on 10-30) read as
+ * "no data since Sep 19".
+ *
+ * Reads from 27 days before the chart's start so its first window is complete.
+ * Refuses (returns []) if the table ever holds two GSC properties, for the same
+ * reason the milestone derivation does: summing them would double every total.
+ * Degrades to no line on any error — the milestone chart must still render.
+ */
+async function loadGscRollingClicks(): Promise<WindowTotal[]> {
+  try {
+    const { gscDailyTotals } = await import("@/lib/db/schema");
+    const { gte: gteOp, asc } = await import("drizzle-orm");
+    const from = new Date(
+      Date.parse(`${MILESTONE_CHART_DEFAULT_START}T00:00:00Z`) - 27 * 86_400_000
+    )
+      .toISOString()
+      .slice(0, 10);
+    const rows = await getCloudflareDb()
+      .select({
+        siteUrl: gscDailyTotals.siteUrl,
+        date: gscDailyTotals.date,
+        clicks: gscDailyTotals.clicks,
+      })
+      .from(gscDailyTotals)
+      .where(gteOp(gscDailyTotals.date, from))
+      .orderBy(asc(gscDailyTotals.date));
+    if (new Set(rows.map((r) => r.siteUrl)).size > 1) return [];
+    return rollingWindowTotals(rows, 28);
+  } catch {
+    return [];
+  }
+}
+
 async function GoogleTab({ window }: { window: WindowKey }) {
   // Milestone card reads from our own D1 (gsc_milestone_emails), not the
   // Search Console API — so it must render whether or not SC_SITE_URL is
   // configured. Load + render it ABOVE the GSC API gate. The GSC-API
   // sections below early-return GscErrorPanel when SC is unconfigured.
-  const milestones = await loadGscMilestones();
+  const [milestones, rollingClicks] = await Promise.all([
+    loadGscMilestones(),
+    loadGscRollingClicks(),
+  ]);
   const result = await loadGscData(window);
   if (!result.ok) {
     return (
       <>
-        <GscMilestoneChartCard points={milestones} />
+        <GscMilestoneChartCard points={milestones} rolling={rollingClicks} />
         <GscErrorPanel kind={result.kind} message={result.message} />
       </>
     );
@@ -3453,7 +3519,7 @@ async function GoogleTab({ window }: { window: WindowKey }) {
         </Card>
       </div>
 
-      <GscMilestoneChartCard points={milestones} />
+      <GscMilestoneChartCard points={milestones} rolling={rollingClicks} />
 
       <Card className="mb-6">
         <CardHeader>
