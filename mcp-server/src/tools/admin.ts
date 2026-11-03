@@ -153,6 +153,7 @@ import {
   performerRosterStatusWhere,
 } from "./performer-selection.js";
 import { attachEventToSeries } from "@takemetothefair/event-series";
+import { registerCreateSeriesTool } from "./admin-create-series.js";
 import { dollarsToCents } from "../helpers.js";
 import { recordMutation } from "../audit/record-mutation.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
@@ -476,6 +477,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   // EH3 P3.1 — create_occurrence (new dated edition under a series).
   registerCreateOccurrenceTool(server, auth, env);
+
+  // OPE-1562 — create_series: give a standalone event its series (dry-run default),
+  // so create_occurrence above can stage a dates-TBD edition under it.
+  registerCreateSeriesTool(server, db, auth); // OPE-1562
 
   // OPE-1327 — set_series_edition_mode (flag + edition keys, atomically; dry-run default).
   registerSeriesEditionModeTool(server, db, auth);

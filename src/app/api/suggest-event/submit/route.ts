@@ -27,7 +27,11 @@ import { hasCalendarDayPassed } from "@takemetothefair/datetime";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 import { auth } from "@/lib/auth";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
-import { UNCATEGORIZED_EVENT_CATEGORY, partitionEventCategories } from "@takemetothefair/constants";
+import {
+  SITE_URL,
+  UNCATEGORIZED_EVENT_CATEGORY,
+  partitionEventCategories,
+} from "@takemetothefair/constants";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { classifySource, assertIngestionMethod } from "@/lib/source-classification";
@@ -48,6 +52,7 @@ import {
 import { maybeRouteToOccurrence } from "@/lib/discovery/route-to-occurrence";
 import { submitEventSchema } from "./schema";
 import { sendSubmissionReceivedAck } from "@/lib/email/submission-received";
+import { issueCorrectionToken } from "@/lib/correction-tokens";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -1026,6 +1031,20 @@ export async function POST(request: NextRequest) {
             : null,
           whereText:
             [data.venueName, data.venueCity, resolvedStateCode].filter(Boolean).join(", ") || null,
+          // OPE-1558 decision 1a — the no-login form's receipt carries a private
+          // correction link (the existing /submit-event/<token> form), so an
+          // organizer with no account can still fix their listing. Keyed on the
+          // stored tag, so it reaches exactly the rows marked as this form's.
+          // inboundEmailId is null: this token came from a web form (0389).
+          mintCorrectionUrl: tagList.includes("list-your-event")
+            ? async () => {
+                const token = await issueCorrectionToken(db, {
+                  eventId: newEventId,
+                  inboundEmailId: null,
+                });
+                return `${SITE_URL}/submit-event/${token}`;
+              }
+            : undefined,
         });
     if (
       ackOutcome !== "sent" &&

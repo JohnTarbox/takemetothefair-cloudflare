@@ -36,6 +36,7 @@ import {
   computeNextOccurrence,
   deriveEditionKey,
   parseRecurrenceRule,
+  stripNameDateSuffix,
   unsafeSlug,
   type Slug,
 } from "@takemetothefair/utils";
@@ -192,7 +193,11 @@ export async function rolloverEventIfRecurring(
   const nextYear = next.start.getUTCFullYear();
   const yearStart = new Date(Date.UTC(nextYear, 0, 1));
   const yearEnd = new Date(Date.UTC(nextYear + 1, 0, 1));
-  const normalizedSourceName = normalizeName(source.name);
+  // OPE-1543 — roll from the name with any display-line suffix ("— Aug 27–30 in
+  // Cummington, MA") removed. A year swap on the raw name would publish 2026's
+  // dates under the 2027 edition's name.
+  const sourceName = stripNameDateSuffix(source.name);
+  const normalizedSourceName = normalizeName(sourceName);
 
   const candidates = await db
     .select({ id: events.id, name: events.name })
@@ -215,13 +220,13 @@ export async function rolloverEventIfRecurring(
   // computed year to the slug so the slug stays year-meaningful (not "-2").
   const sourceYear = source.startDate.getUTCFullYear();
   const yearTokenRe = new RegExp(`\\b${sourceYear}\\b`);
-  const nameHasYear = yearTokenRe.test(source.name);
+  const nameHasYear = yearTokenRe.test(sourceName);
   const newName = nameHasYear
-    ? source.name.replace(new RegExp(`\\b${sourceYear}\\b`, "g"), String(nextYear))
-    : source.name;
+    ? sourceName.replace(new RegExp(`\\b${sourceYear}\\b`, "g"), String(nextYear))
+    : sourceName;
   const baseSlug: Slug = nameHasYear
     ? createSlug(newName)
-    : appendSlugSegment(createSlug(source.name), nextYear);
+    : appendSlugSegment(createSlug(sourceName), nextYear);
 
   let finalSlug: Slug = baseSlug;
   let suffix = 0;

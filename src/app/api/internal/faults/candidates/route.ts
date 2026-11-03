@@ -473,6 +473,29 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
       });
     }
 
+    // OPE-1554 — the population assertion, computed once and made AUDIBLE. It
+    // used to ride only in the JSON body, which the hourly cron caller never
+    // read (its log line printed toEmit/regressions/existing), so an unhealthy
+    // rail was indistinguishable from a healthy one everywhere a human looks.
+    // One `warn` row per unhealthy run: `warn`, not `error`, because this scan
+    // reads only level='error' and an error row would mint a fault signature
+    // ABOUT the fault ledger inside the fault ledger.
+    const health = buildRailHealth(ledger, result, { nowMs: now.getTime() });
+    if (!health.healthy) {
+      await logError(db, {
+        level: "warn",
+        source: "faults:rail-health",
+        message: health.reason,
+        context: {
+          unfiledCandidates: health.unfiledCandidates,
+          staleUnfiled: health.staleUnfiled,
+          oldestUnfiledDays: health.oldestUnfiledDays,
+          emittingNow: health.emittingNow,
+          parked: health.parked,
+        },
+      });
+    }
+
     return NextResponse.json(
       {
         // OPE-1081 scope 2 — a scan that could not write its own ledger is not a
@@ -503,7 +526,7 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         // A run that files nothing is only healthy if there was nothing to file,
         // and the pipeline could not tell those apart: the 2026-09-01 weekly run
         // reported SUCCEEDED with 19 unrouted candidates in the ledger.
-        health: buildRailHealth(ledger, result),
+        health,
         deferred: result.deferred,
         // OPE-613 — attached to a sibling route's ticket, and held behind a
         // sibling being filed this run. Neither is work for the rail.

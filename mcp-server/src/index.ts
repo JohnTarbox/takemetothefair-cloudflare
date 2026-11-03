@@ -843,12 +843,18 @@ async function runScheduledBingInspectionSweep(env: Env): Promise<void> {
  * filing separately. Failsoft via runMainAppSweep.
  */
 async function runScheduledFaultCandidatesEmit(env: Env): Promise<void> {
-  await runMainAppSweep(
-    env,
-    "fault-signatures emit",
-    "/api/internal/faults/candidates",
-    (r) =>
-      `toEmit=${(r.toEmit as unknown[])?.length ?? "?"} regressions=${(r.regressions as unknown[])?.length ?? "?"} existing=${(r.existing as unknown[])?.length ?? "?"}`
+  await runMainAppSweep(env, "fault-signatures emit", "/api/internal/faults/candidates", (r) =>
+    // OPE-1554 — backlog + health on the log line. They were in the response
+    // since OPE-811 and printed nowhere, so a starving rail logged as routine.
+    {
+      const h = (r.health ?? {}) as Record<string, unknown>;
+      return (
+        `toEmit=${(r.toEmit as unknown[])?.length ?? "?"} regressions=${(r.regressions as unknown[])?.length ?? "?"}` +
+        ` backlog=${(r.backlog as unknown[])?.length ?? "?"} existing=${(r.existing as unknown[])?.length ?? "?"}` +
+        ` healthy=${h.healthy ?? "?"} unfiled=${h.unfiledCandidates ?? "?"} stale=${h.staleUnfiled ?? "?"}` +
+        ` oldestDays=${h.oldestUnfiledDays ?? "?"}`
+      );
+    }
   );
 }
 

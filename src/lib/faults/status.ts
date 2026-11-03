@@ -34,6 +34,40 @@
  * new status cannot be added to one predicate and forgotten in the others.
  */
 
+/*
+ * ## Which predicate matches which term (OPE-1554 scope 3)
+ *
+ *   term       eligibility (fileable)   already-filed       regression source   terminal
+ *   ─────────────────────────────────────────────────────────────────────────────────────
+ *   proposed   YES (if ope_id NULL)     —                   —                   —
+ *   open       YES (if ope_id NULL)     —                   —                   —
+ *   regressed  YES (if ope_id NULL)     yes if ope_id set   —                   —
+ *   filed      —                        YES                 —                   —
+ *   watch      — (parked, by design)    —                   —                   —
+ *   done       —                        —                   YES                 YES
+ *   resolved   —                        —                   YES                 YES
+ *   noise      —                        —                   —                   YES
+ *   <unknown>  YES (never "handled")    —                   —                   —
+ *
+ * **The rail's eligibility predicate is therefore**
+ * `ope_id IS NULL AND status IN ('proposed','open','regressed')` — NOT
+ * `status='open' AND ope_id IS NULL`, which is what the MMATF cpi config's
+ * `fault_ledger.eligibility` still reads (2026-11-01: 0 rows against 66).
+ *
+ * **The two apparent duplicates are one meaning with two writers, kept on purpose:**
+ *   - `done` vs `resolved` — both mean "fixed, closed". `done` is written by CODE
+ *     (`record-candidate`, only from `filed`/`regressed`); `resolved` by an agent
+ *     straight to D1. Identical in every predicate above — and until OPE-1554 they
+ *     were NOT: `reconcileFaults` regressed only `done`, so a recurring
+ *     `resolved` row stayed closed forever (2 of the 3 are OPE-173's /register
+ *     Turnstile throw). Not migrated: the writer is the provenance.
+ *   - `filed` vs `done` — NOT duplicates. `filed` = a ticket exists and the fault
+ *     is still live; `done` = that ticket's fix shipped. A regression is a `done`
+ *     / `resolved` row that recurs.
+ *   - `open` vs `proposed` — also one meaning, two writers (agent vs emitter).
+ *     Both fileable. No row migration in OPE-1554; the mapping is named first.
+ */
+
 /** Statuses the application's own state machine writes. */
 export const CODE_STATUSES = ["proposed", "filed", "regressed", "done"] as const;
 
@@ -139,6 +173,13 @@ export interface RailHealth {
   /** Rows carrying a status the code does not know. */
   unknownStatus: number;
   /**
+   * OPE-1554 — fileable, unfiled rows first seen more than `staleDays` ago.
+   * Rows the rail has been OFFERED for that long and has not filed.
+   */
+  staleUnfiled: number;
+  /** Age in whole days of the oldest fileable unfiled row (0 when none). */
+  oldestUnfiledDays: number;
+  /**
    * FALSE when the run files nothing while fileable work exists.
    *
    * This is the whole ticket in one boolean. The rail was not lying when it
@@ -150,25 +191,69 @@ export interface RailHealth {
   reason: string;
 }
 
+/**
+ * OPE-1554 — how long a fileable row may sit unfiled before the rail is
+ * starving. One weekly rail cycle: a row that has survived a full week of
+ * hourly emits and a weekly drain without an `ope_id` was offered and not taken.
+ */
+export const STALE_UNFILED_DAYS = 7;
+
+const DAY_MS = 86_400_000;
+
 export function buildRailHealth(
-  ledger: ReadonlyArray<{ status: string | null; opeId: string | null }>,
-  emitted: { toEmit: unknown[]; backlog: unknown[]; regressions: unknown[] }
+  ledger: ReadonlyArray<{ status: string | null; opeId: string | null; firstSeen?: number | null }>,
+  emitted: { toEmit: unknown[]; backlog: unknown[]; regressions: unknown[] },
+  opts: { nowMs?: number; staleDays?: number } = {}
 ): RailHealth {
+  const nowMs = opts.nowMs ?? Date.now();
+  const staleDays = opts.staleDays ?? STALE_UNFILED_DAYS;
   const unfiledCandidates = unfiledCandidateCount(ledger);
   const emittingNow = emitted.toEmit.length + emitted.backlog.length + emitted.regressions.length;
   const parked = ledger.filter((r) => isParked(r.status)).length;
   const unknownStatus = ledger.filter((r) => isUnknownStatus(r.status)).length;
 
+  // OPE-1554 — the OPE-811 check below is INERT against the failure it was
+  // written for. It fires only when this run emits nothing, but the backlog is
+  // re-emitted (up to the batch cap) every hour whether or not anyone files it.
+  // So "offered 5 rows" read as healthy for 30 days while 103 rows sat unfiled:
+  // the retro rail read `status='open'` from D1 directly and never saw them.
+  // Age is the signal that does not depend on WHO consumes the backlog — a
+  // fileable row with no ope_id that keeps getting older proves nobody does.
+  const unfiledAges = ledger
+    .filter(
+      (r) =>
+        r.opeId == null &&
+        (isFileableStatus(r.status) || isUnknownStatus(r.status)) &&
+        typeof r.firstSeen === "number" &&
+        Number.isFinite(r.firstSeen)
+    )
+    .map((r) => (nowMs - (r.firstSeen as number)) / DAY_MS);
+  const staleUnfiled = unfiledAges.filter((d) => d > staleDays).length;
+  const oldestUnfiledDays = unfiledAges.length ? Math.floor(Math.max(...unfiledAges)) : 0;
+
   const starved = unfiledCandidates > 0 && emittingNow === 0;
+  const stale = staleUnfiled > 0;
+  const reasons: string[] = [];
+  if (starved) {
+    reasons.push(
+      `${unfiledCandidates} fileable signature(s) carry no ope_id and this run emitted none — ` +
+        `the rail is reading a population it cannot file from (OPE-811).`
+    );
+  }
+  if (stale) {
+    reasons.push(
+      `${staleUnfiled} fileable signature(s) have sat unfiled for more than ${staleDays} days ` +
+        `(oldest ${oldestUnfiledDays}d) — they are being offered and nobody is filing them (OPE-1554).`
+    );
+  }
   return {
     unfiledCandidates,
     emittingNow,
     parked,
     unknownStatus,
-    healthy: !starved,
-    reason: starved
-      ? `${unfiledCandidates} fileable signature(s) carry no ope_id and this run emitted none — ` +
-        `the rail is reading a population it cannot file from (OPE-811).`
-      : "",
+    staleUnfiled,
+    oldestUnfiledDays,
+    healthy: !starved && !stale,
+    reason: reasons.join(" "),
   };
 }

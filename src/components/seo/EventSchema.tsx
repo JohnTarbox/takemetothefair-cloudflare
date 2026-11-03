@@ -22,6 +22,8 @@ interface EventDay {
   closeTime: string | null;
   notes?: string | null;
   closed?: boolean | null;
+  // OPE-1563 — a vendor-setup window. Dropped at the prop boundary below.
+  vendorOnly?: boolean | null;
   // F2 / E.2b (Dev-Email-2026-06-09 §E.2, 2026-06-09) — per-occurrence
   // image. PR #412 added the column; subEvent.image below prefers
   // this per-day URL when present and falls back to the series-level
@@ -181,7 +183,7 @@ export function EventSchema({
   pastUnconfirmed,
   previousStartDate,
   previousEndDate,
-  eventDays,
+  eventDays: allEventDays,
   vendors,
   performers,
   emitPerformerSubevents,
@@ -191,6 +193,13 @@ export function EventSchema({
   accessNotes,
   superEvent,
 }: EventSchemaProps) {
+  // OPE-1563 — every date this builder emits (subEvents, the day-derived span,
+  // the noon-sentinel hours) reads PUBLIC days only. Filtered once here so no
+  // reader below can see a vendor-setup row: GAHS Holiday Craft Fair's 07:00
+  // "Vendor setup" became a public "Day 2" subEvent, and the same row would have
+  // set the top-level startDate to 7 AM via columnDateForJsonLd's earliest-open.
+  // `closed` days stay in: each reader below already handles them its own way.
+  const eventDays = allEventDays?.filter((d) => !d.vendorOnly);
   // Convert integer cents → dollars for JSON-LD emission. Round-2 backlog
   // item 1 (2026-05-11): only emit `offers` and `isAccessibleForFree` when
   // price is *known*. The previous code treated null/undefined as free,
@@ -475,7 +484,11 @@ export function EventSchema({
             (d): d is EventDay & { openTime: string; closeTime: string } =>
               d.openTime != null && d.closeTime != null
           )
-          .map((day, i) => {
+          .map((day, _i, emitted) => {
+            // OPE-1563 — "Day N" is the date's position among the emitted
+            // dates, so two sessions on one date are both "Day 1", never a
+            // phantom "Day 2".
+            const dayNumber = [...new Set(emitted.map((d) => d.date))].sort().indexOf(day.date) + 1;
             // Sub-event open/close times are wall-clock in the venue's zone.
             // Emit them as ISO with the proper offset (`-04:00`/`-05:00` at
             // Eastern, `-02:30`/`-03:30` at Newfoundland, etc.) so calendar
@@ -492,14 +505,14 @@ export function EventSchema({
               vendorBucketToPerformerSponsor(dayBucket);
             return {
               "@type": "Event",
-              name: `${name} - Day ${i + 1}`,
+              name: `${name} - Day ${dayNumber}`,
               startDate: venueTz
                 ? formatIsoInVenueZone(startWall, venueTz) || undefined
                 : formatIsoInVenueZone(startWall) || undefined,
               endDate: venueTz
                 ? formatIsoInVenueZone(endWall, venueTz) || undefined
                 : formatIsoInVenueZone(endWall) || undefined,
-              description: day.notes || description || `${name} - Day ${i + 1}`,
+              description: day.notes || description || `${name} - Day ${dayNumber}`,
               location,
               // E.2b — use per-day image when set, else series-level.
               // resolvedImage covers the OG-fallback + transformations

@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { AccuracyEChart } from "@/components/admin/charts/admin-charts";
 
 interface WeeklyBucket {
   weekStart: string;
@@ -41,8 +42,6 @@ interface WeeklyResponse {
   topDisagreements: DisagreementPair[];
   disagreementMatrix: DisagreementPair[];
 }
-
-const LINE_COLORS = ["#2563eb", "#dc2626", "#16a34a", "#ea580c", "#9333ea", "#0891b2"];
 
 export default function ClassifierAccuracyPage() {
   const [data, setData] = useState<WeeklyResponse | null>(null);
@@ -141,141 +140,11 @@ export default function ClassifierAccuracyPage() {
  * as gaps in the line (not zero) — accuracyPct=null. Y axis is 0-100;
  * X axis is week-start dates, every other label.
  */
+// OPE-1565 — now the shared admin ECharts host: legend, tooltips, fixed-pixel
+// text, and series aligned on weekStart (the SVG placed each version's points
+// by array index, shifting a mid-window version onto the wrong weeks).
 function AccuracyChart({ buckets, versions }: { buckets: WeeklyBucket[]; versions: string[] }) {
-  // Group buckets by version, sorted by weekIndex ascending.
-  const byVersion = useMemo(() => {
-    const m = new Map<string, WeeklyBucket[]>();
-    for (const v of versions) m.set(v, []);
-    for (const b of buckets) {
-      m.get(b.classifierVersion)?.push(b);
-    }
-    for (const arr of m.values()) arr.sort((a, b) => a.weekIndex - b.weekIndex);
-    return m;
-  }, [buckets, versions]);
-
-  const weekCount = useMemo(() => {
-    let max = 0;
-    for (const arr of byVersion.values()) max = Math.max(max, arr.length);
-    return max;
-  }, [byVersion]);
-
-  if (weekCount === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">No classified emails in this window yet.</p>
-    );
-  }
-
-  // SVG coordinate system: 720x240 with 40px left + 30px bottom padding.
-  const W = 720;
-  const H = 240;
-  const PAD_L = 40;
-  const PAD_R = 20;
-  const PAD_T = 10;
-  const PAD_B = 30;
-  const chartW = W - PAD_L - PAD_R;
-  const chartH = H - PAD_T - PAD_B;
-  const xStep = weekCount > 1 ? chartW / (weekCount - 1) : 0;
-
-  // X-axis labels: every other bucket's weekStart (DDM format) to avoid
-  // crowding.
-  const labelBuckets = byVersion.values().next().value ?? [];
-  const labels = labelBuckets.map((b: WeeklyBucket, i: number) => ({
-    x: PAD_L + i * xStep,
-    label: i % 2 === 0 ? b.weekStart.slice(5) : "",
-  }));
-
-  // Y gridlines at 0, 25, 50, 75, 100.
-  const yGrid = [0, 25, 50, 75, 100];
-  const yFor = (pct: number) => PAD_T + chartH - (pct / 100) * chartH;
-
-  return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Accuracy trend">
-        {/* Y gridlines + labels */}
-        {yGrid.map((y) => (
-          <g key={y}>
-            <line
-              x1={PAD_L}
-              x2={W - PAD_R}
-              y1={yFor(y)}
-              y2={yFor(y)}
-              stroke="#e5e7eb"
-              strokeDasharray="2 2"
-            />
-            <text x={PAD_L - 6} y={yFor(y) + 3} fontSize="10" fill="#6b7280" textAnchor="end">
-              {y}%
-            </text>
-          </g>
-        ))}
-        {/* X-axis labels */}
-        {labels.map((l: { x: number; label: string }, i: number) =>
-          l.label ? (
-            <text
-              key={i}
-              x={l.x}
-              y={H - PAD_B + 14}
-              fontSize="9"
-              fill="#6b7280"
-              textAnchor="middle"
-            >
-              {l.label}
-            </text>
-          ) : null
-        )}
-        {/* Lines per version */}
-        {[...byVersion.entries()].map(([version, arr], vi) => {
-          const color = LINE_COLORS[vi % LINE_COLORS.length];
-          // Build d-path. accuracyPct=null breaks the line.
-          let d = "";
-          let lastDrawn = false;
-          arr.forEach((b: WeeklyBucket, i: number) => {
-            if (b.accuracyPct === null) {
-              lastDrawn = false;
-              return;
-            }
-            const x = PAD_L + i * xStep;
-            const y = yFor(b.accuracyPct);
-            d += `${lastDrawn ? "L" : "M"}${x} ${y} `;
-            lastDrawn = true;
-          });
-          return (
-            <g key={version}>
-              <path d={d} stroke={color} strokeWidth="2" fill="none" />
-              {/* Per-point dots */}
-              {arr.map((b: WeeklyBucket, i: number) =>
-                b.accuracyPct === null ? null : (
-                  <circle
-                    key={i}
-                    cx={PAD_L + i * xStep}
-                    cy={yFor(b.accuracyPct)}
-                    r="3"
-                    fill={color}
-                  >
-                    <title>
-                      {version}, {b.weekStart}: {b.accuracyPct}% ({b.total - b.disagreements}/
-                      {b.total})
-                    </title>
-                  </circle>
-                )
-              )}
-            </g>
-          );
-        })}
-      </svg>
-      {/* Legend */}
-      <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-        {[...byVersion.keys()].map((version, vi) => (
-          <li key={version} className="flex items-center gap-1.5">
-            <span
-              className="inline-block h-2 w-3"
-              style={{ backgroundColor: LINE_COLORS[vi % LINE_COLORS.length] }}
-            />
-            <code className="text-foreground">{version}</code>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
+  return <AccuracyEChart buckets={buckets} versions={versions} />;
 }
 
 /**
