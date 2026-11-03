@@ -87,6 +87,29 @@ export interface SubmissionAckInput {
   whenText?: string | null;
   /** Town/venue line, same rule. */
   whereText?: string | null;
+  /**
+   * OPE-1558 decision 1a (John, 2026-11-02) — mint a private correction link
+   * for this submission and return its full URL, or null if none could be
+   * minted. Called ONLY once every skip gate has passed, immediately before
+   * the enqueue, so a receipt that never sends never leaves a live 30-day
+   * token behind. Passed by the /list-your-event path only; omitted, the body
+   * is the 2026-08-27 copy unchanged.
+   */
+  mintCorrectionUrl?: () => Promise<string | null>;
+}
+
+/**
+ * OPE-1558 decision 1a — the paragraph APPROVED BY JOHN on 2026-11-02, verbatim
+ * (comment f44c06f8 on OPE-1558, approving the text quoted in the AGENT BLOCKED
+ * ask). Inserted after the "just reply to this email" paragraph.
+ *
+ * "30 days" here is the LINK'S validity (TOKEN_TTL_DAYS in correction-tokens),
+ * not a review turnaround — the no-turnaround-promise rule above is about how
+ * fast a person reviews, and this paragraph makes no claim about that.
+ */
+export function correctionLinkParagraph(url: string): string {
+  return `Need to change something later? This private link lets you update your listing — no account needed. It works for 30 days:
+${url}`;
 }
 
 function escapeHtml(s: string): string {
@@ -128,7 +151,11 @@ function escapeHtml(s: string): string {
  * Kept as its own exported function so the copy can be reviewed and tested
  * without a queue, a DB, or a send.
  */
-export function buildSubmissionReceivedBody(input: SubmissionAckInput): {
+export function buildSubmissionReceivedBody(
+  input: SubmissionAckInput,
+  /** OPE-1558 — when present, the approved correction-link paragraph is added. */
+  correctionUrl?: string | null
+): {
   subject: string;
   text: string;
 } {
@@ -148,7 +175,7 @@ ${details}
 Your event isn't published yet — every submission is reviewed by a person before it goes live on the site. We'll take it from here.
 
 If anything above looks wrong, or you'd like to add details (a website, times, vendor info, a photo), just reply to this email and it'll reach us.
-
+${correctionUrl ? `\n${correctionLinkParagraph(correctionUrl)}\n` : ""}
 Reference: ${input.eventId.slice(0, 8)} — please keep this on any reply so we can match it up.
 
 Thanks for helping us keep Maine and New England's fairs and festivals listed.
@@ -251,7 +278,19 @@ export async function sendSubmissionReceivedAck(
 
     if (!env.EMAIL_JOBS) return "error:queue-missing";
 
-    const { subject, text } = buildSubmissionReceivedBody(input);
+    // OPE-1558 — mint the correction link only now, past every skip gate. A
+    // failed mint sends the receipt WITHOUT the paragraph rather than not at
+    // all: the receipt is the thing OPE-412 exists to deliver.
+    let correctionUrl: string | null = null;
+    if (input.mintCorrectionUrl) {
+      try {
+        correctionUrl = await input.mintCorrectionUrl();
+      } catch {
+        correctionUrl = null;
+      }
+    }
+
+    const { subject, text } = buildSubmissionReceivedBody(input, correctionUrl);
     await env.EMAIL_JOBS.send({
       to: email,
       subject,

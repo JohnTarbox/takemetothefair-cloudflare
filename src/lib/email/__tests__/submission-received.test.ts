@@ -15,6 +15,7 @@ import { emailSendLedger, emailSuppressionList } from "../../db/schema";
 import {
   sendSubmissionReceivedAck,
   buildSubmissionReceivedBody,
+  correctionLinkParagraph,
   SUBMISSION_RECEIVED_SOURCE,
 } from "../submission-received";
 
@@ -253,5 +254,90 @@ describe("sending", () => {
     // A submission must succeed even when its receipt cannot be sent.
     const outcome = await sendSubmissionReceivedAck(db, { SUBMISSION_ACK_ENABLED: "true" }, input);
     expect(outcome).toBe("error:queue-missing");
+  });
+});
+
+describe("OPE-1558 — the private correction link (decision 1a, John 2026-11-02)", () => {
+  const URL = "https://meetmeatthefair.com/submit-event/abc123TOKENxyz";
+  const APPROVED = `Need to change something later? This private link lets you update your listing — no account needed. It works for 30 days:
+${URL}`;
+
+  it("the paragraph is John's approved text, verbatim", () => {
+    expect(correctionLinkParagraph(URL)).toBe(APPROVED);
+  });
+
+  it("with a URL, the paragraph sits after the reply line and before the reference", () => {
+    const { text } = buildSubmissionReceivedBody(input, URL);
+    const reply = text.indexOf("it'll reach us.");
+    const link = text.indexOf(APPROVED);
+    const ref = text.indexOf("Reference:");
+    expect(reply).toBeGreaterThan(-1);
+    expect(link).toBeGreaterThan(reply);
+    expect(ref).toBeGreaterThan(link);
+    expect(text).toContain(`it'll reach us.\n\n${APPROVED}\n\nReference:`);
+  });
+
+  it("without a URL, the body is the 2026-08-27 copy, byte for byte", () => {
+    const { text } = buildSubmissionReceivedBody(input);
+    expect(text).not.toContain("private link");
+    expect(text).toContain("it'll reach us.\n\nReference:");
+    expect(buildSubmissionReceivedBody(input, null).text).toBe(text);
+  });
+
+  it("the ONLY time words added are the link's own validity — still no review turnaround", () => {
+    const { text } = buildSubmissionReceivedBody(input, URL);
+    expect(text.replace(APPROVED, "")).not.toMatch(/\b(hours|days|weeks)\b/i);
+  });
+
+  it("a sent receipt carries the minted link, in text and html", async () => {
+    let mints = 0;
+    const outcome = await sendSubmissionReceivedAck(db, env(), {
+      ...input,
+      mintCorrectionUrl: async () => {
+        mints++;
+        return URL;
+      },
+    });
+    expect(outcome).toBe("sent");
+    expect(mints).toBe(1);
+    const msg = queued[0] as { text: string; html: string };
+    expect(msg.text).toContain(APPROVED);
+    expect(msg.html).toContain(URL);
+  });
+
+  it("a receipt that does NOT send mints no token (no orphan 30-day link)", async () => {
+    let mints = 0;
+    const mintCorrectionUrl = async () => {
+      mints++;
+      return URL;
+    };
+    expect(
+      await sendSubmissionReceivedAck(
+        db,
+        { ...env(), SUBMISSION_ACK_ENABLED: "false" },
+        {
+          ...input,
+          mintCorrectionUrl,
+        }
+      )
+    ).toBe("skipped:disabled");
+    raw
+      .prepare("INSERT INTO email_suppression_list (email, created_at) VALUES (?, ?)")
+      .run("submitter@example.com", Date.now());
+    expect(await sendSubmissionReceivedAck(db, env(), { ...input, mintCorrectionUrl })).toBe(
+      "skipped:suppressed"
+    );
+    expect(mints).toBe(0);
+  });
+
+  it("a failed mint still sends the receipt, just without the paragraph", async () => {
+    const outcome = await sendSubmissionReceivedAck(db, env(), {
+      ...input,
+      mintCorrectionUrl: async () => {
+        throw new Error("D1 down");
+      },
+    });
+    expect(outcome).toBe("sent");
+    expect((queued[0] as { text: string }).text).not.toContain("private link");
   });
 });

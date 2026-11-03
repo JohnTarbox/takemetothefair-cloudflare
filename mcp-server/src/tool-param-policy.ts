@@ -54,6 +54,7 @@ export const REJECT_UNKNOWN_PARAMS: ReadonlySet<string> = new Set([
   "create_or_link_vendor",
   "create_performer",
   "create_promoter",
+  "create_series", // OPE-1562
   "create_venue",
   "log_vendor_outreach",
   "record_agent_heartbeat",

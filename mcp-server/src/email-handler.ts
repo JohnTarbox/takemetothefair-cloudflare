@@ -3160,7 +3160,7 @@ void CLASSIFIER_VERSION;
 export function looksLikeGscMilestone(fromAddr: string, subject: string): boolean {
   if (fromAddr.toLowerCase().includes("sc-noreply@google.com")) return true;
   // Milestone congrats mail.
-  if (/reaching\s+[\d.,]+\s*k?\s+(clicks|impressions)\s+in\s+\d+\s+days/i.test(subject)) {
+  if (/reaching\s+[\d.,]+\s*[km]?\s+(clicks|impressions)\s+in\s+\d+\s+days/i.test(subject)) {
     return true;
   }
   // OPE-344 — the monthly "Search performance" report, when a human forwards it

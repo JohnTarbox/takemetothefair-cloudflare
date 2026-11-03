@@ -1473,7 +1473,7 @@ const SCHEMA_SQL = `
   CREATE TABLE submission_correction_tokens (
     token TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
-    inbound_email_id TEXT NOT NULL,
+    inbound_email_id TEXT, -- nullable since OPE-1558 (drizzle/0389)
     expires_at INTEGER NOT NULL,
     used_at INTEGER,
     created_at INTEGER NOT NULL
