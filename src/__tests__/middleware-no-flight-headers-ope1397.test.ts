@@ -6,9 +6,10 @@
  * The first anonymous-admin-RSC sampler lived in src/middleware.ts and wrote 0
  * rows in prod: Next deletes every FLIGHT_HEADER (RSC, Next-Router-State-Tree,
  * Next-Router-Prefetch, …) before middleware runs
- * (node_modules/next/dist/server/web/adapter.js:137-146) AND before
- * `headers()` in render (node_modules/next/dist/server/async-storage/
- * request-store.js:33-38). Its unit test called `middleware()` directly,
+ * (node_modules/next/dist/server/web/adapter.js:137-146) AND hides them
+ * from `headers()` in render (node_modules/next/dist/server/async-storage/
+ * request-store.js getHeaders — a delete in Next 15, a sealed hidden-set view
+ * since Next 16.4). Its unit test called `middleware()` directly,
  * skipping the adapter, so it was green while the code was dead.
  *
  * 1. Proves the stripping against the REAL adapter (so if a Next upgrade stops
@@ -78,14 +79,35 @@ describe("OPE-1397 — Next strips flight headers before user code", () => {
     expect(seen["next-router-prefetch"]).toBeNull();
   });
 
-  it("render's headers() store strips them too (request-store.js getHeaders)", () => {
-    const src = readFileSync(
-      join(ROOT, "node_modules/next/dist/server/async-storage/request-store.js"),
-      "utf8"
+  it("render's headers() store hides them too (request-store createRequestStoreForRender)", async () => {
+    // OPE-1403 — behavioural, not a source regex. Next 15 deleted each
+    // FLIGHT_HEADER in getHeaders(); Next 16.4 instead seals the view with a
+    // HIDDEN_REQUEST_HEADERS set, so the old `.delete(header)` regex failed on
+    // an upgrade that kept the guarantee. Drive the real store instead: if a
+    // future Next stops hiding them, `rsc` comes back non-null and this goes red.
+    const { createRequestStoreForRender } =
+      await import("next/dist/server/async-storage/request-store");
+    const store = (createRequestStoreForRender as (...a: unknown[]) => { headers: Headers })(
+      {
+        headers: new Headers({
+          rsc: "1",
+          "next-router-state-tree": "%5B%22%22%5D",
+          "next-router-prefetch": "1",
+          "x-probe": "kept",
+        }),
+      },
+      undefined,
+      { pathname: "/admin/claims", search: "" },
+      {},
+      [],
+      undefined,
+      undefined,
+      false
     );
-    expect(src).toMatch(
-      /function getHeaders\(headers\)[\s\S]{0,200}FLIGHT_HEADERS[\s\S]{0,80}\.delete\(header\)/
-    );
+    expect(store.headers.get("x-probe")).toBe("kept"); // the store really read the request
+    expect(store.headers.get("rsc")).toBeNull();
+    expect(store.headers.get("next-router-state-tree")).toBeNull();
+    expect(store.headers.get("next-router-prefetch")).toBeNull();
   });
 });
 

@@ -29,6 +29,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+// Must precede the next/* import below — see the module header (OPE-1403).
+import "./lib/async-local-storage-global";
 import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
 import { createRequire } from "node:module";
 import { NONCE_CSP_PREFIXES, isNonceCspPath } from "../src/lib/csp";
