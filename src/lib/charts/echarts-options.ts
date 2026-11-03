@@ -70,6 +70,10 @@ export function niceCeil(v: number): number {
 
 // ── Search clicks milestones ──────────────────────────────────────────────
 
+const SYMBOL_SIZE = 8;
+/** Larger than SYMBOL_SIZE on purpose — see the hideOverlap note in the series. */
+export const LAST_SYMBOL_SIZE = 11;
+
 export interface MilestoneChartPoint {
   threshold: number;
   /** ISO calendar date (YYYY-MM-DD) the milestone was reached — the x position. */
@@ -135,36 +139,32 @@ export function milestoneChartOption(points: MilestoneChartPoint[], ctx: ChartCt
       {
         type: "line" as const,
         symbol: "circle",
-        symbolSize: 8,
         lineStyle: { color: p.line, width: 2 },
         areaStyle: { color: p.area },
         data: points.map((x, i) => ({
           value: [x.date, x.threshold] as [string, number],
           dateLabel: x.dateLabel,
           derived: x.derived,
+          // The headline (last) dot is drawn larger. ECharts' hideOverlap ranks
+          // labels by their host symbol's AREA, so a bigger last dot guarantees
+          // its label survives and the colliding neighbour is the one hidden.
+          // (endLabel sat outside hideOverlap: live on 2026-11-03 it overprinted
+          // 30,000, reached one day before 31,000.)
+          symbolSize: i === last ? LAST_SYMBOL_SIZE : SYMBOL_SIZE,
           // OPE-456 — shape, not colour: hollow = derived, solid = Google badge.
           itemStyle: x.derived
             ? { color: p.hollow, borderColor: p.line, borderWidth: 2 }
             : { color: p.line, borderColor: p.line, borderWidth: 0 },
-          // The last point is labelled by endLabel, at the line end, so it can
-          // never collide with its neighbour (OPE-1565 defect 1).
           label: {
-            show: i !== last,
-            position: "top" as const,
-            fontSize: labelSize,
-            fontWeight: 600,
+            show: true,
+            position: i === last ? ("right" as const) : ("top" as const),
+            fontSize: i === last ? labelSize + 1 : labelSize,
+            fontWeight: i === last ? 700 : 600,
             color: p.text,
             formatter: () => fmtInt(x.threshold),
           },
         })),
         labelLayout: { hideOverlap: true },
-        endLabel: {
-          show: points.length > 0,
-          fontSize: labelSize + 1,
-          fontWeight: 700,
-          color: p.text,
-          formatter: () => (last >= 0 ? fmtInt(points[last].threshold) : ""),
-        },
       },
     ],
   };

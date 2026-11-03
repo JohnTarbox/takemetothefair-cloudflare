@@ -11,6 +11,7 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  LAST_SYMBOL_SIZE,
   MIN_CHART_FONT_PX,
   accuracyOption,
   dailyViewsOption,
@@ -74,13 +75,18 @@ describe("milestoneChartOption (OPE-1565)", () => {
     expect(data[41].value).toEqual([LIVE_SHAPE[41].date, 31000]);
   });
 
-  it("the last point is labelled by endLabel only, so 29,000 and 31,000 cannot overprint", () => {
+  it("the last point's label wins every collision: largest dot, so highest hideOverlap priority", () => {
+    // ECharts ranks overlapping labels by host-symbol area. endLabel sat outside
+    // that ranking and overprinted 30,000 live on 2026-11-03.
     const o = milestoneChartOption(LIVE_SHAPE, WIDE);
     const data = o.series[0].data;
-    expect(data[data.length - 1].label.show).toBe(false);
-    expect(data[data.length - 2].label.show).toBe(true);
-    expect(o.series[0].endLabel.show).toBe(true);
-    expect(o.series[0].endLabel.formatter()).toBe("31,000");
+    const lastPt = data[data.length - 1];
+    expect("endLabel" in o.series[0]).toBe(false);
+    expect(lastPt.label.show).toBe(true);
+    expect(lastPt.label.position).toBe("right");
+    expect(lastPt.label.formatter()).toBe("31,000");
+    expect(lastPt.symbolSize).toBe(LAST_SYMBOL_SIZE);
+    for (const d of data.slice(0, -1)) expect(d.symbolSize).toBeLessThan(LAST_SYMBOL_SIZE);
   });
 
   it("OPE-456: hollow dot = derived, solid = Google badge", () => {
@@ -112,7 +118,7 @@ describe("milestoneChartOption (OPE-1565)", () => {
 
   it("does not throw on empty data (OPE-242)", () => {
     expect(() => milestoneChartOption([], WIDE)).not.toThrow();
-    expect(milestoneChartOption([], WIDE).series[0].endLabel.show).toBe(false);
+    expect(milestoneChartOption([], WIDE).series[0].data).toEqual([]);
   });
 });
 
