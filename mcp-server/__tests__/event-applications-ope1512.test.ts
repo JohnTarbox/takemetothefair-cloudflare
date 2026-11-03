@@ -14,6 +14,12 @@ import {
   registerEventApplicationTools,
 } from "../src/tools/admin-event-applications.js";
 
+/** OPE-1572 — a capacity other than UNKNOWN now needs evidence. */
+const EVIDENCE = {
+  source_url: "https://fair.example/vendors",
+  source_type: "official_website" as const,
+};
+
 const ADMIN = { userId: "u-admin", role: "ADMIN" as const };
 const NOW = new Date("2026-10-20T16:00:00Z");
 const T = (iso: string) => Math.floor(Date.parse(iso) / 1000);
@@ -90,6 +96,7 @@ describe("upsert_event_application", () => {
       url: "https://fair.example/vendors",
       closes_on: "2026-11-01",
       capacity_status: "OPEN",
+      capacity_evidence: EVIDENCE,
       categories_wanted: [" Pottery ", "woodworking", "POTTERY", "Soap &amp; candles"],
       categories_full: ["Jewelry"],
       reason: "organizer email 10-20",
@@ -132,6 +139,7 @@ describe("upsert_event_application", () => {
       opens_on: "2026-09-01",
       closes_on: "2026-11-01",
       capacity_status: "OPEN",
+      capacity_evidence: EVIDENCE,
       capacity_note: "craft hall only",
       categories_wanted: ["Pottery"],
       categories_full: ["Jewelry"],
@@ -160,6 +168,7 @@ describe("upsert_event_application", () => {
     await call("upsert_event_application", {
       event_id: "e1",
       capacity_status: "FULL",
+      capacity_evidence: EVIDENCE,
       categories_wanted: ["Pottery"],
     });
     const r = await call("upsert_event_application", {
@@ -179,11 +188,16 @@ describe("upsert_event_application", () => {
   });
 
   it("a department row is separate from the whole-lane row", async () => {
-    await call("upsert_event_application", { event_id: "e1", capacity_status: "OPEN" });
+    await call("upsert_event_application", {
+      event_id: "e1",
+      capacity_status: "OPEN",
+      capacity_evidence: EVIDENCE,
+    });
     await call("upsert_event_application", {
       event_id: "e1",
       department: "Food Court",
       capacity_status: "FULL",
+      capacity_evidence: EVIDENCE,
     });
     const rows = appRows();
     expect(rows.map((r) => [r.department, r.capacity_status])).toEqual([
