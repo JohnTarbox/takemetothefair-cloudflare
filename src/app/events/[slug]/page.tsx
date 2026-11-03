@@ -64,6 +64,7 @@ import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
 import { VendorOrganizerCard } from "@/components/events/VendorOrganizerCard";
+import { ListEventCtaLink } from "@/components/list-your-event/list-event-cta";
 import {
   isPlaceholderPromoter,
   resolveOrganizerContact,
@@ -1933,6 +1934,12 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                 </CardContent>
               </Card>
             )}
+            {/* OPE-1559 (John, 2026-11-02) — contextual free-listing CTA. */}
+            <p className="mt-4 text-sm text-muted-foreground">
+              <ListEventCtaLink placement="event_page" className="text-royal hover:text-navy">
+                Organizing a fair or festival? List it free — no account needed.
+              </ListEventCtaLink>
+            </p>
           </aside>
         </div>
 

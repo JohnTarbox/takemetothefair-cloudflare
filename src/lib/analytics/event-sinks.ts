@@ -136,6 +136,15 @@ export const TRACKED_EVENTS: readonly TrackedEventDef[] = [
     category: "conversion",
     sinks: BOTH,
   },
+  // ── OPE-1559 — "List your event free" CTA clicks, by placement ──────────
+  // `properties.placement` is one of ListCtaPlacement
+  // (src/components/list-your-event/list-event-cta.tsx). Both sinks: the
+  // OPE-1557 scorecard reads D1, and GA4 keeps the session context.
+  {
+    name: "list_cta_click",
+    category: "conversion",
+    sinks: BOTH,
+  },
 ];
 
 /** Names that must appear in the /api/analytics/track allowlist. */

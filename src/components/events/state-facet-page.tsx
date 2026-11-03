@@ -10,6 +10,7 @@
  * of this ticket; this file renders the decision rather than making it.
  */
 import Link from "next/link";
+import { ListEventCtaLink } from "@/components/list-your-event/list-event-cta";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { CalendarDays, MapPin, Tag, Sparkles } from "lucide-react";
@@ -356,6 +357,17 @@ export async function StateFacetPage({ stateSlug, facetSlug, searchParams }: Sta
           All {state.name} fairs &amp; festivals &rarr;
         </Link>
       </div>
+
+      {/* OPE-1559 (John, 2026-11-02) — contextual free-listing CTA. */}
+      <p className="mt-6 text-center text-sm text-muted-foreground">
+        <ListEventCtaLink
+          placement="state_facet_page"
+          href={`/list-your-event/${stateSlug}`}
+          className="font-medium text-royal hover:text-navy"
+        >
+          Running an event in {state.name}? List it free →
+        </ListEventCtaLink>
+      </p>
     </div>
   );
 }

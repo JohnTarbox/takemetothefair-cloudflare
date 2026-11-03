@@ -19,6 +19,7 @@ import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { ListEventCtaLink } from "@/components/list-your-event/list-event-cta";
 import { getStateColors } from "@/lib/state-colors";
 import { STATES, STATE_BY_SLUG } from "@/lib/states";
 import {
@@ -446,6 +447,17 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
           having facet routes: month and type facets are DEFINED for every state,
           so rendering this unconditionally would link Maine to a dozen 404s. */}
       {stateHasFacets(stateSlug) && <FacetNav stateSlug={stateSlug} stateName={state.name} />}
+
+      {/* OPE-1559 (John, 2026-11-02) — contextual free-listing CTA. */}
+      <p className="mt-8 text-center text-sm text-muted-foreground">
+        <ListEventCtaLink
+          placement="state_page"
+          href={`/list-your-event/${stateSlug}`}
+          className="font-medium text-royal hover:text-navy"
+        >
+          Running an event in {state.name}? List it free →
+        </ListEventCtaLink>
+      </p>
 
       <div className="mt-8 bg-muted rounded-lg p-6 text-center border border-border">
         <h3 className="text-lg font-semibold text-foreground mb-2">

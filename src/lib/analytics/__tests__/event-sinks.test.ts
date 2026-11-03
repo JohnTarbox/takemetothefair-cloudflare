@@ -124,9 +124,15 @@ describe("OPE-391 Block D2 strips are backed by declared events (OPE-392)", () =
     // surfaced" half of this project's recurring defect. remove_from_favorites
     // is the deliberate exception: it is the inverse of an intent signal, and
     // counting it in the intent strip would net off against add_to_favorites.
+    //
+    // OPE-1559 — list_cta_click is the second exception, for a different
+    // reason: it is SUPPLY-side (an organizer heading to list an event), so it
+    // is neither attendance intent nor leaving-for-the-organizer. Its reader is
+    // the OPE-1557 self-listing scorecard (OPE-1561), which queries D1 by name.
+    const NOT_IN_A_STRIP = new Set(["remove_from_favorites", "list_cta_click"]);
     const stripped = new Set<string>([...INTENT_EVENT_NAMES, ...CONNECTED_EVENT_NAMES]);
     const unhoused = TRACKED_EVENTS.map((e) => e.name).filter(
-      (n) => !stripped.has(n) && n !== "remove_from_favorites"
+      (n) => !stripped.has(n) && !NOT_IN_A_STRIP.has(n)
     );
     expect(unhoused).toEqual([]);
   });

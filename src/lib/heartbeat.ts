@@ -169,7 +169,8 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // Seeded DORMANT (drizzle/0388, enabled_at NULL): the page ships noindex
     // and unlinked — OPE-1559 owns the nav CTA and indexing, gated on John — so
     // real traffic is ~0 and a live window would false-fire. ARMING CONDITION:
-    // set enabled_at the day OPE-1559's nav/contextual CTA ships.
+    // set enabled_at the day OPE-1559's nav/contextual CTA ships — done in
+    // drizzle/0391, which ships in the same PR as the CTA.
     name: "list-your-event-view",
     ownerOpe: "OPE-1558",
     label: "No-login /list-your-event form records its page views",

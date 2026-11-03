@@ -10,6 +10,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { newsletterIssues } from "@/lib/db/schema";
 import { desc, isNotNull } from "drizzle-orm";
 import { indexableFacetUrls } from "@/lib/events/facet-query";
+import { LIST_YOUR_EVENT_PATHS } from "@/lib/list-your-event/landing-content";
 
 const NOW = () => new Date();
 
@@ -193,6 +194,13 @@ function buildStaticUrls(): SitemapUrl[] {
       changeFrequency: "monthly",
       priority: 0.5,
     },
+    // OPE-1559 (John, 2026-11-02) — the free-listing landing + per-state pages.
+    ...LIST_YOUR_EVENT_PATHS.map((path) => ({
+      url: `${SITEMAP_BASE_URL}${path}`,
+      lastModified: NOW(),
+      changeFrequency: "monthly" as const,
+      priority: 0.6,
+    })),
     {
       url: `${SITEMAP_BASE_URL}/for-vendors`,
       lastModified: NOW(),
