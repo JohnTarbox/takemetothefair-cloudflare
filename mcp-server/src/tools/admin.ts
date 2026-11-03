@@ -197,6 +197,7 @@ import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
 import { registerSeriesBackfillTools } from "./admin-series-backfill.js";
 import { registerCreateOccurrenceTool } from "./admin-create-occurrence.js";
 import { registerSeriesEditionModeTool } from "./admin-series-edition-mode.js";
+import { registerEventApplicationTools } from "./admin-event-applications.js";
 import { registerUpdateSeriesTool } from "./admin-update-series.js";
 import { registerPromoterContactTools } from "./admin-promoter-contacts.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
@@ -485,6 +486,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerSeriesEditionModeTool(server, db, auth);
   // OPE-1541 — update_series (fields + slug with its history row, atomically; dry-run default).
   registerUpdateSeriesTool(server, db, auth);
+
+  // OPE-1512 — upsert_event_application (the first event_applications writer) +
+  // list_open_vendor_calls (the vendor-digest feed). Admin only, audit-logged.
+  registerEventApplicationTools(server, db, auth);
 
   // OPE-1330 — promoter contacts: list / upsert / set status (admin only, audit-logged).
   registerPromoterContactTools(server, db, auth);

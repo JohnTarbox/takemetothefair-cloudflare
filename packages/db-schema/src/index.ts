@@ -2205,6 +2205,16 @@ export const eventApplications = sqliteTable(
      * from one specimen. The enum carries the decision; this carries the detail.
      */
     capacityNote: text("capacity_note"),
+    /**
+     * OPE-1512 — the "vendors wanted" call: JSON arrays of free-text categories
+     * the organizer is still looking for / has enough of. Same uncontrolled
+     * space as `vendors.sells_category` (OPE-1164). NULL = no call published —
+     * an empty list is stored as NULL too. Read with `parseVendorCategories`.
+     */
+    categoriesWanted: text("categories_wanted"),
+    categoriesFull: text("categories_full"),
+    /** When the call was true. Never inferred, never defaulted. */
+    categoriesAsOf: integer("categories_as_of", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .$defaultFn(() => new Date()),
