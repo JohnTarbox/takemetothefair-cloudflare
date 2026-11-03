@@ -1,4 +1,5 @@
 import { requireAdmin } from "@/lib/require-admin";
+import { DailyViewsEChart } from "@/components/admin/charts/admin-charts";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -468,78 +469,14 @@ function Delta({
   );
 }
 
+// OPE-1565 — was a hand-rolled SVG with `preserveAspectRatio="none"` (the
+// OPE-602 distortion bug: glyphs and dots stretched with the window). Now the
+// shared admin ECharts host; dates are formatted here, on the server.
 function DailyChart({ data }: { data: PageViewsDay[] }) {
-  const width = 800;
-  const height = 200;
-  const padX = 40;
-  const padY = 20;
-  const innerW = width - padX * 2;
-  const innerH = height - padY * 2;
-
-  const max = Math.max(...data.map((d) => d.views), 1);
-  const stepX = data.length > 1 ? innerW / (data.length - 1) : 0;
-
-  const points = data.map((d, i) => {
-    const x = padX + i * stepX;
-    const y = padY + innerH - (d.views / max) * innerH;
-    return { x, y, d };
-  });
-
-  const linePath = points
-    .map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`))
-    .join(" ");
-  const areaPath = `${linePath} L ${padX + (data.length - 1) * stepX} ${padY + innerH} L ${padX} ${padY + innerH} Z`;
-
-  const firstDate = data[0]?.date ?? "";
-  const lastDate = data[data.length - 1]?.date ?? "";
-
   return (
-    <div className="w-full">
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-48" preserveAspectRatio="none">
-        <line
-          x1={padX}
-          y1={padY + innerH}
-          x2={padX + innerW}
-          y2={padY + innerH}
-          stroke="rgb(229 231 235)"
-          strokeWidth="1"
-        />
-        <line
-          x1={padX}
-          y1={padY + innerH / 2}
-          x2={padX + innerW}
-          y2={padY + innerH / 2}
-          stroke="rgb(243 244 246)"
-          strokeWidth="1"
-          strokeDasharray="4 4"
-        />
-        <path d={areaPath} fill="rgb(219 234 254)" opacity="0.6" />
-        <path d={linePath} fill="none" stroke="rgb(37 99 235)" strokeWidth="2" />
-        {points.map((p, i) => (
-          <circle key={i} cx={p.x} cy={p.y} r="2.5" fill="rgb(37 99 235)">
-            <title>
-              {fmtDate(p.d.date)}: {p.d.views} views, {p.d.users} users
-            </title>
-          </circle>
-        ))}
-        <text x={padX - 8} y={padY + 4} textAnchor="end" fontSize="11" fill="rgb(107 114 128)">
-          {fmt(max)}
-        </text>
-        <text
-          x={padX - 8}
-          y={padY + innerH + 4}
-          textAnchor="end"
-          fontSize="11"
-          fill="rgb(107 114 128)"
-        >
-          0
-        </text>
-      </svg>
-      <div className="flex justify-between text-xs text-muted-foreground px-10 mt-1">
-        <span>{fmtDate(firstDate)}</span>
-        <span>{fmtDate(lastDate)}</span>
-      </div>
-    </div>
+    <DailyViewsEChart
+      rows={data.map((d) => ({ dateLabel: fmtDate(d.date), views: d.views, users: d.users }))}
+    />
   );
 }
 

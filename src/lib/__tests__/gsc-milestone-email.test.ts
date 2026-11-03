@@ -12,8 +12,23 @@ describe("parseThresholdToken (OPE-108)", () => {
     expect(parseThresholdToken("12,000")).toBe(12000);
     expect(parseThresholdToken(" 3k ")).toBe(3000);
   });
+  // OPE-1568 — Google writes a million as "M". The K-only parser returned null
+  // for September 2026's "1.65M" impressions and the whole month was dropped.
+  it("parses M-shorthand (OPE-1568)", () => {
+    expect(parseThresholdToken("1.65M")).toBe(1_650_000);
+    expect(parseThresholdToken("1M")).toBe(1_000_000);
+    expect(parseThresholdToken(" 2.5m ")).toBe(2_500_000);
+  });
+  it("parses a 1M milestone subject (OPE-1568)", () => {
+    const row = parseGscMilestoneEmail({
+      subject: "Congrats on reaching 1M impressions in 28 days!",
+      emailDate: "2026-11-01T12:00:00Z",
+    });
+    expect(row).toMatchObject({ metric: "impressions", windowDays: 28, threshold: 1_000_000 });
+  });
   it("returns null for non-numbers", () => {
     expect(parseThresholdToken("lots")).toBeNull();
+    expect(parseThresholdToken("1.5B")).toBeNull();
     expect(parseThresholdToken("")).toBeNull();
   });
 });

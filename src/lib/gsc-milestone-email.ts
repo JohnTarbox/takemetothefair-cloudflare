@@ -45,16 +45,25 @@ const MONTHS: Record<string, number> = {
 /**
  * Parse a threshold token to its absolute integer value.
  *   "3K" → 3000 · "1.5K" → 1500 · "1.2K" → 1200 · "2.5K" → 2500 · "500" → 500 ·
- *   "12,000" → 12000. Returns null when the token isn't a number (± K suffix).
+ *   "12,000" → 12000 · "1.65M" → 1650000. Returns null when the token isn't a
+ *   number (± K/M suffix).
+ *
+ * OPE-1568 — "M" was missing. Google's monthly report wrote September 2026's
+ * impressions as "1.65M", the first month past a million; the K-only regex
+ * returned null, the oracle parse (which requires impressions) returned null,
+ * and the shared endpoint answered 400 "not_a_milestone" — so the month was lost
+ * on EVERY route, not only the missing-delivery one. Every month from here on
+ * reads in millions, so this was a permanent outage, not a one-off.
  */
 export function parseThresholdToken(raw: string): number | null {
   const m = String(raw)
     .trim()
-    .match(/^([\d,]+(?:\.\d+)?)\s*([kK])?$/);
+    .match(/^([\d,]+(?:\.\d+)?)\s*([kKmM])?$/);
   if (!m) return null;
   const n = parseFloat(m[1].replace(/,/g, ""));
   if (!Number.isFinite(n)) return null;
-  return Math.round(m[2] ? n * 1000 : n);
+  const mult = !m[2] ? 1 : m[2].toLowerCase() === "m" ? 1_000_000 : 1000;
+  return Math.round(n * mult);
 }
 
 /**
@@ -172,7 +181,7 @@ export function parseGscMilestoneEmail(input: {
 }): GscMilestone | null {
   const subject = String(input.subject ?? "");
   const sm = subject.match(
-    /reaching\s+([\d.,]+\s*[kK]?)\s+(clicks|impressions)\s+in\s+(\d+)\s+days/i
+    /reaching\s+([\d.,]+\s*[kKmM]?)\s+(clicks|impressions)\s+in\s+(\d+)\s+days/i
   );
   if (!sm) return null;
 
