@@ -1,0 +1,308 @@
+/**
+ * OPE-1565 — ECharts option builders for the admin charts.
+ *
+ * Pure functions over serializable data, so the rules the acceptance names are
+ * testable without a DOM or a canvas:
+ *   - every text size is a fixed pixel size ≥ 10 (never viewBox-scaled — the
+ *     hand-rolled SVG rendered 11px as ~5px on a 380px phone);
+ *   - label collisions are the library's job (`labelLayout.hideOverlap`,
+ *     `axisLabel.hideOverlap`), not hand-written stride/anchor arithmetic,
+ *     which broke every time the milestone series grew (OPE-602 → OPE-1565);
+ *   - hollow vs solid dots keep OPE-456's derived-vs-awarded distinction.
+ *
+ * Deliberately NO `echarts` import here: the option is plain data plus
+ * formatter callbacks, and this module must stay cheap to import from tests.
+ * The data passed in is already formatted on the server (date labels are
+ * strings), because a Server Component cannot hand a function to a client one.
+ */
+
+export interface ChartCtx {
+  /** Container narrower than ~480px. */
+  narrow: boolean;
+  dark: boolean;
+  fontFamily?: string;
+}
+
+/** The smallest text any admin chart draws, in CSS px. */
+export const MIN_CHART_FONT_PX = 10;
+
+export function chartPalette(dark: boolean) {
+  return dark
+    ? {
+        text: "#d1d5db",
+        muted: "#9ca3af",
+        grid: "#374151",
+        line: "#60a5fa",
+        area: "rgba(96,165,250,0.15)",
+        hollow: "#111827",
+      }
+    : {
+        text: "#111827",
+        muted: "#6b7280",
+        grid: "#f3f4f6",
+        line: "#2563eb",
+        area: "rgba(219,234,254,0.6)",
+        hollow: "#ffffff",
+      };
+}
+
+const fmtInt = (n: number) => Math.round(n).toLocaleString("en-US");
+const fmtCompact = (n: number) =>
+  n >= 1000 ? `${Number((n / 1000).toFixed(n % 1000 === 0 ? 0 : 1))}K` : String(n);
+
+function baseText(ctx: ChartCtx) {
+  const p = chartPalette(ctx.dark);
+  return {
+    textStyle: { fontFamily: ctx.fontFamily ?? "inherit", fontSize: 11, color: p.text },
+  };
+}
+
+/** Smallest of 1/2/5 × 10^k at or above `v`. Log-axis headroom without 2× waste. */
+export function niceCeil(v: number): number {
+  if (!(v > 0)) return 1;
+  const k = Math.floor(Math.log10(v));
+  for (const m of [1, 2, 5, 10]) {
+    const c = m * 10 ** k;
+    if (c >= v) return c;
+  }
+  return 10 ** (k + 1);
+}
+
+// ── Search clicks milestones ──────────────────────────────────────────────
+
+export interface MilestoneChartPoint {
+  threshold: number;
+  /** ISO calendar date (YYYY-MM-DD) the milestone was reached — the x position. */
+  date: string;
+  /** Pre-formatted on the server ("Sep 19, 2026"). */
+  dateLabel: string;
+  /** True = crossing derived from our daily totals (hollow); false = Google badge. */
+  derived: boolean;
+}
+
+/**
+ * X axis is TIME (date-spaced). OPE-1565 first shipped it index-spaced because
+ * 10 of the 42 plotted points (2026-11-02) carry a date nothing independent
+ * establishes (2 NULL `reached_date`, 8 with `reached_date = email_date` and no
+ * derived crossing). John ruled 2026-11-02 to date-space anyway: a few days of
+ * error on those points is smaller than index spacing's distortion of the whole
+ * curve (it put "Aug 8" at the midpoint of a May→Sep series).
+ */
+export function milestoneChartOption(points: MilestoneChartPoint[], ctx: ChartCtx) {
+  const p = chartPalette(ctx.dark);
+  const maxT = points.reduce((m, x) => Math.max(m, x.threshold), 0);
+  const minT = points.reduce((m, x) => Math.min(m, x.threshold), Number.POSITIVE_INFINITY);
+  const last = points.length - 1;
+  const labelSize = ctx.narrow ? 10 : 11;
+  return {
+    ...baseText(ctx),
+    animation: false,
+    grid: { left: 8, right: ctx.narrow ? 60 : 56, top: 28, bottom: 8, containLabel: true },
+    tooltip: {
+      trigger: "item" as const,
+      textStyle: { fontSize: 12 },
+      formatter: (params: {
+        data?: { value: [string, number]; dateLabel: string; derived: boolean };
+      }) => {
+        const d = params.data;
+        if (!d) return "";
+        return `${fmtInt(d.value[1])} clicks — ${d.dateLabel}<br/>${
+          d.derived ? "Derived from our own daily totals" : "Badge awarded by Google"
+        }`;
+      },
+    },
+    xAxis: {
+      type: "time" as const,
+      splitNumber: ctx.narrow ? 4 : 8,
+      axisLabel: { hideOverlap: true, fontSize: labelSize, color: p.muted, formatter: "{MMM} {d}" },
+      splitLine: { show: false },
+      axisLine: { lineStyle: { color: p.grid } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: "log" as const,
+      min: Number.isFinite(minT) ? 10 ** Math.floor(Math.log10(Math.max(minT, 1))) : 1,
+      max: niceCeil(maxT * 1.2),
+      axisLabel: {
+        fontSize: labelSize,
+        color: p.muted,
+        showMaxLabel: false,
+        formatter: (v: number) => fmtCompact(v),
+      },
+      splitLine: { lineStyle: { color: p.grid } },
+    },
+    series: [
+      {
+        type: "line" as const,
+        symbol: "circle",
+        symbolSize: 8,
+        lineStyle: { color: p.line, width: 2 },
+        areaStyle: { color: p.area },
+        data: points.map((x, i) => ({
+          value: [x.date, x.threshold] as [string, number],
+          dateLabel: x.dateLabel,
+          derived: x.derived,
+          // OPE-456 — shape, not colour: hollow = derived, solid = Google badge.
+          itemStyle: x.derived
+            ? { color: p.hollow, borderColor: p.line, borderWidth: 2 }
+            : { color: p.line, borderColor: p.line, borderWidth: 0 },
+          // The last point is labelled by endLabel, at the line end, so it can
+          // never collide with its neighbour (OPE-1565 defect 1).
+          label: {
+            show: i !== last,
+            position: "top" as const,
+            fontSize: labelSize,
+            fontWeight: 600,
+            color: p.text,
+            formatter: () => fmtInt(x.threshold),
+          },
+        })),
+        labelLayout: { hideOverlap: true },
+        endLabel: {
+          show: points.length > 0,
+          fontSize: labelSize + 1,
+          fontWeight: 700,
+          color: p.text,
+          formatter: () => (last >= 0 ? fmtInt(points[last].threshold) : ""),
+        },
+      },
+    ],
+  };
+}
+
+// ── Daily page views ──────────────────────────────────────────────────────
+
+export interface DailyViewsPoint {
+  /** Pre-formatted on the server. */
+  dateLabel: string;
+  views: number;
+  users: number;
+}
+
+export function dailyViewsOption(rows: DailyViewsPoint[], ctx: ChartCtx) {
+  const p = chartPalette(ctx.dark);
+  const size = ctx.narrow ? 10 : 11;
+  return {
+    ...baseText(ctx),
+    animation: false,
+    grid: { left: 8, right: 16, top: 16, bottom: 8, containLabel: true },
+    tooltip: {
+      trigger: "axis" as const,
+      textStyle: { fontSize: 12 },
+      formatter: (params: Array<{ dataIndex: number }>) => {
+        const r = rows[params[0]?.dataIndex ?? -1];
+        return r ? `${r.dateLabel}<br/>${fmtInt(r.views)} views, ${fmtInt(r.users)} users` : "";
+      },
+    },
+    xAxis: {
+      type: "category" as const,
+      data: rows.map((r) => r.dateLabel),
+      boundaryGap: false,
+      axisLabel: { hideOverlap: true, fontSize: size, color: p.muted },
+      axisLine: { lineStyle: { color: p.grid } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: "value" as const,
+      min: 0,
+      axisLabel: { fontSize: size, color: p.muted, formatter: (v: number) => fmtCompact(v) },
+      splitLine: { lineStyle: { color: p.grid, type: "dashed" as const } },
+    },
+    series: [
+      {
+        type: "line" as const,
+        symbol: "circle",
+        symbolSize: 5,
+        showSymbol: rows.length <= 45,
+        lineStyle: { color: p.line, width: 2 },
+        itemStyle: { color: p.line },
+        areaStyle: { color: p.area },
+        data: rows.map((r) => r.views),
+      },
+    ],
+  };
+}
+
+// ── Classifier accuracy trend ─────────────────────────────────────────────
+
+export interface AccuracyBucket {
+  weekStart: string;
+  classifierVersion: string;
+  total: number;
+  disagreements: number;
+  accuracyPct: number | null;
+}
+
+export const ACCURACY_LINE_COLORS = [
+  "#2563eb",
+  "#dc2626",
+  "#16a34a",
+  "#ea580c",
+  "#9333ea",
+  "#0891b2",
+];
+
+/**
+ * One series per classifier version, aligned on `weekStart`. The hand-rolled
+ * chart positioned each version's points by ARRAY index, so a version that
+ * started mid-window was drawn shifted left onto the wrong weeks; aligning on
+ * the week fixes that as a side effect. A null accuracy (or a week a version
+ * did not run) breaks the line, as before.
+ */
+export function accuracyOption(buckets: AccuracyBucket[], versions: string[], ctx: ChartCtx) {
+  const p = chartPalette(ctx.dark);
+  const size = ctx.narrow ? 10 : 11;
+  const weeks = [...new Set(buckets.map((b) => b.weekStart))].sort();
+  const byKey = new Map(buckets.map((b) => [`${b.classifierVersion}|${b.weekStart}`, b]));
+  return {
+    ...baseText(ctx),
+    animation: false,
+    color: ACCURACY_LINE_COLORS,
+    grid: { left: 8, right: 16, top: 16, bottom: 36, containLabel: true },
+    legend: {
+      bottom: 0,
+      type: "scroll" as const,
+      textStyle: { fontSize: size, color: p.text },
+    },
+    tooltip: {
+      trigger: "axis" as const,
+      textStyle: { fontSize: 12 },
+      formatter: (params: Array<{ seriesName: string; dataIndex: number; marker: string }>) => {
+        const week = weeks[params[0]?.dataIndex ?? -1];
+        if (!week) return "";
+        const lines = params
+          .map((s) => {
+            const b = byKey.get(`${s.seriesName}|${week}`);
+            if (!b || b.accuracyPct === null) return null;
+            return `${s.marker}${s.seriesName}: ${b.accuracyPct}% (${b.total - b.disagreements}/${b.total})`;
+          })
+          .filter(Boolean);
+        return [`Week of ${week}`, ...lines].join("<br/>");
+      },
+    },
+    xAxis: {
+      type: "category" as const,
+      data: weeks.map((w) => w.slice(5)),
+      boundaryGap: false,
+      axisLabel: { hideOverlap: true, fontSize: size, color: p.muted },
+      axisLine: { lineStyle: { color: p.grid } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: "value" as const,
+      min: 0,
+      max: 100,
+      interval: 25,
+      axisLabel: { fontSize: size, color: p.muted, formatter: "{value}%" },
+      splitLine: { lineStyle: { color: p.grid, type: "dashed" as const } },
+    },
+    series: versions.map((v) => ({
+      name: v,
+      type: "line" as const,
+      symbol: "circle",
+      symbolSize: 6,
+      connectNulls: false,
+      data: weeks.map((w) => byKey.get(`${v}|${w}`)?.accuracyPct ?? null),
+    })),
+  };
+}

@@ -489,7 +489,12 @@ export function reconcileFaults(
     const bumpedLast = Math.max(row.lastSeen, groupLast);
     const windowCount = groupCount;
 
-    if (row.status === "done") {
+    // OPE-1554 — `resolved` is `done` written by an agent instead of by
+    // record-candidate (status.ts). Regression detection read only `done`, so a
+    // recurrence of an agent-closed fault was never flagged. Two of the three
+    // production `resolved` rows are OPE-173's /register Turnstile throw — the
+    // one fault that blocked signups.
+    if ((row.status as string) === "done" || (row.status as string) === "resolved") {
       const resolvedAt = row.resolvedAt;
       const recurred = resolvedAt != null && groupLast > resolvedAt;
       if (recurred) {

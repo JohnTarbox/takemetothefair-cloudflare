@@ -15,6 +15,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../../db/schema";
 import { emailSendLedger, emailDeliveryEvents } from "../../db/schema";
 import { undeliveredAuthEmailFlow } from "../queue-drain";
+import { assessQueueFreeze } from "@/lib/queue-freeze";
 
 const SCHEMA_SQL = `
   CREATE TABLE email_send_ledger (
@@ -128,5 +129,22 @@ describe("undelivered_auth_email queue", () => {
     const row = await undeliveredAuthEmailFlow(db, NOW);
     expect(row.outflow7d).toBeNull();
     expect(row.drainRatio7d).toBeNull();
+  });
+
+  it("OPE-1556: the null outflow is a DECLARED exclusion, so the alarm skips it on purpose", async () => {
+    await seedFirstEvent(hoursAgo(48));
+    await seedSend("m10", "auth.register", hoursAgo(3), "bounced");
+
+    const row = await undeliveredAuthEmailFlow(db, NOW);
+    expect(row.depth).toBe(1);
+    expect(row.flowExclusion).toMatch(/OPE-177 scope 4/);
+    expect(row.unmeasured?.flows).toBe(row.flowExclusion);
+    // The produced row, fed to the real alarm: deliberate silence, not a gap.
+    expect(assessQueueFreeze(row, NOW)).toBeNull();
+    // …and the same row WITHOUT the declaration is exactly what the alarm now
+    // refuses to hide.
+    expect(assessQueueFreeze({ ...row, flowExclusion: undefined }, NOW)?.title).toMatch(
+      /probe gap/
+    );
   });
 });

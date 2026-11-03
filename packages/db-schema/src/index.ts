@@ -5980,10 +5980,11 @@ export const submissionCorrectionTokens = sqliteTable(
       .notNull()
       .references(() => events.id, { onDelete: "cascade" }), // OPE-1121 (0313)
     /** Inbound email that produced this token. Useful for the admin UI
-     *  to backlink "this event was corrected via inbound 2f5f0c74". */
-    inboundEmailId: text("inbound_email_id")
-      .notNull()
-      .references(() => inboundEmails.id, { onDelete: "cascade" }), // OPE-1121 (0313)
+     *  to backlink "this event was corrected via inbound 2f5f0c74".
+     *  NULL = minted for a web-form submission's receipt (OPE-1558, 0389). */
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "cascade",
+    }), // OPE-1121 (0313); nullable since OPE-1558 (0389)
     expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
     usedAt: integer("used_at", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
