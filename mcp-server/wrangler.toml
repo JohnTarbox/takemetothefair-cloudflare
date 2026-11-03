@@ -213,7 +213,12 @@ PHOTO_VISION_ENABLED = "true"
 # at one show and 3 of the 5 were wrong (a misread name, an invented URL). Flip
 # it again only on John's direct word, and read the DEPLOYED value before you
 # quote a "current" value: `get_send_gates` → `write_gates`.
-PHOTO_AUTOWRITE_ENABLED = "false"
+#
+# ✅ FLIPPED "true" again 2026-11-01 on John's DIRECT instruction in session
+# ("flip PHOTO_AUTOWRITE_ENABLED to true"), after a Harvest Festival of Crafts
+# batch where 1 of 6 booth photos cleared the 1.0 bar and sat staged. The
+# booth-autowrite probe has stayed armed since drizzle/0327, so no migration.
+PHOTO_AUTOWRITE_ENABLED = "true"
 # OPE-1394 / OPE-469 — commit gate for the replay_inbound_attachment MCP tool
 # (src/photo/replay.ts commitBlockedReason). A replay is DRY-RUN unless the call
 # passes commit:true AND this is exactly "true"; a committed replay writes to

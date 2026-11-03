@@ -196,7 +196,44 @@ const NAME_PATTERNS: NamePattern[] = [
   // emDashSuffixLooksLikeSubvenue() blocklists year/date/season/state-code
   // suffixes so only true sub-venue-like suffixes still fire.
   { reason: "name_em_dash_subvenue", match: emDashSuffixLooksLikeSubvenue },
+  // OPE-1543 — a display line written into the name: "Cummington Fair 2026 —
+  // Aug 27–30 in Cummington, MA". 22 public rows carried it (OPE-1542 renamed
+  // them), all caller-supplied through suggest_event / imports; no code composes
+  // it. The year and dates belong in start/end_date, the town in the venue, and
+  // the rollover would have copied the stale dates into next year's name.
+  { reason: "name_date_range_suffix", match: (n) => nameDateSuffix(n) !== null },
 ];
+
+// OPE-1543 — the display-line suffix: a month+day token AND a trailing
+// "in <Town>, <ST>". BOTH are required on purpose. A month-day alone is a live
+// per-occurrence qualifier on dozens of rows ("Thompson's Point Maker's Market —
+// December 19-20 2026", "America 250 Brass Band Concert — June 29"; OPE-1032
+// ruled those legitimate), and "Town, ST" alone is a town qualifier ("VSRPA Gun
+// Show — Derby, VT"). Measured 2026-10-30 against every live em-dash name in
+// prod: the conjunction matches none of them.
+const DISPLAY_MONTH_DAY_RE =
+  /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?\b/i;
+const DISPLAY_IN_TOWN_STATE_RE = /\bin\s+[A-Z][A-Za-z.'-]*(?:\s+[A-Za-z.'-]+){0,3},\s*[A-Z]{2}\s*$/;
+
+/** OPE-1543 — the em-dash display suffix of a name ("— Aug 27–30 in
+ *  Cummington, MA"), or null when the name carries none. Exported so the
+ *  rollover can strip it rather than copy it into next year's edition. */
+export function nameDateSuffix(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const m = decodeHtmlEntities(name).match(/\s—\s(.+)$/);
+  if (!m) return null;
+  const suffix = m[1].trim();
+  return DISPLAY_MONTH_DAY_RE.test(suffix) && DISPLAY_IN_TOWN_STATE_RE.test(suffix) ? suffix : null;
+}
+
+/** OPE-1543 — the name with its display-line suffix removed; unchanged when it
+ *  has none. */
+export function stripNameDateSuffix(name: string): string {
+  if (nameDateSuffix(name) === null) return name;
+  return decodeHtmlEntities(name)
+    .replace(/\s—\s.+$/, "")
+    .trim();
+}
 
 // Suffix patterns that indicate a non-sub-venue qualifier on the right side
 // of an em-dash. When the suffix matches any of these, em-dash is treated as

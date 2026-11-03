@@ -42,6 +42,20 @@ const nextConfig = {
   // .com returns access-control-allow-origin:*); GA4/CF-beacon are raw <script>
   // tags the config doesn't touch.
   crossOrigin: "anonymous",
+  // OPE-1565 — keep Apache ECharts OUT of the Worker server bundle. It is only
+  // ever loaded in the browser (a dynamic import inside a useEffect in
+  // src/components/admin/charts/EChart.tsx), but webpack still compiles a
+  // dynamic-import target into the server build: measured +508 KB raw in
+  // .open-next/server-functions before this alias. Aliasing the packages to
+  // `false` on the server compiles them to an empty module; the import is
+  // never executed there, so nothing observable changes. The alias key is a
+  // prefix match, so it covers echarts/core, echarts/charts, etc.
+  webpack(config, { isServer }) {
+    if (isServer) {
+      config.resolve.alias = { ...(config.resolve.alias ?? {}), echarts: false, zrender: false };
+    }
+    return config;
+  },
   images: {
     // IMG1 (2026-06-07) — wired Cloudflare URL-based Image Resizing as
     // a custom Next/Image loader. Drops `unoptimized: true` (which
