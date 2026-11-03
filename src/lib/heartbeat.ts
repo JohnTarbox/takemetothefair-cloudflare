@@ -2228,6 +2228,14 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // Measured 2026-09-13: ONE row (2026-07, ingested 08-09); the August email
     // (~Sept 4, per the seed) never landed. With this entry that silence
     // becomes visible at 40 days instead of never.
+    //
+    // OPE-1568 re-check of the window, measured from Gmail receipt times of
+    // Google's own sends: 07-07, 08-04, 09-08, 10-06 (2026) → gaps 28/35/28d.
+    // 40d covers the longest observed gap with 5d of slack, so it stays — IF
+    // ingest is prompt. Evidence is `updated_at` (ingest time), so any delivery
+    // lag (the email has to reach the inbound worker, or an agent has to paste
+    // it via `ingest_gsc_milestone_email`) eats that slack. Widening the window
+    // would only hide the delivery gap this probe exists to expose.
     name: "gsc-monthly-oracle",
     ownerOpe: "OPE-344",
     label: "GSC monthly oracle (Google's own monthly email figures)",
