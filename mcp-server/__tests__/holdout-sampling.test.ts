@@ -24,6 +24,8 @@ import {
   simpleNormalize,
   composeVenue,
   isComparableExtraction,
+  cosmeticNameKey,
+  namesDifferOnlyCosmetically,
   runScheduledHoldoutSampling,
   type HoldoutDeps,
 } from "../src/goodwill/holdout-sampling.js";
@@ -65,6 +67,57 @@ describe("simpleNormalize", () => {
     // signal we want to capture, but punctuation/case changes aren't.
     expect(simpleNormalize("Apple Fest 2026!")).toBe("apple fest 2026");
     expect(simpleNormalize("APPLE FEST 2026")).toBe("apple fest 2026");
+  });
+});
+
+describe("namesDifferOnlyCosmetically — OPE-1555", () => {
+  // The production rows minted 2026-10-28 06:10, quoted from OPE-1555.
+  it.each([
+    ["Heath Fair 2026", "Heath Fair"],
+    ["Hardwick Fair", "2026 Hardwick Fair"],
+    ["Hampshire County 4-H Fair 2026", "Hampshire County 4-H Fair"],
+    ["Westfield Fair 2026", "The Westfield Fair"],
+    ["MAFA Conference 2026", "2026 MAFA Conference"],
+  ])("production specimen %j vs %j mints nothing", (stored, fresh) => {
+    // Landmark: these really do differ under the exact rule the detector used.
+    expect(simpleNormalize(stored)).not.toBe(simpleNormalize(fresh));
+    expect(namesDifferOnlyCosmetically(stored, fresh)).toBe(true);
+  });
+
+  it.each([
+    ["year suffix present/absent", "Apple Fest 2027", "Apple Fest"],
+    ["year position", "Apple Fest 2027", "2027 Apple Fest"],
+    ["leading article", "The Apple Fest", "Apple Fest"],
+    ["em-dash qualifier tail on one side", "Apple Fest 2027 — Sep 4–6 in Union, ME", "Apple Fest"],
+    ["& vs and", "Sip & Stroll", "Sip and Stroll"],
+    ["article and year together", "The 2027 Apple Fest", "Apple Fest"],
+  ])("shape: %s", (_shape, stored, fresh) => {
+    expect(namesDifferOnlyCosmetically(stored, fresh)).toBe(true);
+  });
+
+  it.each([
+    ["Westfield Fair", "Westport Fair"],
+    ["Hardwick Fair", "Hardwick Winter Market"],
+    ["Apple Fest", "Fest Apple"], // only a YEAR may move, never a word
+    ["Apple Fest 2026", "Apple Fest Parade"],
+    ["Apple Fest — Field B", "Apple Fest — Field C"], // both carry a tail: compared whole
+    ["2026", "2027"], // a bare year keeps its full form
+  ])("a genuinely different pair %j vs %j still mints", (stored, fresh) => {
+    expect(namesDifferOnlyCosmetically(stored, fresh)).toBe(false);
+  });
+
+  it('Belchertown is NOT normalized away: the source adds the words "& Parade"', () => {
+    // Its date tail is stripped, but "Belchertown Fair" vs "Belchertown Fair and
+    // Parade" differ by a word. Matching it would need the subset rule that
+    // OPE-1555 item 2 forbids, so it still reaches a person.
+    const stored = "Belchertown Fair 2026 — Sep 25–27 in Belchertown, MA";
+    expect(cosmeticNameKey(stored.slice(0, stored.indexOf("—")))).toBe("belchertown fair");
+    expect(namesDifferOnlyCosmetically(stored, "Belchertown Fair & Parade")).toBe(false);
+  });
+
+  it("empty input never matches", () => {
+    expect(namesDifferOnlyCosmetically("", "")).toBe(false);
+    expect(namesDifferOnlyCosmetically(null, undefined)).toBe(false);
   });
 });
 
@@ -553,5 +606,25 @@ describe("runScheduledHoldoutSampling — OPE-576 one fetch per page, and not ev
     expect(rows.map((x) => x.eventId)).toEqual(["d"]);
     // …and nothing was raised against the list page's event.
     expect(rows.some((x) => x.eventId === "a")).toBe(false);
+  });
+  it("OPE-1555: a cosmetic name difference mints nothing, is COUNTED, and does not cool the page down", async () => {
+    await seedCorpus([
+      { id: "h", url: FAIR_PAGE, name: "Heath Fair 2026" },
+      { id: "w", url: LIST_PAGE, name: "Westfield Fair" },
+    ]);
+    const d = deps(async (_e, f) =>
+      f.url === FAIR_PAGE ? extracted(f.url, "Heath Fair") : extracted(f.url, "Westport Fair")
+    );
+
+    const r = await runAt(d);
+
+    expect(r.normalizedAwayName).toBe(1);
+    const rows = await db.select().from(eventDiscrepancies);
+    // Landmark: the real rename on the other page IS still captured.
+    expect(rows.map((x) => x.eventId)).toEqual(["w"]);
+    const logs = await db.select().from(errorLogs);
+    const normalized = logs.filter((l) => (l.context ?? "").includes("holdoutNameNormalized"));
+    expect(normalized).toHaveLength(1);
+    expect(normalized[0].context).not.toContain("holdoutOutcome");
   });
 });
