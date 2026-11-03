@@ -6,6 +6,7 @@
 
 import { z } from "zod";
 import {
+  VENDOR_CAPACITY_STATUSES,
   EVENT_STATUS,
   EVENT_LIFECYCLE_VALUES,
   VENUE_STATUS,
@@ -880,6 +881,36 @@ export const promoterEventCreateSchema = z
       path: ["stateCode"],
     }
   );
+
+/**
+ * OPE-1513 — a claimed promoter edits the vendor call on its OWN event.
+ *
+ * Every key is optional and an omitted key is left untouched (patch semantics,
+ * the same rule as the admin `upsert_event_application` tool); `null` clears.
+ * The fee / deadline / URL validators are the ones the promoter create form
+ * already passes through, so this grants no authority the create path lacks.
+ * Dates are calendar days ("YYYY-MM-DD", venue zone), never instants.
+ */
+const isoDaySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
+const vendorCategoryListSchema = z.array(z.string().max(200)).max(100).nullable().optional();
+export const promoterVendorCallSchema = z
+  .object({
+    applicationDeadline: isoDaySchema.nullable().optional(),
+    applicationUrl: applicationUrlSchema,
+    vendorFeeMin: z.number().min(0).max(1_000_000).nullable().optional(),
+    vendorFeeMax: z.number().min(0).max(1_000_000).nullable().optional(),
+    vendorFeeNotes: z.string().max(500).transform(decodeHtmlEntities).nullable().optional(),
+    capacityStatus: z.enum(VENDOR_CAPACITY_STATUSES).optional(),
+    capacityNote: z.string().max(500).transform(decodeHtmlEntities).nullable().optional(),
+    categoriesWanted: vendorCategoryListSchema,
+    categoriesFull: vendorCategoryListSchema,
+  })
+  .strict()
+  .refine(
+    (d) => d.vendorFeeMin == null || d.vendorFeeMax == null || d.vendorFeeMax >= d.vendorFeeMin,
+    { message: "Maximum booth fee must be at least the minimum", path: ["vendorFeeMax"] }
+  );
+export type PromoterVendorCallInput = z.infer<typeof promoterVendorCallSchema>;
 
 // User profile update
 export const userProfileUpdateSchema = z.object({

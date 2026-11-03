@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Eye, Pencil, Calendar, Copy, FileText, CheckCircle2 } from "lucide-react";
+import { Plus, Eye, Pencil, Calendar, Copy, FileText, CheckCircle2, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -277,6 +277,13 @@ export default async function PromoterEventsPage() {
                         >
                           <Button variant="ghost" size="sm">
                             <Copy className="w-4 h-4" />
+                          </Button>
+                        </Link>
+                        {/* OPE-1513 — deadline, booth fee, capacity, categories wanted/full. */}
+                        <Link href={`/promoter/events/${event.id}/vendor-call`}>
+                          <Button variant="ghost" size="sm" aria-label="Edit vendor call">
+                            <Store className="w-4 h-4 mr-1" />
+                            Vendor call
                           </Button>
                         </Link>
                         <Link href={`/promoter/events/${event.id}/edit`} aria-label="Edit event">

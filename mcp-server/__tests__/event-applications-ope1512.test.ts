@@ -8,11 +8,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { CapturingMcpServer, createTestDb, type TestDb } from "./setup-db.js";
-import {
-  buildApplicationPatch,
-  closingInstant,
-  registerEventApplicationTools,
-} from "../src/tools/admin-event-applications.js";
+import { buildApplicationPatch, closingInstant } from "@takemetothefair/utils";
+import { registerEventApplicationTools } from "../src/tools/admin-event-applications.js";
 
 const ADMIN = { userId: "u-admin", role: "ADMIN" as const };
 const NOW = new Date("2026-10-20T16:00:00Z");
