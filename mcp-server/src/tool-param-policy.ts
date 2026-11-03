@@ -62,6 +62,7 @@ export const REJECT_UNKNOWN_PARAMS: ReadonlySet<string> = new Set([
   "record_tentative_check",
   "register_syndication_subscriber",
   "suggest_event",
+  "upsert_promoter_contact",
 ]);
 
 export type ParamPolicy = "reject" | "warn";

@@ -1,9 +1,19 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, or, sql } from "drizzle-orm";
+import { eq, and, or, sql, ne, isNull } from "drizzle-orm";
 import { mergeProductsJson, routeVendorTypeForWrite } from "@takemetothefair/vendor-linking";
-import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
-import { attachEventToSeries } from "../series/resolve-or-create-series.js";
+import {
+  vendors,
+  events,
+  eventVendors,
+  eventSeries,
+  promoters,
+  venues,
+  raiseEventReviewFlag,
+} from "../schema.js";
+// OPE-1233 — the SHARED attach, like update_event. A local copy kept its own
+// edition-stripping rule, so a key fix reached one MCP write path and not this one.
+import { attachEventToSeries } from "@takemetothefair/event-series";
 import { recordMutation } from "../audit/record-mutation.js";
 import {
   parseJsonArray,
@@ -19,7 +29,11 @@ import {
   unsafeSlug,
   coerceVenueNameAtIngest,
 } from "../helpers.js";
-import { geocodeNewVenueViaMainApp } from "../venues/geocode-new.js";
+import {
+  geocodeNewVenueViaMainApp,
+  recordNewVenueGeocodeRefusal,
+  type NewVenueGeocodeVerdict,
+} from "../venues/geocode-new.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -29,9 +43,11 @@ import {
   classifySource,
   normalizeEventDate,
   decideDiscoveryRouting,
+  decideEditionPlacement,
   isUnusableEventName,
   isPlaceholderUrl,
   UNLABELED_SOURCE,
+  unrecognisedSourceLabel,
   provenanceTags,
   assertIngestionMethod,
   dollarsToCents,
@@ -41,6 +57,8 @@ import {
   venueStateConflict,
   sourceOutsideNewEngland,
   checkFormerVenue,
+  checkEventAcceptsVendor,
+  defaultApplicationStatus,
 } from "@takemetothefair/utils";
 import { loadGuardVenue } from "../venues/lifecycle.js";
 import {
@@ -326,27 +344,20 @@ export function registerVendorTools(
 
       const event = eventRows[0];
 
-      if (event.status !== "APPROVED" && event.status !== "TENTATIVE") {
-        return {
-          content: [
-            { type: "text", text: "This event is not currently accepting vendor applications." },
-          ],
-          isError: true,
-        };
-      }
-
-      // Check commercial vendor restriction
       const vendorRows = await db
         .select({ commercial: vendors.commercial, canSelfConfirm: vendors.canSelfConfirm })
         .from(vendors)
         .where(eq(vendors.id, vendorId))
         .limit(1);
 
-      if (vendorRows[0]?.commercial && !event.commercialVendorsAllowed) {
-        return {
-          content: [{ type: "text", text: "This event does not allow commercial vendors." }],
-          isError: true,
-        };
+      // OPE-1396 (DUP6) — the app's rule, not a local copy: APPROVED events
+      // only (this tool used to accept TENTATIVE too) + the commercial rule.
+      const gate = checkEventAcceptsVendor(
+        { commercial: vendorRows[0]?.commercial ?? null },
+        event
+      );
+      if (!gate.ok) {
+        return { content: [{ type: "text", text: gate.error }], isError: true };
       }
 
       // Check for existing application
@@ -363,7 +374,7 @@ export function registerVendorTools(
         };
       }
 
-      const autoConfirm = vendorRows[0]?.canSelfConfirm ?? false;
+      const status = defaultApplicationStatus(vendorRows[0]?.canSelfConfirm);
       const applicationId = crypto.randomUUID();
 
       await db.insert(eventVendors).values({
@@ -371,7 +382,7 @@ export function registerVendorTools(
         eventId: event.id,
         vendorId,
         boothInfo: params.booth_info || null,
-        status: autoConfirm ? "CONFIRMED" : "APPLIED",
+        status,
       });
 
       return {
@@ -380,7 +391,7 @@ export function registerVendorTools(
             applied: true,
             applicationId,
             event: event.name,
-            status: autoConfirm ? "CONFIRMED" : "APPLIED",
+            status,
           }),
         ],
       };
@@ -622,7 +633,8 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
     "Suggest a new event to be added to the platform. The event will be created with TENTATIVE status. " +
       "`start_date` is required so duplicate-detection can run — without a date the dedup guard silently skipped and we accrued duplicate rows like 'Winthrop Arts Festival 2026' alongside '38th Annual Winthrop Arts Festival' on the same date. If the date is genuinely unknown, hold the submission until it's confirmed rather than creating a dateless row. " +
       "Dedup runs FOUR keys in order, and the first hit wins: (1) `source_url` equality on the SAME CALENDAR DAY (`exact_url`, blocking) — same URL on a different day is `series_url` and does NOT block, so an organizer home page listing a whole season is fine; (2) venue + date within 7 days; (3) city/state + date within 7 days; (4) similar name + date. " +
-      "This description used to say dedup 'keys on venue + date', which was incomplete: the URL key runs FIRST, and when it was windowed at 7 days a weekly series had every event after the first refused against its sibling (OPE-650).",
+      "This description used to say dedup 'keys on venue + date', which was incomplete: the URL key runs FIRST, and when it was windowed at 7 days a weekly series had every event after the first refused against its sibling (OPE-650). " +
+      "EDITIONS (OPE-1327): when the match belongs to a MULTI-EDITION series (one that runs more than once a year, e.g. May and October), a same-year hit is not automatically a duplicate. The submission is created as a new edition under the series when its edition key (YYYY-MM of start_date) is free and no edition starts within 7 days; otherwise it returns reason `edition_ambiguous`, naming the edition it collided with — pass an explicit edition_key to create_occurrence for a genuinely new edition.",
     {
       name: z.string().transform(sanitizeProse).describe("Event name"),
       description: z.string().transform(sanitizeProse).optional().describe("Event description"),
@@ -679,7 +691,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         .max(64)
         .optional()
         .describe(
-          "Provenance label for ingestion_method classification. Default 'vendor-submission'. Automated discovery callers pass 'daily-discovery' (classifies to ingestion_method='discovery')."
+          "Provenance label for ingestion_method classification. Automated discovery callers pass 'daily-discovery' (classifies to ingestion_method='discovery'). Events created from a press release the organizer sent us pass 'press-release' (classifies to 'press_release'). An unrecognised label falls back to inference from source_url and is reported in warnings.source_label_unrecognised; omitting the label records 'unlabeled' and infers from source_url."
         ),
       // TAX1 Phase 1 (2026-06-02) — audience / access taxonomy. Both
       // default to the permissive value, so omitting both preserves
@@ -703,7 +715,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         .transform(sanitizeProse)
         .optional()
         .describe(
-          "Free-text nuance the audience+access pair can't hold (e.g. 'Members + public for the Saturday plant sale 9am-1pm')."
+          "PUBLIC visitor copy, shown verbatim on the event page (OPE-1151): admission by category, accessibility, who may attend (e.g. 'Members + public for the Saturday plant sale 9am-1pm'). Never research notes, source citations or to-dos."
         ),
       registration_required: z
         .boolean()
@@ -861,6 +873,8 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       // ── Venue matching / creation ──────────────────────────────────
       let venueId: string | null = null;
       let venueResult: { matched: boolean; venueId: string; name: string } | null = null;
+      // OPE-408 — set only when this call CREATED the venue; the pin verdict.
+      let venueGeocode: NewVenueGeocodeVerdict | null = null;
 
       // OPE-1206 — the source's own state (the caller's venue_state) vs the
       // venue it would be linked to. Set when they disagree.
@@ -1051,8 +1065,17 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           // OPE-408 — geocode at creation. `suggest_event` is the highest-volume
           // unattended venue-creation path there is, so an ungeocoded venue born
           // here is the single biggest contributor to the missing-coords curve.
-          // Best-effort: never allowed to fail the submission.
-          await geocodeNewVenueViaMainApp(env, newVenueId);
+          // Best-effort: never allowed to fail the submission. A refusal is
+          // recorded (OPE-408, 10-04) so an unpinned venue born here is visible,
+          // not just retried nightly against the same answer.
+          venueGeocode = await geocodeNewVenueViaMainApp(env, newVenueId);
+          await recordNewVenueGeocodeRefusal(
+            db,
+            newVenueId,
+            venueGeocode,
+            "mcp:suggest_event",
+            auth.userId ?? null
+          );
         }
       }
 
@@ -1119,6 +1142,101 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
             .select({ n: sql<number>`count(*)` })
             .from(eventVendors)
             .where(eq(eventVendors.eventId, dupe.existingEvent.id));
+
+          // OPE-1327 — on a MULTI-EDITION series a same-year match may be the
+          // OTHER edition (May vs October), not a duplicate. Place it with the
+          // rule the app's submit route uses (decideEditionPlacement): create
+          // under its derived edition key when the key is free and no edition
+          // starts within ±7 days; otherwise refuse with edition_ambiguous — an
+          // explicit answer naming the edition it collided with, never a drop.
+          if (matched?.seriesId && startDate) {
+            const [mseries] = await db
+              .select({ editionMode: eventSeries.editionMode })
+              .from(eventSeries)
+              .where(eq(eventSeries.id, matched.seriesId))
+              .limit(1);
+            if (mseries?.editionMode === "multi") {
+              const members = await db
+                .select({
+                  id: events.id,
+                  startDate: events.startDate,
+                  editionKey: events.editionKey,
+                })
+                .from(events)
+                .where(
+                  and(
+                    eq(events.seriesId, matched.seriesId),
+                    ne(events.status, "REJECTED"),
+                    isNull(events.mergedInto)
+                  )
+                );
+              const placement = decideEditionPlacement(members, startDate);
+              if (placement.kind === "stage") {
+                return {
+                  content: [
+                    jsonContent({
+                      created: false,
+                      reason: "edition_ambiguous",
+                      series_id: matched.seriesId,
+                      derived_edition_key: placement.editionKey,
+                      near_edition_event_id: placement.nearEditionId,
+                      matched_event: { id: dupe.existingEvent.id, slug: dupe.existingEvent.slug },
+                      message:
+                        "This series runs more than one edition a year, and this submission " +
+                        "either carries an edition key the series already holds or starts within " +
+                        "7 days of an existing edition. If it is a NEW edition, call " +
+                        "create_occurrence with an explicit edition_key (e.g. 2027-05-xli); if it " +
+                        "is the same edition, update that event instead. force_create: true " +
+                        "creates a standalone row an operator must then reconcile.",
+                    }),
+                  ],
+                };
+              }
+              if (env?.MAIN_APP_URL && env?.INTERNAL_API_KEY) {
+                const occRes = await fetch(`${env.MAIN_APP_URL}/api/admin/occurrences/create`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "x-internal-key": env.INTERNAL_API_KEY,
+                  },
+                  body: JSON.stringify({
+                    series_id: matched.seriesId,
+                    year: startDate.getUTCFullYear(),
+                    edition_key: placement.editionKey,
+                    name: params.name,
+                    venue_id: venueId,
+                    promoter_id: eventPromoterId,
+                    start_date: params.start_date,
+                    end_date: params.end_date,
+                    description: params.description,
+                    source_url: params.source_url ?? null,
+                    source_name: sourceLabel,
+                    ingestion_method: sourceClassification.ingestionMethod,
+                    categories: categoriesToStore,
+                  }),
+                });
+                const occ = (await occRes.json().catch(() => null)) as Record<
+                  string,
+                  unknown
+                > | null;
+                if (occRes.ok && occ?.created) {
+                  return {
+                    content: [
+                      jsonContent({
+                        routed: "series_occurrence",
+                        series_id: matched.seriesId,
+                        edition_key: placement.editionKey,
+                        matched_event: { id: dupe.existingEvent.id, slug: dupe.existingEvent.slug },
+                        ...occ,
+                      }),
+                    ],
+                  };
+                }
+                // Not created (race / promoter_required): fall through to the
+                // duplicate block below, so the suggestion is never silently lost.
+              }
+            }
+          }
 
           const routing = decideDiscoveryRouting({
             matched: true,
@@ -1329,7 +1447,6 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
 
       const eventId = crypto.randomUUID();
       await db.insert(events).values({
-        ...(venueStateMismatch || outsideNewEngland || formerFlag ? { flaggedForReview: 1 } : {}),
         id: eventId,
         name: effectiveName,
         slug: finalSlug,
@@ -1409,6 +1526,14 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         lastSyncedAt: new Date(),
         submittedByUserId: auth.userId,
       });
+      // OPE-767 — each reason recorded, so each can be discharged on its own.
+      for (const reason of [
+        venueStateMismatch && "venue_state_mismatch",
+        outsideNewEngland && "outside_new_england",
+        formerFlag && "former_venue",
+      ] as const) {
+        if (reason) await raiseEventReviewFlag(db, eventId, reason);
+      }
 
       // OPE-472 — attach to a series parent at write time.
       //
@@ -1484,6 +1609,12 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       if (gateResult.reasons.length > 0) {
         suggestWarnings.gate_flags = gateResult.reasons;
       }
+      // OPE-1348 — an unknown source_label used to fall back to domain
+      // inference in silence ("press-release" became direct_scrape). Say so.
+      const labelFallback = unrecognisedSourceLabel(sourceLabel, params.source_url);
+      if (labelFallback) {
+        suggestWarnings.source_label_unrecognised = `source_label "${labelFallback.label}" is not a known provenance label; ingestion_method fell back to "${labelFallback.fellBackTo}" from the source URL. Known labels include daily-discovery, email-submission, press-release, web-research.`;
+      }
       if (venueStateMismatch) {
         suggestWarnings.venue_state_conflict = {
           ...venueStateMismatch,
@@ -1497,12 +1628,21 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         suggestWarnings.status_note = `Created as ${eventStatus}, not TENTATIVE, because the ingest gates routed it to review (${gateResult.reasons.join(", ") || "no reason recorded"}). A PENDING row is NOT on the publication path until an admin reviews it.`;
       }
 
+      if (venueGeocode && !venueGeocode.pinned) {
+        suggestWarnings.venue_unpinned =
+          `The venue this call created has no map pin (${venueGeocode.status}: ${venueGeocode.reason}), so on-site photos cannot match this event by GPS.` +
+          (venueGeocode.candidate
+            ? ` Google's candidate: "${venueGeocode.candidate}" — if correct, run venues_geocode with force: true.`
+            : " Correct the venue address, or set latitude/longitude with update_venue.");
+      }
+
       return {
         content: [
           jsonContent({
             created: true,
             event: { id: eventId, slug: finalSlug, name: params.name, status: eventStatus },
-            venue: venueResult,
+            venue:
+              venueResult && venueGeocode ? { ...venueResult, geocode: venueGeocode } : venueResult,
             ...(Object.keys(suggestWarnings).length > 0 && { warnings: suggestWarnings }),
           }),
         ],

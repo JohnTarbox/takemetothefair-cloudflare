@@ -4,7 +4,7 @@ import { getEventGallery } from "@/lib/event-photos";
 import { EventGallery } from "@/components/events/EventGallery";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import {
   MapPin,
   Tag,
@@ -23,6 +23,9 @@ import {
   FileText,
   CheckCircle,
   PawPrint,
+  Phone,
+  Mail,
+  Globe,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,8 +45,9 @@ import {
   vendors,
   blogPosts,
   contentLinks,
+  eventSeries,
 } from "@/lib/db/schema";
-import { eq, and, ne, like, desc, or } from "drizzle-orm";
+import { eq, and, ne, desc } from "drizzle-orm";
 import { dedupeByResolvedSlug } from "@/lib/event-vendor-display";
 import { STATUS_BADGE_VARIANTS } from "@/lib/vendor-status";
 import type { EventVendorStatus } from "@/lib/constants";
@@ -54,12 +58,25 @@ import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
 import { EventDayImageStrip } from "@/components/events/EventDayImageStrip";
 import { parseJsonArray } from "@/types";
 import { filterPublicTags } from "@/lib/events/public-tags";
+import { publicAccessNotes } from "@/lib/events/public-access-notes";
 import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
+import { VendorOrganizerCard } from "@/components/events/VendorOrganizerCard";
+import {
+  isPlaceholderPromoter,
+  resolveOrganizerContact,
+  resolveVendorCta,
+  stickyBarLabel,
+  telHref,
+} from "@/lib/events/vendor-cta";
+import { getPromoterVendorContact } from "@/lib/events/vendor-cta-data";
+import { resolveVisitingLines } from "@/lib/events/visiting";
+import { getVisitingFacts } from "@/lib/events/visiting-data";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { EventSchema } from "@/components/seo/EventSchema";
+import { getPublicNameVariants } from "@/lib/events/public-name-variants";
 import { groupVendorsByDay } from "@/lib/k18-vendor-grouping";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
@@ -68,13 +85,23 @@ import { SameDayEventsButton } from "@/components/events/SameDayEventsButton";
 import { buildEventFaqItems } from "@/lib/event-faq";
 import { isFaqPilotEvent } from "@/lib/faq-pilot";
 import { SITE_URL } from "@takemetothefair/constants";
-import { buildAskAboutEventMailto, petPolicyDisplay } from "@takemetothefair/utils";
+import {
+  buildAskAboutEventMailto,
+  occurrencePath,
+  occurrenceYear,
+  petPolicyDisplay,
+  safeHref,
+} from "@takemetothefair/utils";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
 import { SeriesLandingPage } from "@/components/series/series-landing-page";
 import { buildSuperEventRef } from "@/lib/series/series-schema-org";
 // K46 — getEvent + buildEventMetadata moved to a sibling module so the /year
 // occurrence route can share them (Next forbids extra exports from page.tsx).
-import { getEvent, buildEventMetadata } from "./event-detail-data";
+import { getEvent, buildEventMetadata, countEventView } from "./event-detail-data";
+import { getCategoryMatchedBlogPosts } from "@/lib/blog/category-matched-posts";
+import { containsCI } from "@/lib/db/contains-ci";
+import { isD1PlatformFault } from "@/lib/db/degraded";
+import { DegradedPanel } from "@/components/layout/degraded-panel";
 import { ShareButtons } from "@/components/ShareButtons";
 import { PrintButton } from "@/components/print/PrintButton";
 // PRINT1 (Dev-Email-2026-06-08 §B): the v1 standalone <PrintEventMap> +
@@ -97,8 +124,11 @@ import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { PrintBeacon } from "@/components/print/PrintBeacon";
 import { formatDateMedium } from "@/lib/datetime";
-import { cdnImage } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet } from "@/lib/cdn-image";
 import { DERIVED_DATE_EXPLANATION, shouldShowProjectedDateCopy } from "@/lib/events/derived-date";
+import { isFairgoerSourceUrl, pickEventCta } from "@/lib/events/event-cta";
+import { getVisitorGuides } from "@/lib/blog/event-guides";
+import { gateUrlOnce } from "@/lib/url-classification";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -249,7 +279,7 @@ async function getRelatedEvents(eventId: string, venueId: string | null, categor
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
-        .where(and(...baseConditions, like(events.categories, `%${primaryCategory}%`)))
+        .where(and(...baseConditions, containsCI(events.categories, primaryCategory)))
         .orderBy(events.startDate)
         .limit(4);
 
@@ -307,9 +337,10 @@ type RelatedBlogPost = {
   slug: string;
   excerpt: string | null;
   publishDate: Date | null;
-  /** "direct" = the post body contains a /events/<slug> link to this event.
+  /** "guide" = written about this fair itself (OPE-1188, always first).
+   *  "direct" = the post body contains a /events/<slug> link to this event.
    *  "category" = matched on shared tag/category only (topical fallback). */
-  kind: "direct" | "category";
+  kind: "guide" | "direct" | "category";
 };
 
 /**
@@ -348,63 +379,46 @@ async function getDirectlyLinkedBlogPosts(
   }
 }
 
-/**
- * Category/tag-based matches. Used to fill remaining slots once the direct
- * links are in. Excludes slugs already surfaced as direct links so we don't
- * double-render the same post.
- */
-async function getCategoryMatchedBlogPosts(
-  eventName: string,
-  categories: string[],
-  excludeSlugs: string[],
-  limit: number
-): Promise<RelatedBlogPost[]> {
-  if (limit <= 0) return [];
-  try {
-    const db = getCloudflareDb();
-    const searchConditions = [
-      like(blogPosts.tags, `%${eventName}%`),
-      ...categories.map((cat) => like(blogPosts.tags, `%${cat}%`)),
-      ...categories.map((cat) => like(blogPosts.categories, `%${cat}%`)),
-    ];
-
-    const posts = await db
-      .select({
-        title: blogPosts.title,
-        slug: blogPosts.slug,
-        excerpt: blogPosts.excerpt,
-        publishDate: blogPosts.publishDate,
-      })
-      .from(blogPosts)
-      .where(and(eq(blogPosts.status, "PUBLISHED"), or(...searchConditions)))
-      .orderBy(desc(blogPosts.publishDate))
-      .limit(limit + excludeSlugs.length);
-
-    const excluded = new Set(excludeSlugs);
-    return posts
-      .filter((p) => !excluded.has(p.slug))
-      .slice(0, limit)
-      .map((p) => ({ ...p, kind: "category" as const }));
-  } catch {
-    return [];
-  }
-}
-
 async function getRelatedBlogPosts(
   eventId: string,
   eventName: string,
-  categories: string[]
+  categories: string[],
+  seriesId: string | null
 ): Promise<RelatedBlogPost[]> {
-  const direct = await getDirectlyLinkedBlogPosts(eventId, 3);
-  const remaining = 3 - direct.length;
-  if (remaining <= 0) return direct;
+  // OPE-1188 — the fair's own visitor guide first. Direct links are ordered
+  // newest-first, so a September roundup that mentions every fair used to push
+  // the fair's April guide off the page (Fryeburg showed Topsfield and Salem).
+  let seriesName: string | null = null;
+  if (seriesId) {
+    try {
+      const [s] = await getCloudflareDb()
+        .select({ name: eventSeries.name })
+        .from(eventSeries)
+        .where(eq(eventSeries.id, seriesId))
+        .limit(1);
+      seriesName = s?.name ?? null;
+    } catch {
+      seriesName = null;
+    }
+  }
+  const guides = (await getVisitorGuides(getCloudflareDb(), seriesName ?? eventName, 2)).map(
+    (g) => ({ ...g, kind: "guide" as const })
+  );
+  const seen = new Set(guides.map((g) => g.slug));
+  const direct = (await getDirectlyLinkedBlogPosts(eventId, 3 + guides.length)).filter(
+    (p) => !seen.has(p.slug)
+  );
+  const picked: RelatedBlogPost[] = [...guides, ...direct].slice(0, 3);
+  const remaining = 3 - picked.length;
+  if (remaining <= 0) return picked;
   const category = await getCategoryMatchedBlogPosts(
+    getCloudflareDb(),
     eventName,
     categories,
-    direct.map((p) => p.slug),
+    picked.map((p) => p.slug),
     remaining
   );
-  return [...direct, ...category];
+  return [...picked, ...category];
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -423,16 +437,41 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // cached, so this shares the lookup with generateMetadata; null until backfill.
   // K46 — the /year occurrence route passes asOccurrence to skip this branch and
   // render the occurrence's Event detail (one EventSeries block per URL).
-  const landing = asOccurrence ? null : await getSeriesLanding(slug);
+  // OPE-1301 — inside the degraded path too: this read precedes getEvent's
+  // try-block, so a blip here used to reach the error boundary.
+  let landing: Awaited<ReturnType<typeof getSeriesLanding>>;
+  try {
+    landing = asOccurrence ? null : await getSeriesLanding(slug);
+  } catch (e) {
+    if (isD1PlatformFault(e)) {
+      return <DegradedPanel what="this event" retryHref={`/events/${slug}`} />;
+    }
+    throw e;
+  }
   if (landing) {
-    return <SeriesLandingPage landing={landing} now={new Date()} />;
+    // OPE-1188 — the hub had no /blog/ link at all; it now names the fair's own guide.
+    const visitorGuides = await getVisitorGuides(getCloudflareDb(), landing.series.name, 2);
+    return <SeriesLandingPage landing={landing} now={new Date()} visitorGuides={visitorGuides} />;
   }
 
-  const event = await getEvent(slug);
+  let event: Awaited<ReturnType<typeof getEvent>>;
+  try {
+    event = await getEvent(slug);
+  } catch (e) {
+    // OPE-790 rework (John, 10-04) — an honest degraded panel, not the error
+    // boundary. Only a platform blip; our own query defects still throw.
+    if (isD1PlatformFault(e)) {
+      return <DegradedPanel what="this event" retryHref={`/events/${slug}`} />;
+    }
+    throw e;
+  }
 
   if (!event) {
     notFound();
   }
+
+  // OPE-790 rework — counted here, once, outside getEvent's retry.
+  await countEventView(event.id);
 
   // OPE-114 — CONFIRMED performer appearances for the "Who's Performing" block +
   // the schema.org `performer` emission. emit_performer_subevents is a global
@@ -444,6 +483,29 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // anything. Empty for ~all events today, so the block and the JSON-LD change
   // are both no-ops until photos exist.
   const eventGallery = await getEventGallery(getCloudflareDb(), event.id, event.name);
+  // OPE-265 — the primary CTA. Without a ticket URL the page used to render no
+  // outbound button at all (91% of upcoming events). The source_url fallback
+  // must pass the shape check AND the aggregator gate the ingestion paths use
+  // for ticket_url; one small query, and only when there is no ticket URL. A
+  // failed gate read drops the fallback, never the page.
+  let vettedSourceUrl: string | null = null;
+  if (!event.ticketUrl?.trim() && isFairgoerSourceUrl(event.sourceUrl)) {
+    try {
+      vettedSourceUrl = await gateUrlOnce(getCloudflareDb(), event.sourceUrl, "ticket");
+    } catch (error) {
+      await logError(getCloudflareDb(), {
+        message: "Event CTA classification gate read failed",
+        error,
+        source: "app/events/[slug]/page.tsx:primaryCta",
+        context: { slug },
+      });
+    }
+  }
+  const primaryCta = pickEventCta({
+    ticketUrl: event.ticketUrl,
+    vettedSourceUrl,
+    ticketPriceMaxCents: event.ticketPriceMaxCents,
+  });
   let emitPerformerSubevents = false;
   try {
     emitPerformerSubevents =
@@ -487,19 +549,28 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // contact link so a question about this event arrives identifying it. Built
   // here rather than inline so the two cannot drift: a link pointing at a
   // different URL than the one we publish would match nothing on arrival.
-  const askAboutCanonicalUrl =
-    event.series && event.startDate
-      ? `${SITE_URL}/events/${event.series.canonicalSlug}/${new Date(event.startDate).getUTCFullYear()}`
-      : `${SITE_URL}/events/${event.slug}`;
+  // OPE-1326 — the edition key on a multi-edition series; this occPath also
+  // feeds the EventSchema `url` below, so the two cannot disagree.
+  const occPath = event.series
+    ? occurrencePath(event.series.canonicalSlug, event.startDate, {
+        editionMode: event.series.editionMode,
+        editionKey: event.editionKey,
+      })
+    : null;
+  const askAboutCanonicalUrl = occPath
+    ? `${SITE_URL}${occPath}`
+    : `${SITE_URL}/events/${event.slug}`;
   const askAboutHref = buildAskAboutEventMailto({
     eventName: event.name,
-    year: event.startDate ? new Date(event.startDate).getUTCFullYear() : null,
+    year: occurrenceYear(event.startDate),
     canonicalUrl: askAboutCanonicalUrl,
   });
   const eventCategories = parseJsonArray(event.categories);
-  const [relatedEvents, relatedBlogPosts] = await Promise.all([
+  const [relatedEvents, relatedBlogPosts, alsoKnownAs] = await Promise.all([
     getRelatedEvents(event.id, event.venueId, eventCategories),
-    getRelatedBlogPosts(event.id, event.name, eventCategories),
+    getRelatedBlogPosts(event.id, event.name, eventCategories, event.seriesId ?? null),
+    // OPE-517 — public name variants (never `historical`; see the helper).
+    getPublicNameVariants(getCloudflareDb(), event.id, event.name),
   ]);
 
   // FAQ Phase A: only render for events in the FAQ_PILOT_EVENT_SLUGS env
@@ -512,6 +583,53 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
         eventDays: event.eventDays,
       })
     : [];
+  // OPE-1368 — stored URLs render through safeHref. An application link may
+  // be a mailto: (two prod rows are), so that one also allows mailto.
+  const applicationHref = safeHref(event.applicationUrl, { allowMailto: true });
+  const promoterWebsiteHref = safeHref(event.promoter?.website);
+  // OPE-986 (A2 + B2) — which vendor CTA this page shows. `claimed` and the
+  // contact come from their own read: the lite projection lacks them.
+  const promoterVendorContact = await getPromoterVendorContact(
+    getCloudflareDb(),
+    event.promoter?.id
+  );
+  const ctaPromoter =
+    event.promoter && promoterVendorContact
+      ? {
+          id: event.promoter.id,
+          slug: event.promoter.slug,
+          companyName: event.promoter.companyName,
+          website: event.promoter.website,
+          ...promoterVendorContact,
+        }
+      : null;
+  const vendorCta = resolveVendorCta({
+    applicationHref: applicationHref ?? null,
+    applicationDeadline: event.applicationDeadline ? new Date(event.applicationDeadline) : null,
+    promoter: ctaPromoter,
+    promoterWebsiteHref: promoterWebsiteHref ?? null,
+    signedIn: !!session,
+    isVendor: !!vendorInfo,
+    hasExistingApplication: !!vendorInfo?.existingApplication,
+  });
+  const vendorStickyLabel = stickyBarLabel(vendorCta);
+  // OPE-1477 item 1 — who to ask, shown above our own "Ask about this event".
+  const organizerContact = resolveOrganizerContact(ctaPromoter, promoterWebsiteHref ?? null);
+  // OPE-1479 — the "Visiting" box. Venue Google options + the pet citation
+  // date come from their own read: the lite venue projection lacks them.
+  const visitingFacts = await getVisitingFacts(getCloudflareDb(), event.id, event.venueId);
+  const visitingLines = resolveVisitingLines({
+    petFriendly: event.petFriendly,
+    petCitedOn: visitingFacts.petCitedOn,
+    venueAccessibility: visitingFacts.venueAccessibility,
+    venueParking: visitingFacts.venueParking,
+    venuePetFriendly: visitingFacts.venuePetFriendly,
+    parkingNotes: visitingFacts.parkingNotes,
+    parkingCitedOn: visitingFacts.parkingCitedOn,
+    accessibilityNotes: visitingFacts.accessibilityNotes,
+    accessibilityCitedOn: visitingFacts.accessibilityCitedOn,
+    placeholderPromoter: !ctaPromoter || isPlaceholderPromoter(ctaPromoter),
+  });
 
   return (
     <>
@@ -542,6 +660,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
         <PrintBeacon entityType="EVENT" entityId={event.id} entitySlug={event.slug} />
         <EventSchema
           name={event.name}
+          alternateNames={alsoKnownAs}
           slug={event.slug}
           description={event.description || undefined}
           startDate={event.startDate}
@@ -549,9 +668,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
           imageUrl={event.imageUrl}
           galleryPhotos={eventGallery}
           url={
-            event.series && event.startDate
-              ? `${SITE_URL}/events/${event.series.canonicalSlug}/${new Date(event.startDate).getUTCFullYear()}`
-              : `https://meetmeatthefair.com/events/${event.slug}`
+            occPath ? `${SITE_URL}${occPath}` : `https://meetmeatthefair.com/events/${event.slug}`
           }
           superEvent={event.series ? buildSuperEventRef(event.series) : undefined}
           venue={
@@ -741,17 +858,12 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                 // pixelation, and `scale-110` prevents the blur halo from
                 // showing the box edge.
                 const heroWidths = [400, 640, 800, 1200, 1600, 1942];
-                const heroSrcSet = heroWidths
-                  .map((w) =>
-                    cdnImage(event.imageUrl!, {
-                      width: w,
-                      format: "auto",
-                      quality: 80,
-                      onerror: "redirect",
-                    })
-                  )
-                  .map((url, i) => `${url} ${heroWidths[i]}w`)
-                  .join(", ");
+                const heroSrcSet = cdnSrcSet(event.imageUrl, heroWidths, (w) => ({
+                  width: w,
+                  format: "auto",
+                  quality: 80,
+                  onerror: "redirect",
+                }));
                 const heroSrc = cdnImage(event.imageUrl, {
                   width: 1600,
                   format: "auto",
@@ -908,9 +1020,17 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                       ))}
                     </div>
                     <div className="flex items-start justify-between gap-4">
-                      <h1 className="text-3xl md:text-4xl font-bold text-foreground">
-                        {event.name}
-                      </h1>
+                      <div>
+                        <h1 className="text-3xl md:text-4xl font-bold text-foreground">
+                          {event.name}
+                        </h1>
+                        {/* OPE-517 — the names the organizer and others use. */}
+                        {alsoKnownAs.length > 0 && (
+                          <p className="mt-1 text-sm text-muted-foreground" data-also-known-as>
+                            Also known as {alsoKnownAs.join(" · ")}
+                          </p>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2 print:hidden">
                         <FavoriteButton type="EVENT" id={event.id} slug={event.slug} size="lg" />
                         <ShareButtons
@@ -1309,6 +1429,23 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                     <p className="font-medium text-foreground">
                       {formatPrice(event.ticketPriceMinCents, event.ticketPriceMaxCents)}
                     </p>
+                    {/* OPE-1151 — admission / access detail, on EVERY event
+                        that has it. Its only previous reader was the audience
+                        badge, which is null at PUBLIC + OPEN, so Guilford's
+                        senior rate and Pemaquid's wheelchair answer never
+                        reached the page. Deliberately outside any
+                        audience/access condition. */}
+                    {(() => {
+                      const accessNotesText = publicAccessNotes(event.accessNotes);
+                      return accessNotesText ? (
+                        <p
+                          className="text-sm text-muted-foreground mt-1 whitespace-pre-line"
+                          data-testid="event-access-notes"
+                        >
+                          {accessNotesText}
+                        </p>
+                      ) : null;
+                    })()}
                   </div>
                 </div>
 
@@ -1420,11 +1557,11 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                           {event.applicationInstructions}
                         </p>
                       )}
-                      {event.applicationUrl && (
+                      {applicationHref && (
                         <OutboundEventLink
                           kind="application"
                           eventSlug={event.slug}
-                          href={event.applicationUrl}
+                          href={applicationHref}
                           className="text-sm text-royal hover:underline mt-1 inline-block"
                         >
                           Apply Now →
@@ -1448,58 +1585,66 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                       <p className="text-sm text-muted-foreground">
                         Exhibitor &amp; Competition Entries
                       </p>
-                      {event.applicationRoutes.map((route) => (
-                        <div key={route.id} className="mt-1">
-                          {route.department && (
-                            <p className="text-sm font-medium text-foreground">
-                              {route.department}
-                            </p>
-                          )}
-                          {/* Dates render ONLY when stored. NULL means "not
+                      {event.applicationRoutes
+                        // OPE-1368 — a route's URL renders through safeHref.
+                        .map((r) => ({ ...r, safeUrl: safeHref(r.url, { allowMailto: true }) }))
+                        .map((route) => (
+                          <div key={route.id} className="mt-1">
+                            {route.department && (
+                              <p className="text-sm font-medium text-foreground">
+                                {route.department}
+                              </p>
+                            )}
+                            {/* Dates render ONLY when stored. NULL means "not
                               confirmed" and is never filled in from the event's
                               own dates — there is no rule to infer from, and a
                               guessed deadline that makes someone miss an entry
                               is worse than no deadline. */}
-                          {route.closesAt && (
-                            <p
-                              className={`text-sm ${new Date(route.closesAt) < new Date() ? "text-destructive" : "text-foreground"}`}
-                            >
-                              Entries close: {formatDateMedium(route.closesAt)}
-                              {new Date(route.closesAt) < new Date() && " (Passed)"}
-                            </p>
-                          )}
-                          {route.notes && (
-                            <p className="text-xs text-muted-foreground mt-0.5">{route.notes}</p>
-                          )}
-                          {route.url && (
-                            <OutboundEventLink
-                              kind="application"
-                              eventSlug={event.slug}
-                              href={route.url}
-                              className="text-sm text-royal hover:underline mt-1 inline-block"
-                            >
-                              Enter or view rules →
-                            </OutboundEventLink>
-                          )}
-                          {!route.url && route.contactEmail && (
-                            <a
-                              href={`mailto:${route.contactEmail}`}
-                              className="text-sm text-royal hover:underline mt-1 inline-block break-all"
-                            >
-                              {route.contactEmail}
-                            </a>
-                          )}
-                        </div>
-                      ))}
+                            {route.closesAt && (
+                              <p
+                                className={`text-sm ${new Date(route.closesAt) < new Date() ? "text-destructive" : "text-foreground"}`}
+                              >
+                                Entries close: {formatDateMedium(route.closesAt)}
+                                {new Date(route.closesAt) < new Date() && " (Passed)"}
+                              </p>
+                            )}
+                            {route.notes && (
+                              <p className="text-xs text-muted-foreground mt-0.5">{route.notes}</p>
+                            )}
+                            {route.safeUrl && (
+                              <OutboundEventLink
+                                kind="application"
+                                eventSlug={event.slug}
+                                href={route.safeUrl}
+                                className="text-sm text-royal hover:underline mt-1 inline-block"
+                              >
+                                Enter or view rules →
+                              </OutboundEventLink>
+                            )}
+                            {!route.safeUrl && route.contactEmail && (
+                              <a
+                                href={`mailto:${route.contactEmail}`}
+                                className="text-sm text-royal hover:underline mt-1 inline-block break-all"
+                              >
+                                {route.contactEmail}
+                              </a>
+                            )}
+                          </div>
+                        ))}
                     </div>
                   </div>
                 )}
 
-                {event.ticketUrl && (
-                  <OutboundEventLink kind="ticket" eventSlug={event.slug} href={event.ticketUrl}>
+                {primaryCta && (
+                  <OutboundEventLink
+                    kind="ticket"
+                    eventSlug={event.slug}
+                    href={primaryCta.url}
+                    ctaSource={primaryCta.ctaSource}
+                  >
                     <Button className="w-full" size="lg">
                       <ExternalLink className="w-4 h-4 mr-2" />
-                      Event Website
+                      {primaryCta.label}
                     </Button>
                   </OutboundEventLink>
                 )}
@@ -1523,8 +1668,9 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
               </CardContent>
             </Card>
 
-            {/* Vendor Application Section */}
-            {vendorInfo && (
+            {/* Vendor Application Section — OPE-986 B2: only where the promoter has
+                claimed the listing (or the vendor already has a row here). */}
+            {vendorInfo && vendorCta.kind === "in_app" && (
               <Card id="vendor-apply">
                 <CardHeader>
                   <h3 className="font-semibold text-foreground flex items-center gap-2">
@@ -1598,7 +1744,11 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
               </Card>
             )}
 
-            {!session && (
+            {(vendorCta.kind === "organizer_apply" || vendorCta.kind === "organizer_contact") && (
+              <VendorOrganizerCard cta={vendorCta} eventName={event.name} eventSlug={event.slug} />
+            )}
+
+            {vendorCta.kind === "login_to_apply" && (
               <Card id="vendor-apply">
                 <CardContent className="p-6 text-center">
                   <Store className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
@@ -1647,16 +1797,70 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                       )}
                     </div>
                   </Link>
-                  {event.promoter.website && (
+                  {promoterWebsiteHref && (
                     <TrackedLink
-                      href={event.promoter.website}
+                      href={promoterWebsiteHref}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="mt-4 text-sm text-royal hover:text-navy flex items-center gap-1"
-                      eventLabel={event.promoter.website}
+                      eventLabel={promoterWebsiteHref}
                     >
                       Visit Website <ExternalLink className="w-3 h-3" />
                     </TrackedLink>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* OPE-1479 — Parking / Accessibility / Pets, each saying where its
+                answer comes from. Google's venue options are labelled as the
+                BUILDING's, never as the event's own arrangements. Nothing here
+                is inferred from type or category (resolveVisitingLines takes
+                no such input). */}
+            {!isPastEvent && (
+              <Card className="mt-6" data-visiting>
+                <CardHeader>
+                  <h3 className="font-semibold text-foreground">Visiting</h3>
+                </CardHeader>
+                <CardContent>
+                  <dl className="space-y-3 text-sm">
+                    {visitingLines.map((line) => (
+                      <div key={line.topic}>
+                        <dt className="font-medium text-foreground">
+                          {line.topic === "parking"
+                            ? "Parking"
+                            : line.topic === "accessibility"
+                              ? "Accessibility"
+                              : "Pets"}
+                        </dt>
+                        <dd className="mt-0.5 text-muted-foreground">
+                          {line.source === "organizer" && (
+                            <>
+                              {line.text}
+                              {line.citedOn && (
+                                <span className="block text-xs">
+                                  Published by the organizer; recorded{" "}
+                                  {formatDateMedium(line.citedOn)}
+                                </span>
+                              )}
+                            </>
+                          )}
+                          {line.source === "venue_google" && (
+                            <>
+                              <span className="block text-xs">About the venue (from Google):</span>
+                              {line.phrases.join(", ")}
+                            </>
+                          )}
+                          {line.source === "venue_rule" && line.text}
+                          {line.source === "unknown" && line.text}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {organizerContact && visitingLines.some((l) => l.source !== "organizer") && (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      For fair-day arrangements, ask the organizer — contact details below.
+                    </p>
                   )}
                 </CardContent>
               </Card>
@@ -1678,6 +1882,48 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                     the authority. If you&apos;d rather ask us, this carries the event with it so we
                     know which one you mean.
                   </p>
+                  {organizerContact && (
+                    <div className="mt-3 text-sm" data-organizer-contact>
+                      <p className="font-medium text-foreground">{organizerContact.name}</p>
+                      <ul className="mt-1 space-y-1">
+                        {organizerContact.phone && (
+                          <li className="flex items-center gap-2">
+                            <Phone className="w-4 h-4 text-muted-foreground" aria-hidden />
+                            <a
+                              href={telHref(organizerContact.phone)}
+                              className="text-royal hover:text-navy"
+                            >
+                              {organizerContact.phone}
+                            </a>
+                          </li>
+                        )}
+                        {organizerContact.email && (
+                          <li className="flex items-center gap-2">
+                            <Mail className="w-4 h-4 text-muted-foreground" aria-hidden />
+                            <a
+                              href={`mailto:${organizerContact.email}`}
+                              className="text-royal hover:text-navy break-all"
+                            >
+                              {organizerContact.email}
+                            </a>
+                          </li>
+                        )}
+                        {organizerContact.websiteHref && (
+                          <li className="flex items-center gap-2">
+                            <Globe className="w-4 h-4 text-muted-foreground" aria-hidden />
+                            <a
+                              href={organizerContact.websiteHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-royal hover:text-navy"
+                            >
+                              Organizer website
+                            </a>
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
                   <a
                     href={askAboutHref}
                     className="mt-4 inline-flex items-center gap-1 text-sm text-royal hover:text-navy"
@@ -1726,6 +1972,11 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                   href={`/blog/${post.slug}`}
                   className="p-4 bg-card rounded-lg border border-border hover:border-amber hover:shadow-sm transition-all group"
                 >
+                  {post.kind === "guide" && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-2 rounded-full text-[11px] font-medium bg-amber-light text-amber-bg-fg">
+                      Visitor guide
+                    </span>
+                  )}
                   {post.kind === "direct" && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-2 rounded-full text-[11px] font-medium bg-amber-light text-amber-bg-fg">
                       Written about this event
@@ -1751,10 +2002,15 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
         )}
 
         {/* Mobile-only sticky apply CTA */}
-        {!isPastEvent && !session && <StickyApplyBar label="Login to Apply" href="/login" />}
-        {!isPastEvent && vendorInfo && !vendorInfo.existingApplication && (
-          <StickyApplyBar label="Apply as Vendor" scrollTarget="vendor-apply" />
+        {!isPastEvent && vendorCta.kind === "login_to_apply" && (
+          <StickyApplyBar label="Login to Apply" href="/login" />
         )}
+        {!isPastEvent &&
+          vendorStickyLabel &&
+          vendorCta.kind !== "login_to_apply" &&
+          !vendorInfo?.existingApplication && (
+            <StickyApplyBar label={vendorStickyLabel} scrollTarget="vendor-apply" />
+          )}
 
         {/* MMATF-UIUX-PrintSheet-Spec — static map "visual anchor" for
           the printed event sheet. Hidden on screen (the existing

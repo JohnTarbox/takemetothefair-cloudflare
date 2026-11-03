@@ -18,6 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Check, ExternalLink, HelpCircle, RotateCw, X } from "lucide-react";
 import { formatTimestamp, formatDateMedium } from "@/lib/datetime";
 import { SortHeader, sortBy, nextSort, type SortState } from "@/components/admin/sortable-table";
+import type { EnrichOnMatchEntry } from "@/lib/inbound-enrich-on-match";
+import { replySubject as defaultReplySubject, safeHref } from "@takemetothefair/utils";
 
 const CF_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf";
 const WORKFLOWS_DASH = `https://dash.cloudflare.com/${CF_ACCOUNT_ID}/workers/workflows/inbound-email/instance`;
@@ -67,6 +69,8 @@ interface InboundBodyDetail {
   // this email. Empty for every non-photo email.
   boothProposals?: BoothProposal[];
   proposalEvent?: { id: string; name: string; slug: string } | null;
+  // OPE-1152 — enrich-on-match rows for this email (staged / dropped).
+  enrichOnMatch?: EnrichOnMatchEntry[];
 }
 
 /** OPE-205 §2 — one staged booth identification awaiting review. */
@@ -353,7 +357,7 @@ export default function AdminInboundEmailsPage() {
   // OPE-163 — open the reply composer for a row, prefilling the subject.
   const openReply = useCallback((row: InboundEmailRow) => {
     setReplyOpenId(row.id);
-    setReplySubject(`Re: ${row.subject || "your message"}`.slice(0, 200));
+    setReplySubject(defaultReplySubject(row.subject).slice(0, 200));
     setReplyBody("");
     setReplyConfirm(false);
     setReplyMsg(null);
@@ -402,7 +406,7 @@ export default function AdminInboundEmailsPage() {
   const openLogExt = useCallback((row: InboundEmailRow) => {
     setLogExtOpenId(row.id);
     setLogExtTo(row.fromAddress);
-    setLogExtSubject(`Re: ${row.subject || "your message"}`.slice(0, 200));
+    setLogExtSubject(defaultReplySubject(row.subject).slice(0, 200));
     setLogExtBody("");
     setLogExtProvider("gmail");
     setLogExtMsg(null);
@@ -790,6 +794,7 @@ export default function AdminInboundEmailsPage() {
             "replied",
             "forwarded",
             "closed_by_sender",
+            "dismissed",
           ].map((s) => (
             <button
               key={s || "all"}
@@ -1056,7 +1061,7 @@ export default function AdminInboundEmailsPage() {
                                 <div>
                                   <span className="font-medium">Parsed URL:</span>{" "}
                                   <a
-                                    href={row.parsedUrl}
+                                    href={safeHref(row.parsedUrl)}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-royal hover:underline break-all"
@@ -1307,6 +1312,83 @@ export default function AdminInboundEmailsPage() {
                                 );
                               })()}
 
+                              {/* OPE-1152 — enrich-on-match: what this email's match
+                                  staged against the existing event (fill-empty
+                                  proposals), or what it carried that could not be
+                                  staged because the event already says something
+                                  different. Read-only: applying stays a human edit on
+                                  the event (OPE-175 / OPE-839). */}
+                              {(() => {
+                                const d = bodyDetail[row.id];
+                                if (!d || d === "loading" || d === "error") return null;
+                                const entries = d.enrichOnMatch ?? [];
+                                if (entries.length === 0) return null;
+                                return (
+                                  <div className="mt-3 pt-3 border-t border-border">
+                                    <span className="font-medium">
+                                      Matched an existing event ({entries.length})
+                                    </span>
+                                    {entries.map((m) => (
+                                      <div
+                                        key={m.id}
+                                        className="mt-2 text-xs"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <div>
+                                          {m.event.slug ? (
+                                            <a
+                                              href={`/admin/events/${m.event.id}/edit`}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-royal hover:underline"
+                                            >
+                                              {m.event.name ?? m.event.id}
+                                            </a>
+                                          ) : (
+                                            <span className="font-mono">{m.event.id}</span>
+                                          )}
+                                          <span className="ml-2 text-muted-foreground">
+                                            {m.path ?? "?"} · {m.matchType ?? "?"}
+                                          </span>
+                                        </div>
+                                        {Object.keys(m.proposals).length > 0 && (
+                                          <div className="mt-1">
+                                            <span className="px-1 rounded bg-green-100 text-green-800">
+                                              staged (event field empty)
+                                            </span>
+                                            <ul className="mt-1 ml-4 list-disc">
+                                              {Object.entries(m.proposals).map(([k, v]) => (
+                                                <li key={k} className="break-words">
+                                                  <span className="font-mono">{k}</span>:{" "}
+                                                  {typeof v === "string" ? v : JSON.stringify(v)}
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        )}
+                                        {m.unstagedFields.length > 0 && (
+                                          <div className="mt-1">
+                                            <span className="px-1 rounded bg-amber-100 text-amber-800">
+                                              not staged — event already has a different value
+                                            </span>{" "}
+                                            <span className="font-mono">
+                                              {m.unstagedFields.join(", ")}
+                                            </span>
+                                          </div>
+                                        )}
+                                        {m.outcome === "nothing-staged" &&
+                                          m.unstagedFields.length === 0 && (
+                                            <div className="mt-1 text-muted-foreground">
+                                              {m.extractedFields.length === 0
+                                                ? "nothing beyond name/date/venue was extracted"
+                                                : "everything extracted is already on the event"}
+                                            </div>
+                                          )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
                               {/* OPE-205 §2 — booth identifications OPE-204's vision
                                   pipeline staged for review. These rows have existed
                                   since OPE-204 shipped and nothing displayed them: an

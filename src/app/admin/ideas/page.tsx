@@ -9,13 +9,12 @@
  */
 
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { productIdeas } from "@/lib/db/schema";
 import { IDEA_PRODUCTS, IDEA_STATUSES } from "@takemetothefair/db-schema";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/require-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -41,8 +40,7 @@ export default async function AdminIdeasPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  const session = await auth();
-  if (session?.user?.role !== "ADMIN") redirect("/");
+  await requireAdmin({ allowReadonlyBearer: false });
 
   const sp = await searchParams;
   const status = (IDEA_STATUSES as readonly string[]).includes(sp.status ?? "")

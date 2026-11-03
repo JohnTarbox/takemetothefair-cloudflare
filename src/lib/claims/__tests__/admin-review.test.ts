@@ -75,6 +75,23 @@ const SCHEMA_SQL = `
     payload_json TEXT,
     created_at INTEGER NOT NULL
   );
+  -- OPE-1330 — an approved promoter claim records the claimant as a contact.
+  CREATE TABLE promoter_contacts (
+    id TEXT PRIMARY KEY,
+    promoter_id TEXT NOT NULL,
+    name TEXT, role TEXT,
+    email TEXT NOT NULL CHECK (email = lower(email)),
+    phone TEXT,
+    validation_method TEXT NOT NULL,
+    validation_evidence TEXT,
+    inbound_email_id TEXT,
+    sender_auth TEXT, auth_domain TEXT, auth_domain_matches_promoter INTEGER,
+    status TEXT NOT NULL DEFAULT 'candidate',
+    first_validated_at INTEGER, last_heard_at INTEGER, notes TEXT,
+    created_by TEXT, updated_by TEXT,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX uq_promoter_contacts_promoter_email ON promoter_contacts (promoter_id, email);
 `;
 
 let raw: Database.Database;
@@ -244,7 +261,46 @@ describe("approveClaim", () => {
     expect(p.claimed_by).toBe(CLAIMANT);
     expect(roleRows(CLAIMANT).map((r) => r.role)).toContain("PROMOTER");
     expect(claimRow("c1")).toMatchObject({ status: "APPROVED", decided_by: ADMIN });
-    expect(adminActionRows()[0].action).toBe("promoter.claim_admin_review_approve");
+    // OPE-1330 adds a promoter_contact audit row, so select the CLAIM's row by target.
+    const claimAudit = adminActionRows().filter((r) => r.target_type !== "promoter_contact");
+    expect(claimAudit.map((r) => r.action)).toEqual(["promoter.claim_admin_review_approve"]);
+  });
+
+  it("OPE-1330 — approving a promoter claim records the claimant as a VALIDATED contact", async () => {
+    seedPromoter({ id: "p1", slug: "big-events-co" });
+    seedClaim({ id: "c1", entityType: "PROMOTER", entityId: "p1", method: "EVIDENCE" });
+    expect((await approveClaim(db as never, { claimId: "c1", actorUserId: ADMIN })).ok).toBe(true);
+    expect(
+      raw
+        .prepare(
+          "SELECT promoter_id, email, name, status, validation_method, first_validated_at IS NOT NULL AS fv FROM promoter_contacts"
+        )
+        .all()
+    ).toEqual([
+      {
+        promoter_id: "p1",
+        email: "claimant@business.com",
+        name: "Claimant Person",
+        status: "validated",
+        validation_method: "approved_claim",
+        fv: 1,
+      },
+    ]);
+    expect(adminActionRows().map((r) => r.action)).toContain("promoter_contact.claim_validated");
+  });
+
+  it("OPE-1330 — a contact a human REJECTED stays rejected when the claim is approved", async () => {
+    seedPromoter({ id: "p1", slug: "big-events-co" });
+    raw
+      .prepare(
+        "INSERT INTO promoter_contacts (id, promoter_id, email, validation_method, status, created_at, updated_at) VALUES ('k1', 'p1', 'claimant@business.com', 'self_asserted', 'rejected', 1, 1)"
+      )
+      .run();
+    seedClaim({ id: "c1", entityType: "PROMOTER", entityId: "p1", method: "EVIDENCE" });
+    expect((await approveClaim(db as never, { claimId: "c1", actorUserId: ADMIN })).ok).toBe(true);
+    expect(raw.prepare("SELECT status FROM promoter_contacts").all()).toEqual([
+      { status: "rejected" },
+    ]);
   });
 
   it("refuses when the entity is already claimed by a DIFFERENT user — touches nothing", async () => {

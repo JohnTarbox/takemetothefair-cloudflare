@@ -24,7 +24,7 @@
  *     safe under Workflow step retries and email redelivery.
  */
 import { and, eq } from "drizzle-orm";
-import { chunkIds, classifyDomainTier } from "@takemetothefair/utils";
+import { chunkIds, classifyDomainTier, isNonSourceUrl } from "@takemetothefair/utils";
 import { detectBlockedSnapshot } from "@takemetothefair/site-fetch";
 import { eventDataCitations } from "../schema.js";
 import type { Db } from "../db.js";
@@ -439,6 +439,7 @@ export interface CitationWriteResult {
   reason:
     | "no-source-url"
     | "blocked-page"
+    | "non-source-url"
     | "no-citeable-fields"
     | "all-fields-already-cited"
     | "all-fields-contradicted"
@@ -501,6 +502,16 @@ export async function recordSourceCitations(
   // CloudFront 403 while their values came from the email body). Write nothing
   // against this URL. The fetch route classifies these pages first; this is
   // the guard for one it misses.
+  // OPE-1154 rework — a map/search URL is never evidence, whatever it returned.
+  // Checked on the URL itself, so it holds even with no snapshot (the 08-29
+  // Gilford rows had no captured title and no content check could see them).
+  if (source.kind === "url" && isNonSourceUrl(sourceUrl)) {
+    console.warn(
+      `[pipeline-citations] OPE-1154 skipped citations for ${eventId}: ${sourceUrl} is a map/search URL, not a source`
+    );
+    return { inserted: 0, reason: "non-source-url" };
+  }
+
   if (source.kind === "url" && args.snapshot) {
     const blocked = detectBlockedSnapshot(args.snapshot.title, args.snapshot.text);
     if (blocked.isChallenge) {

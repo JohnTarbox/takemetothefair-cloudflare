@@ -28,6 +28,8 @@
  * it is a factual claim about a real business we'd be publishing.
  */
 
+import { extractJsonObject, extractJsonValue } from "../model-json.js";
+
 /**
  * Vision model. Kept as a constant (not inlined) so it is swappable in one
  * place, mirroring WORKERS_AI_MODEL's role for the text model. NOT the same
@@ -35,8 +37,19 @@
  */
 export const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 
-/** Cap the model's output — we want a small JSON object, not an essay. */
-const MAX_TOKENS = 384;
+/**
+ * Cap the model's output — we want a small JSON object, not an essay.
+ *
+ * OPE-1339 — 384 was too tight for ONE real reply shape: a booth with many
+ * goods. Aneez Aroma Therapy's first answer was valid JSON that ran 1,370
+ * characters into an open `products` array and stopped, never closing a brace.
+ * 768 plus the 8-item cap below (prompt AND schema) leaves a full answer room;
+ * a normal reply is ~60 tokens, and output tokens are only spent when used.
+ */
+const MAX_TOKENS = 768;
+
+/** OPE-1339 — the products list is the only unbounded field, so it is bounded. */
+const MAX_PRODUCTS = 8;
 
 /**
  * OPE-969 — what a photo IS. Was booth | general | unclear, and real fair photos
@@ -92,6 +105,12 @@ export interface BoothIdentification {
    */
   identifiableMinor: boolean | null;
   /**
+   * OPE-240 — what the booth's sign is physically on, from the separate
+   * presence check (`checkBoothPresence`). Only set on a photo that reached the
+   * auto-write gate; undefined everywhere else.
+   */
+  mountedOn?: SignMount | null;
+  /**
    * OPE-403 follow-up — WHICH failure produced an UNIDENTIFIED result.
    *
    * `UNIDENTIFIED` was returned from five different places (the `ai.run` catch,
@@ -105,6 +124,15 @@ export interface BoothIdentification {
    * its reason), one layer down. Undefined on a successful parse.
    */
   failureReason?: string;
+  /**
+   * OPE-1339 — set when the fields were READ OUT OF A REPLY THAT WAS NOT VALID
+   * JSON: markdown bullets ("* **name**: Radiant Glow"), or a JSON object cut off
+   * mid-way. The read is usually right — the two specimens both named the booth
+   * correctly — but it is structure the model did not emit as an answer, so
+   * `disposition()` STAGES every salvaged result, whatever it says. It is never
+   * written, gallery-attached, or linked to a performer without a person.
+   */
+  salvaged?: "markdown" | "truncated-json";
 }
 
 /** A total failure to identify. Callers stage/skip rather than write. */
@@ -180,7 +208,7 @@ Rules — follow exactly:
 6. name: EXACTLY as printed on the subject's OWN sign, banner, board or truck.
    Never a description. If none is legible, null.
 7. website: ONLY if a web address is legibly printed. Otherwise null.
-8. products: short lowercase words, booths only, ONLY if visible.
+8. products: at most 8 short lowercase words, booths only, ONLY if visible.
 9. confidence: 0.0-1.0. LOW (<0.5) if the sign is obscured, blurry or angled.
 10. NEVER invent a name, URL, phone number, or town.
 11. identifiable_minor: true if ANY child or teenager appears anywhere in the
@@ -202,7 +230,7 @@ export const VISION_RESPONSE_FORMAT = {
       kind: { type: "string", enum: ["booth", "performer", "scenery", "signage", "unclear"] },
       name: { type: ["string", "null"] },
       website: { type: ["string", "null"] },
-      products: { type: "array", items: { type: "string" } },
+      products: { type: "array", items: { type: "string" }, maxItems: MAX_PRODUCTS },
       confidence: { type: "number" },
       rationale: { type: "string" },
       identifiable_minor: { type: "boolean" },
@@ -285,7 +313,7 @@ function fromParsedObject(obj: Record<string, unknown>): BoothIdentification {
     ? obj.products
         .map((p) => cleanString(p, 60))
         .filter((p): p is string => p !== null)
-        .slice(0, 12)
+        .slice(0, MAX_PRODUCTS)
     : [];
 
   const website = cleanWebsite(obj.website);
@@ -309,6 +337,64 @@ function fromParsedObject(obj: Record<string, unknown>): BoothIdentification {
     // we trust to publish a photo on.
     identifiableMinor: typeof obj.identifiable_minor === "boolean" ? obj.identifiable_minor : null,
   };
+}
+
+/** Keys the salvage reads — the same names the prompt asks for. */
+const SALVAGE_KEYS = ["kind", "name", "website", "confidence", "rationale", "identifiable_minor"];
+
+/**
+ * OPE-1339 — read the answer's fields out of a reply that is not valid JSON.
+ *
+ * Two real shapes, both from 2026-10-10 and both naming the booth correctly:
+ *   - markdown bullets: `* **name**: Radiant Glow` / `* Confidence: 0.9`
+ *   - a JSON object cut off mid-`products`: `{"kind":"booth","name":"Aneez …","products":["…`
+ *
+ * Reads only `key: value` pairs for the prompt's own keys — never free prose —
+ * and only when a recognised `kind` is among them; a reply that merely mentions
+ * a business in a sentence ("…tables for "kind" and "The Park Danforth"") yields
+ * nothing, because it is not an answer to the question. Returns null when there
+ * is nothing to salvage. The caller marks the result `salvaged`, which stages it.
+ */
+export function salvageReply(text: string): BoothIdentification | null {
+  const found: Record<string, unknown> = {};
+  // JSON fragments — complete "key": value pairs that survived a truncation.
+  const jsonPair =
+    /"(kind|name|website|confidence|rationale|identifiable_minor)"\s*:\s*("((?:[^"\\]|\\.)*)"|-?\d+(?:\.\d+)?|true|false|null)/gi;
+  for (const m of text.matchAll(jsonPair)) {
+    const key = m[1].toLowerCase();
+    if (key in found) continue;
+    found[key] = m[3] !== undefined ? m[3] : JSON.parse(m[2].toLowerCase());
+  }
+  const viaJson = Object.keys(found).length > 0;
+  if (!viaJson) {
+    // Markdown/plain lines — `* **Name**: Radiant Glow`, `- Kind: booth`.
+    for (const line of text.split(/\r?\n/)) {
+      const m = line.match(
+        /^\s*(?:[*\-•]\s+)?\**\s*([a-z_ ]+?)\s*\**\s*:\s*\**\s*(.*?)\s*\**\s*$/i
+      );
+      if (!m) continue;
+      const key = m[1].toLowerCase().trim().replace(/\s+/g, "_");
+      if (!SALVAGE_KEYS.includes(key) || key in found) continue;
+      const raw = m[2].replace(/^["'`]|["'`]$/g, "").trim();
+      if (!raw) continue;
+      if (key === "confidence") found[key] = Number(raw);
+      else if (key === "identifiable_minor")
+        found[key] = /^true$/i.test(raw) ? true : /^false$/i.test(raw) ? false : null;
+      else found[key] = /^(none|null|n\/a)$/i.test(raw) ? null : raw;
+    }
+  }
+  const kind = typeof found.kind === "string" ? found.kind.toLowerCase().trim() : "";
+  if (!["booth", "performer", "scenery", "general", "signage"].includes(kind)) return null;
+  return {
+    ...fromParsedObject(found),
+    salvaged: viaJson ? "truncated-json" : "markdown",
+  };
+}
+
+/** Attach a salvage candidate to a failure, keeping the failure's reason. */
+function withSalvage(failure: BoothIdentification, text: string): BoothIdentification {
+  const s = salvageReply(text);
+  return s ? { ...s, failureReason: failure.failureReason } : failure;
 }
 
 /**
@@ -380,24 +466,22 @@ export function parseVisionReply(raw: unknown): BoothIdentification {
   if (!text.trim()) return unidentified(`empty-text raw=${describeRawShape(raw)}`);
 
   // Models often wrap JSON in prose or a ```json fence despite instructions.
-  // Take the outermost {...} span rather than trusting the whole string.
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
+  // OPE-969 rework — the first BALANCED top-level object (fence stripped,
+  // string-aware), not the greedy first-`{`-to-last-`}` span: that span
+  // swallowed any brace AFTER the answer (a "Note: {…}" line, a second object)
+  // and then failed to parse a reply whose answer was complete.
+  const found = extractJsonValue(text, "object");
+  if (!found.ok && found.reason === "no-json-span") {
     // Quote generously AND state the true length. On the first live occurrence
     // the quote stopped at 120 chars mid-word, which looked exactly like the
     // model being cut off — the log's own limit was mistaken for the evidence.
     const t = text.trim();
-    return unidentified(`no-json-span len=${t.length} text="${t.slice(0, 240)}"`);
+    return withSalvage(unidentified(`no-json-span len=${t.length} text="${t.slice(0, 240)}"`), t);
   }
-
-  let obj: Record<string, unknown>;
-  try {
-    obj = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
-  } catch (e) {
-    return unidentified(`json-parse-failed ${e instanceof Error ? e.message : String(e)}`);
+  if (!found.ok) {
+    return withSalvage(unidentified(`json-parse-failed ${found.detail ?? ""}`.trim()), text);
   }
-  if (!obj || typeof obj !== "object") return unidentified("parsed-not-an-object");
+  const obj = found.value as Record<string, unknown>;
 
   return fromParsedObject(obj);
 }
@@ -467,7 +551,20 @@ export async function identifyBooth(ai: VisionAi, bytes: Uint8Array): Promise<Bo
 
   // Both failed. Report the SECOND reason but say it was retried, so a
   // persistent fault reads differently from a one-off in the logs.
-  return unidentified(`${second.failureReason} (retried once; first: ${first.failureReason})`);
+  const reason = `${second.failureReason} (retried once; first: ${first.failureReason})`;
+  // OPE-1339 — if either reply still carried the answer's fields, keep what it
+  // read (salvaged → always staged) rather than reporting "could not tell what
+  // the photo shows". A named read beats an unnamed one: the truncated-JSON
+  // first try and the markdown retry for Aneez both named the booth.
+  const salvage = [second, first]
+    .filter((x) => x.salvaged)
+    .sort(
+      (a, b) =>
+        Number(!!b.businessName || !!b.performerName) -
+        Number(!!a.businessName || !!a.performerName)
+    )[0];
+  if (salvage) return { ...salvage, failureReason: reason.slice(0, 500) };
+  return unidentified(reason);
 }
 
 /**
@@ -496,10 +593,13 @@ export const AUTO_WRITE_CONFIDENCE = 1.0;
  */
 export type StageKind =
   | "unclear"
+  /** OPE-1339 — fields read out of a non-JSON reply; staged with what was read. */
+  | "parse_salvaged"
   | "booth_name_unreadable"
   | "booth_below_threshold"
   | "booth_identifiable_minor"
   | "booth_roster_check_failed"
+  | "booth_not_at_a_stall"
   | "performer_unnamed"
   | "performer_unmatched"
   | "performer_not_on_roster"
@@ -520,6 +620,20 @@ export type Disposition =
  * stage judgment lives here so it can be exhaustively tested.
  */
 export function disposition(id: BoothIdentification): Disposition {
+  // OPE-1339 — FIRST, before any kind-specific path: a salvaged read is never
+  // written, attached to the gallery, or resolved against the lineup. It is
+  // staged showing what it read, so a person can approve it in one step.
+  if (id.salvaged) {
+    const who = id.businessName ?? id.performerName ?? id.signText;
+    return {
+      action: "stage",
+      identification: id,
+      reason:
+        `the model answered in ${id.salvaged === "markdown" ? "markdown" : "cut-off JSON"}, not JSON; ` +
+        `read as ${id.kind}${who ? ` "${who}"` : ""} at ${id.confidence.toFixed(2)} — check before approving`,
+      stageKind: "parse_salvaged",
+    };
+  }
   if (id.kind === "scenery") {
     return { action: "skip", identification: id, reason: "fair scenery — gallery" };
   }
@@ -580,4 +694,93 @@ export function disposition(id: BoothIdentification): Disposition {
     };
   }
   return { action: "write", identification: id };
+}
+
+/**
+ * OPE-240 — booth / not-booth, as a SEPARATE question.
+ *
+ * John's ruling 2026-09-30: no auto-write until this check lands. On the
+ * Farmington Fair batch (2026-09-26) two of the eight confidence-1.0 "booths"
+ * were not vendors at all — a wall banner advertising Chester Greenwood Day and
+ * the fair's own Agricultural Museum barn. A legible sign is not a booth, and
+ * the main prompt cannot tell them apart.
+ *
+ * Measured 2026-09-30 on those 8 photos (raw bytes, as the pipeline sends them),
+ * two runs each:
+ *   - an `exhibitor_present` boolean ADDED TO THE MAIN PROMPT answered true for
+ *     the banner and the museum (0 of 2 caught), and the longer prompt broke
+ *     JSON on 2 of 8. It echoes the model's first judgement; it is not a check.
+ *   - THIS prompt, asked on its own: 16 of 16 correct — both fakes
+ *     `building_or_wall`, all six real booths `vendor_table_or_tent`, JSON 16/16.
+ * n = 8 from one fair. Revisit against `sign_mounted_on` on staged rows.
+ *
+ * It never asks the model whether this is a booth. It asks what the sign is
+ * physically on, which is a thing the model can see.
+ */
+export const SIGN_MOUNTS = [
+  "vendor_table_or_tent",
+  "building_or_wall",
+  "fence_or_post",
+  "vehicle_or_trailer",
+  "other",
+] as const;
+export type SignMount = (typeof SIGN_MOUNTS)[number];
+
+export function presencePrompt(name: string): string {
+  return (
+    `What is the sign that reads "${name}" physically attached to or standing on? ` +
+    `Choose exactly one: "vendor_table_or_tent" (a table, tent, canopy or stall with goods or literature), ` +
+    `"building_or_wall", "fence_or_post", "vehicle_or_trailer", "other". ` +
+    `Reply ONLY with JSON: {"mounted_on":string}`
+  );
+}
+
+/** Parse the presence reply. Anything that is not exactly one of SIGN_MOUNTS is null. */
+export function parsePresenceReply(raw: unknown): SignMount | null {
+  const resp = (raw as { response?: unknown })?.response ?? raw;
+  let obj: unknown = resp;
+  if (typeof resp === "string") obj = extractJsonObject(resp);
+  const v = (obj as { mounted_on?: unknown } | null)?.mounted_on;
+  return typeof v === "string" && (SIGN_MOUNTS as readonly string[]).includes(v)
+    ? (v as SignMount)
+    : null;
+}
+
+/** Ask the presence question once. Never throws — a failure is `null`, which stages. */
+export async function checkBoothPresence(
+  ai: VisionAi,
+  bytes: Uint8Array,
+  name: string
+): Promise<SignMount | null> {
+  try {
+    const raw = await ai.run(VISION_MODEL, {
+      image: Array.from(bytes),
+      prompt: presencePrompt(name),
+      max_tokens: 60,
+    });
+    return parsePresenceReply(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * OPE-240 — the presence gate. Pure. Applies only to a photo `disposition()`
+ * would WRITE; everything else passes through untouched. Only an answer of
+ * exactly `vendor_table_or_tent` keeps it a write — any other mount, or no
+ * answer at all, stages. An unanswered question does not publish.
+ */
+export function applyPresenceGate(d: Disposition, mountedOn: SignMount | null): Disposition {
+  if (d.action !== "write") return d;
+  const identification = { ...d.identification, mountedOn };
+  if (mountedOn === "vendor_table_or_tent") return { action: "write", identification };
+  return {
+    action: "stage",
+    identification,
+    reason:
+      mountedOn === null
+        ? "booth check not answered — never auto-published without it"
+        : `the sign is on a ${mountedOn.replace(/_/g, " ")}, not a vendor's table or tent`,
+    stageKind: "booth_not_at_a_stall",
+  };
 }

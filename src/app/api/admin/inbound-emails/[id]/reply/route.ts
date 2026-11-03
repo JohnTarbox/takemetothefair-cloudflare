@@ -22,7 +22,7 @@ import {
   pendingEmailReplies,
 } from "@/lib/db/schema";
 // OPE-368 — shared with the MCP tool so both refusal sites behave identically.
-import { buildRefusedReply, refusedReplyMessage } from "@takemetothefair/utils";
+import { buildRefusedReply, refusedReplyMessage, replySubject } from "@takemetothefair/utils";
 import { logError } from "@/lib/logger";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { eq } from "drizzle-orm";
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     );
   }
 
-  const subject = (subjectOverride || `Re: ${row.subject || "your message"}`).slice(0, 200);
+  const subject = (subjectOverride || replySubject(row.subject)).slice(0, 200);
   const html = htmlOverride || textToHtml(bodyText);
 
   // OPE-368 (R4) — the gate, now with the draft in hand. Same refusal, same

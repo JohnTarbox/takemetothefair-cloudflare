@@ -34,13 +34,11 @@ const INDEX = join(process.cwd(), "mcp-server", "src", "index.ts");
  * lists nobody reads side by side.
  */
 const LEGACY_EXEMPT: Record<string, string> = {
-  // ⚠️ UNREVIEWED. Found by this guard on first run (OPE-469, 2026-08-18), not
-  // deliberately chosen. They may well be the same defect — both were added
-  // after the legacy path stopped being routinely updated. Listed rather than
-  // silently "fixed" because adding them changes what an `mmatf_` token can
-  // reach, which is an operator decision, not a lint fix.
-  registerMarketPlayerTools: "UNREVIEWED — OPE-414 tooling; likely an omission, not a choice",
-  registerSyndicationTools: "UNREVIEWED — SYN1 tooling; likely an omission, not a choice",
+  // OPE-478 (2026-10-01) — empty. The two entries found on this guard's first
+  // run (registerMarketPlayerTools, registerSyndicationTools) were omissions;
+  // John ruled 2026-09-30 that the mmatf_ token should reach them, and they
+  // are now registered on both paths. A future entry must state a REASON —
+  // an unexplained exemption is indistinguishable from the bug this catches.
 };
 
 function main() {

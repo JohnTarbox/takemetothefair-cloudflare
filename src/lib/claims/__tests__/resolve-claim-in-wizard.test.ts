@@ -322,13 +322,13 @@ describe("resolveClaimInWizard — domain match", () => {
 describe("resolveClaimInWizard — ladder ordering & non-matches", () => {
   it("freemail email → needs_evidence (no auto-approve even when verified)", async () => {
     setVerified(true);
-    raw.prepare(`UPDATE users SET email = ? WHERE id = ?`).run("jane@gmail.com", USER);
+    raw.prepare(`UPDATE users SET email = ? WHERE id = ?`).run("userjane@gmail.com", USER);
     seedVendor({ id: "v1", slug: "acme-foods", website: "https://gmail.com" });
     const res = await resolveClaimInWizard(db as never, {
       entityType: "VENDOR",
       slug: "acme-foods",
       userId: USER,
-      userEmail: "jane@gmail.com",
+      userEmail: "userjane@gmail.com",
       emailVerified: true,
     });
     expect(res.outcome).toBe("needs_evidence");
@@ -483,7 +483,7 @@ describe("OPE-1060 — running the wizard again reuses the open claim instead of
     entityType: "VENDOR" as const,
     slug: "acme-foods",
     userId: USER,
-    userEmail: "jane@gmail.com", // freemail → needs_evidence (PENDING EVIDENCE)
+    userEmail: "userjane@gmail.com", // freemail → needs_evidence (PENDING EVIDENCE)
     emailVerified: false,
   };
 

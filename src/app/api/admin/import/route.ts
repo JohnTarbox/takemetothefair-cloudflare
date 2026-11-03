@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { raiseEventReviewFlag } from "@/lib/db/schema";
 import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 import { venueStateConflict } from "@takemetothefair/utils";
 import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
@@ -474,17 +475,30 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
             const updateData: Record<string, unknown> = {
               name: decodedEventName,
               description: decodedDescription,
-              ticketUrl: gateUrlForField(
-                eventData.website || eventData.ticketUrl || eventData.sourceUrl,
-                "ticket",
-                urlClassifications
-              ),
               imageUrl: eventData.imageUrl || existing[0].imageUrl,
-              venueId: eventVenueId,
-              ...(formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
               lastSyncedAt: new Date(),
               updatedAt: new Date(),
             };
+            // OPE-1393 (CLB5) — a re-import never REMOVES a venue: a scrape with
+            // no venue (or a former-venue drop) leaves the stored one alone.
+            if (eventVenueId) updateData.venueId = eventVenueId;
+            // OPE-1393 (CLB5) — the source URL is only a fallback for a row with
+            // NO ticket link; it never replaces one (it is the listing page, not
+            // the event's own site).
+            const scrapedTicketUrl = gateUrlForField(
+              eventData.website || eventData.ticketUrl,
+              "ticket",
+              urlClassifications
+            );
+            if (scrapedTicketUrl) {
+              updateData.ticketUrl = scrapedTicketUrl;
+            } else if (!existing[0].ticketUrl) {
+              updateData.ticketUrl = gateUrlForField(
+                eventData.sourceUrl,
+                "ticket",
+                urlClassifications
+              );
+            }
             // Only update dates if provided. A3 (Dev backlog 2026-06-05):
             // route through normalizeEventDate so bare YYYY-MM-DD lands at
             // noon UTC (canonical anchor).
@@ -507,6 +521,10 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
               updateData.commercialVendorsAllowed = eventData.commercialVendorsAllowed;
             }
             await db.update(events).set(updateData).where(eq(events.id, existing[0].id));
+            // OPE-767 — recorded as a reason, so it can be discharged on its own.
+            if (formerCheck.flagForReview) {
+              await raiseEventReviewFlag(db, existing[0].id, "former_venue");
+            }
             await recomputeEventCompleteness(db, existing[0].id);
             results.updated++;
             results.updatedEvents.push({
@@ -590,7 +608,6 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         await db.insert(events).values({
           id: newEventId,
           possibleDuplicateOf,
-          ...(formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
           name: decodedNewEventName,
           slug,
           description: decodedNewDescription,
@@ -647,6 +664,8 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           lastSyncedAt: new Date(),
           commercialVendorsAllowed: eventData.commercialVendorsAllowed ?? true,
         });
+        // OPE-767 — recorded as a reason, so it can be discharged on its own.
+        if (formerCheck.flagForReview) await raiseEventReviewFlag(db, newEventId, "former_venue");
 
         // OPE-472 (bounce) — the bulk import path (aggregator_import /
         // direct_scrape) never attached a series: 65 of 65 rows imported on
@@ -835,7 +854,13 @@ export const PATCH = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           if (details.imageUrl && details.imageUrl !== event.imageUrl) {
             updates.imageUrl = details.imageUrl;
           }
-          if (details.website && details.website !== event.ticketUrl) {
+          // OPE-1393 (CLB5) — a "website" that is just the source page never
+          // replaces an existing ticket link.
+          if (
+            details.website &&
+            details.website !== event.ticketUrl &&
+            !(event.ticketUrl && details.website === event.sourceUrl)
+          ) {
             updates.ticketUrl = details.website;
           }
 

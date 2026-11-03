@@ -16,6 +16,7 @@ const SITE = "https://meetmeatthefair.com";
 
 const series: SeriesForSchema = {
   canonicalSlug: "newport-international-boat-show",
+  editionMode: null,
   name: "Newport International Boat Show",
   // OPE-32 — a dated series so the suppression guard doesn't fire in the
   // structural tests below; dateless suppression has its own describe block.
@@ -66,14 +67,14 @@ describe("series/occurrence URLs", () => {
     );
   });
   it("occurrenceUrl uses /<series>/<year> when the year is known", () => {
-    expect(occurrenceUrl("newport-international-boat-show", 2025, "fallback-slug")).toBe(
+    expect(occurrenceUrl("newport-international-boat-show", 2025, "fallback-slug", null)).toBe(
       `${SITE}/events/newport-international-boat-show/2025`
     );
   });
   it("occurrenceUrl falls back to the event slug when the year is unknown", () => {
-    expect(occurrenceUrl("newport-international-boat-show", null, "newport-2025-legacy")).toBe(
-      `${SITE}/events/newport-2025-legacy`
-    );
+    expect(
+      occurrenceUrl("newport-international-boat-show", null, "newport-2025-legacy", null)
+    ).toBe(`${SITE}/events/newport-2025-legacy`);
   });
 });
 

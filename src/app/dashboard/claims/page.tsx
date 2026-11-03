@@ -1,10 +1,9 @@
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import { FileCheck2 } from "lucide-react";
 import { desc, eq, inArray } from "drizzle-orm";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { auth } from "@/lib/auth";
+import { requireSession } from "@/lib/require-role";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { entityClaims, vendors, promoters, performers } from "@/lib/db/schema";
 import { decodeHtmlEntities } from "@/lib/utils";
@@ -134,10 +133,7 @@ function publicHref(row: ClaimRow): string | null {
 }
 
 export default async function DashboardClaimsPage() {
-  const session = await auth();
-  if (!session) {
-    redirect("/login?callbackUrl=/dashboard/claims");
-  }
+  const session = await requireSession("/dashboard/claims");
 
   const claims = await getUserClaims(session.user.id);
 

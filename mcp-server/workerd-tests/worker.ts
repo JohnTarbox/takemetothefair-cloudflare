@@ -7,6 +7,8 @@
  * full MCP entry and the remote-only bindings it expects.
  */
 export { BurstCounter } from "../src/burst-counter.js";
+// OPE-1391 — a minimal McpAgent bound as MCP_OBJECT for the session-binding tests.
+export { ProbeMCP } from "./probe-mcp.js";
 
 export default {
   async fetch(): Promise<Response> {

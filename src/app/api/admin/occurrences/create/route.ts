@@ -83,6 +83,9 @@ export async function POST(request: NextRequest) {
       ingestion_method?: string | null;
       categories?: string[] | string | null;
       tags?: string[] | string | null;
+      // OPE-1327 — multi-edition series only (ignored on an annual series).
+      // Omitted → derived from start_date as YYYY-MM in the venue zone.
+      edition_key?: string | null;
     };
 
     if (!body.series_id || !Number.isInteger(body.year)) {
@@ -115,6 +118,7 @@ export async function POST(request: NextRequest) {
       sourceUrl: body.source_url ?? null,
       ...(body.source_name ? { sourceName: body.source_name } : {}),
       ...(body.ingestion_method ? { ingestionMethod: body.ingestion_method } : {}),
+      editionKey: body.edition_key ?? null,
     });
 
     if (!result.created) {
@@ -128,8 +132,15 @@ export async function POST(request: NextRequest) {
             reason: "occurrence_exists",
             existing_event_id: result.existingEventId,
             year,
+            ...(result.editionKey ? { edition_key: result.editionKey } : {}),
           },
           { status: 200 }
+        );
+      }
+      if (result.reason === "edition_key_required") {
+        return NextResponse.json(
+          { error: "edition_key_required", message: result.message },
+          { status: 400 }
         );
       }
       if (result.reason === "former_venue_after_closure") {
@@ -150,6 +161,7 @@ export async function POST(request: NextRequest) {
       occurrence_id: result.occurrenceId,
       slug: result.slug,
       year: result.year,
+      ...(result.editionKey ? { edition_key: result.editionKey } : {}),
     });
   } catch (e) {
     const db = getCloudflareDb();

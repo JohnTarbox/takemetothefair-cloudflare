@@ -46,6 +46,7 @@ import {
   tunableThresholds,
   venues,
 } from "@/lib/db/schema";
+import { repointInboundEmailsToKeeper } from "@takemetothefair/db-schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import type { StaleRed } from "@/lib/cpi/stale-reds";
 import type { Db } from "@/lib/analytics-overview/shared";
@@ -398,6 +399,15 @@ export async function rejectFlaggedAsDuplicate(
       newStatus: "REJECTED",
     }),
     createdAt: now,
+  });
+
+  // OPE-1352 — the inbound that produced this row follows the keeper.
+  await repointInboundEmailsToKeeper(db, {
+    loserId: input.eventId,
+    keeperId: input.candidateId,
+    reason: "rejected_as_duplicate_of",
+    actorUserId: input.actorUserId,
+    now,
   });
   return { ok: true };
 }

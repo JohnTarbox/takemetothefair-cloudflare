@@ -10,7 +10,7 @@ import { pluralize } from "@/lib/text";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { getStateColors } from "@/lib/state-colors";
 import { displayVenueName } from "@/lib/venue-display";
-import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, focalPointGravity } from "@/lib/cdn-image";
 
 interface VenueCardProps {
   venue: {
@@ -83,20 +83,15 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
             (() => {
               const gravity = focalPointGravity(venue.imageFocalX, venue.imageFocalY);
               const cardWidths = [400, 600, 800, 1200];
-              const cardSrcSet = cardWidths
-                .map((w) =>
-                  cdnImage(venue.imageUrl!, {
-                    width: w,
-                    height: Math.round((w * 9) / 16),
-                    fit: "cover",
-                    ...(gravity ? { gravity } : {}),
-                    format: "auto",
-                    quality: 80,
-                    onerror: "redirect",
-                  })
-                )
-                .map((url, i) => `${url} ${cardWidths[i]}w`)
-                .join(", ");
+              const cardSrcSet = cdnSrcSet(venue.imageUrl, cardWidths, (w) => ({
+                width: w,
+                height: Math.round((w * 9) / 16),
+                fit: "cover",
+                ...(gravity ? { gravity } : {}),
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              }));
               const cardSrc = cdnImage(venue.imageUrl, {
                 width: 800,
                 height: 450,

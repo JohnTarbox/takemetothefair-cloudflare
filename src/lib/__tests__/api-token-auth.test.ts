@@ -136,14 +136,21 @@ describe("authenticateVendorToken", () => {
       limitResults.push([{ userId: "u" }]);
       limitResults.push([{ id: "v" }]);
 
-      await authenticateVendorToken(makeRequest("Bearer mmatf_same"), "acme");
-      const firstWhereCall = mockDb.where.mock.calls[0];
-      mockDb.where.mockClear();
+      // OPE-1361 — the lookup now also carries an `expires_at > now` predicate,
+      // so pin the clock or the two WHEREs differ by their `now`, not the hash.
+      vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-15T12:00:00Z") });
+      try {
+        await authenticateVendorToken(makeRequest("Bearer mmatf_same"), "acme");
+        const firstWhereCall = mockDb.where.mock.calls[0];
+        mockDb.where.mockClear();
 
-      await authenticateVendorToken(makeRequest("Bearer mmatf_same"), "acme");
-      const secondWhereCall = mockDb.where.mock.calls[0];
+        await authenticateVendorToken(makeRequest("Bearer mmatf_same"), "acme");
+        const secondWhereCall = mockDb.where.mock.calls[0];
 
-      expect(firstWhereCall).toEqual(secondWhereCall);
+        expect(firstWhereCall).toEqual(secondWhereCall);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

@@ -26,7 +26,10 @@ import { extractMetadata } from "@/lib/url-import/html-parser";
 import { extractSitemapUrls, looksLikeSitemap } from "@/lib/harvest/parse";
 import {
   fetchViaBrowserRendering,
+  guardedFetch,
+  isGuardedFetchError,
   isBlockedSsrfHost,
+  type GuardedResponse,
   FETCH_TIMEOUT,
   FETCH_UA,
 } from "@takemetothefair/site-fetch";
@@ -44,12 +47,21 @@ type RawFetch =
  * Standard fetch that (unlike site-fetch's `fetchStandard`) ACCEPTS XML — DMO
  * sitemaps are `application/xml`, which `fetchStandard` rejects as
  * "content-type". Caller escalates to Browser Rendering on a WAF-block status.
+ *
+ * OPE-1370 (SSRF5) — through `guardedFetch`: every redirect hop re-checked
+ * against the SSRF guard (it used to follow 3xx unchecked after the route's
+ * first-hop check) and the body capped. 10 MB because a sitemap index can be
+ * legitimately large; a refused hop is `forbidden_host` and is not escalated.
  */
+const HARVEST_FETCH_MAX_BYTES = 10 * 1024 * 1024;
+
 async function standardFetchAllowingXml(url: string, signal: AbortSignal): Promise<RawFetch> {
-  let res: Response;
+  let res: GuardedResponse;
   try {
-    res = await fetch(url, {
+    res = await guardedFetch(url, {
       signal,
+      timeoutMs: 0, // the caller's signal is the deadline
+      maxBytes: HARVEST_FETCH_MAX_BYTES,
       headers: {
         "User-Agent": FETCH_UA,
         Accept: "application/xml,text/xml,text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
@@ -57,23 +69,47 @@ async function standardFetchAllowingXml(url: string, signal: AbortSignal): Promi
       },
     });
   } catch (err) {
-    return {
-      ok: false,
-      status: null,
-      error: err instanceof Error && err.name === "AbortError" ? "timeout" : "network",
-    };
+    return { ok: false, ...rawFailure(err) };
   }
-  if (!res.ok) return { ok: false, status: res.status, error: `http-${res.status}` };
+  if (!res.ok) {
+    res.cancel();
+    return { ok: false, status: res.status, error: `http-${res.status}` };
+  }
+  let body: string;
+  try {
+    body = await res.text();
+  } catch (err) {
+    return { ok: false, ...rawFailure(err) };
+  }
   return {
     ok: true,
-    body: await res.text(),
+    body,
     contentType: res.headers.get("content-type") || "",
-    finalUrl: res.url || url,
+    finalUrl: res.url,
+  };
+}
+
+function rawFailure(err: unknown): { status: number | null; error: string } {
+  if (isGuardedFetchError(err)) {
+    if (err.code === "blocked_host" || err.code === "blocked_protocol") {
+      return { status: null, error: "forbidden_host" };
+    }
+    if (err.code === "too_large") return { status: err.status, error: "too_large" };
+    if (err.code === "timeout") return { status: null, error: "timeout" };
+    return { status: null, error: "network" };
+  }
+  return {
+    status: null,
+    error: err instanceof Error && err.name === "AbortError" ? "timeout" : "network",
   };
 }
 
 /** WAF-block statuses (+ timeout/network) that a real-browser render can clear. */
-function shouldEscalate(status: number | null): boolean {
+function shouldEscalate(standard: { status: number | null; error: string }): boolean {
+  // A refused redirect hop or an oversize body is final — Browser Rendering
+  // must not be asked to fetch it instead.
+  if (standard.error === "forbidden_host" || standard.error === "too_large") return false;
+  const { status } = standard;
   return status === null || status === 401 || status === 403 || status === 429;
 }
 
@@ -126,7 +162,7 @@ export const POST = withInternalKey({ source: "harvest-fetch" }, async ({ reques
       doc = standard.body;
       finalUrl = standard.finalUrl;
       fetchMethod = "standard";
-    } else if (shouldEscalate(standard.status)) {
+    } else if (shouldEscalate(standard)) {
       // 2) WAF-blocked (Simpleview DMOs) → Cloudflare Browser Rendering.
       const escalated = await fetchViaBrowserRendering(parsedUrl.href, env);
       // OPE-694 — the THIRD Browser Rendering call site, which that ticket did

@@ -1,3 +1,4 @@
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, RefreshCw, Users, BarChart3 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -49,6 +50,7 @@ type PageProps = {
 };
 
 export default async function Ga4DashboardPage({ searchParams }: PageProps) {
+  await requireAdmin();
   const params = await searchParams;
   const refresh = params.refresh === "1";
   const result = await load(refresh);

@@ -62,6 +62,10 @@ MAIN_APP_URL = "https://meetmeatthefair.com"
 # silently wiped by the next `wrangler deploy` (only secrets survive) — the
 # OPE-284 time bomb. Not a secret: these are our own operator addresses.
 ALERT_EMAIL_TECHNICAL = "alert@meetmeatthefair.com, jtarboxme@gmail.com"
+# OPE-366 — recipient for the unterminated-membrane-crossing E2 alarm (hourly
+# cron, inbound/unterminated-crossing-notice.ts). Its own var because John's
+# 2026-09-30 ruling named this address, which is not in ALERT_EMAIL_TECHNICAL.
+UNTERMINATED_CROSSING_ALERT_EMAIL = "john@pimboat.com"
 # I1 vendor-enrichment Worker (2026-06-13). Account id is non-secret; the
 # Browser-Rendering token is a Worker secret set via
 # `wrangler secret put CLOUDFLARE_BROWSER_RENDERING_TOKEN` (same value the main
@@ -132,23 +136,24 @@ UNROUTED_ASK_ENABLED = "false"
 # meetmeatthefair-app" — correctly, it was never anywhere), and an agent asking
 # "is delivery on?" cannot tell "off" from "I failed to read it".
 #
-# NOT flipped by this ticket. The value is John's call, made separately; OPE-772
-# was scoped to make the flag exist and be readable, explicitly not to enable it.
-# Three drafts are waiting on that decision: cfb242dd, 7d26f538, fb2ff331.
+# ON since 2026-10-05 — John, OPE-596 (10-04 ruling; "turn on
+# OPERATOR_OUTBOUND_ENABLED" in session 10-05). Delivery still happens ONLY when
+# a person approves a draft with review_operator_draft; enabling this sends
+# nothing by itself, and a draft already 'approved' before the flip is not swept
+# up and sent.
 #
 # Lives here, not in the dashboard: a dashboard [vars] value is silently wiped by
 # the next `wrangler deploy` (OPE-284/OPE-509).
-OPERATOR_OUTBOUND_ENABLED = "false"
+OPERATOR_OUTBOUND_ENABLED = "true"
 
 # OPE-803 — spam-lane event recovery. When "true", a quarantined-spam row whose
 # body names a specific event (name + date + place) is routed to admin triage
 # (`unclear` -> handleUnknown) instead of terminating. `classified_intent` still
 # reads `spam`; the classifier's call is never revisited.
 #
-# ⚠️ SHIPS "false" and must stay that way until John says otherwise. The ticket
-# carries an explicit STOP-gate: the recovery path may not go live before he has
-# seen a dry-run of what it would surface. Detection RUNS and is recorded while
-# this is "false" — that is how the evidence for the decision accumulates.
+# ON since OPE-803 (#1198, merged 2026-09-06): John approved the flip in session
+# after seeing a dry-run of what the detector surfaces — the ticket's STOP-gate. When "false", detection still RUNS and is recorded
+# but nothing is routed to triage. Turning it off again is John's call.
 #
 # ⚠️ This is a plaintext [vars] entry. Flipping it in the dashboard is reverted
 # by the next `wrangler deploy`, which replaces the whole block from this file.
@@ -200,7 +205,31 @@ PHOTO_VISION_ENABLED = "true"
 # stages instead of publishing). The flip itself waits for John to confirm
 # directly — a relayed approval is not the approval. When it flips, also set
 # `enabled_at` on the `booth-autowrite` heartbeat probe (drizzle/0164).
+#
+# ⛔ BACK TO "false" 2026-10-18 (OPE-1486), enforcing John's 2026-09-30 ruling on
+# OPE-240: "keep PHOTO_AUTOWRITE_ENABLED OFF for now". That ruling was made on a
+# receipt that said `current: "false"`, but this line had read "true" since the
+# 09-26 flip (#1425) and nothing reverted it. On 10-10 it auto-wrote 5 vendors
+# at one show and 3 of the 5 were wrong (a misread name, an invented URL). Flip
+# it again only on John's direct word, and read the DEPLOYED value before you
+# quote a "current" value: `get_send_gates` → `write_gates`.
+#
+# ✅ FLIPPED "true" again 2026-11-01 on John's DIRECT instruction in session
+# ("flip PHOTO_AUTOWRITE_ENABLED to true"), after a Harvest Festival of Crafts
+# batch where 1 of 6 booth photos cleared the 1.0 bar and sat staged. The
+# booth-autowrite probe has stayed armed since drizzle/0327, so no migration.
 PHOTO_AUTOWRITE_ENABLED = "true"
+# OPE-1394 / OPE-469 — commit gate for the replay_inbound_attachment MCP tool
+# (src/photo/replay.ts commitBlockedReason). A replay is DRY-RUN unless the call
+# passes commit:true AND this is exactly "true"; a committed replay writes to
+# live rows (vendors, event links, hero images) exactly as a real email would.
+# Declared "false", which is what production runs with: the var is in no secret
+# and no [vars] on the deployed Worker (checked 2026-10-16 via the Workers
+# settings/secrets API). It was evidently set by hand for the 2026-10-06 OPE-978
+# CCEMA commit and wiped by the next deploy. To commit a replay, edit THIS line
+# to "true", deploy, run it, and set it back — a dashboard edit is reverted by
+# the next `wrangler deploy` (OPE-284/OPE-509).
+REPLAY_COMMIT_ENABLED = "false"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 # Inbound-email failures (parse / extract / submit) get forwarded here.
 # Must be a verified destination address in Cloudflare Email Routing —

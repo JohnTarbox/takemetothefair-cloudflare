@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { raiseEventReviewFlag } from "@/lib/db/schema";
 import { NextRequest, NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
@@ -22,6 +23,7 @@ import { mintVenueFromIngest } from "@/lib/venue-minting";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { evaluateGates } from "@/lib/event-date-gates";
+import { hasCalendarDayPassed } from "@takemetothefair/datetime";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 import { auth } from "@/lib/auth";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
@@ -258,7 +260,11 @@ export async function POST(request: NextRequest) {
     // the submitter's email body — producing a past-dated PENDING/TENTATIVE
     // row that pollutes the public listings and wastes admin review time.
     // Force PENDING + flag for human review.
-    if (startDate && startDate.getTime() < Date.now()) {
+    // OPE-651 — a calendar-DAY comparison in the venue zone, not an instant
+    // one. Dates are stored at noon UTC, so `< Date.now()` called a same-day
+    // event "past" from 08:00 Eastern on its own morning (the bug #1102 fixed
+    // in the shared gate, surviving here on the email/suggest path).
+    if (startDate && hasCalendarDayPassed(startDate, new Date())) {
       gateRoute = "PENDING_REVIEW";
       if (!gateReasons.includes("past_date")) gateReasons.push("past_date");
     }
@@ -279,6 +285,16 @@ export async function POST(request: NextRequest) {
         : data.source === "email"
           ? ["community-suggestion", "email-submission"]
           : ["community-suggestion"];
+    // OPE-1558 — mark the no-login form's rows so "how many self-listed events
+    // got published" is a query on a stored tag. Community submissions only: an
+    // internal or vendor caller has no business claiming this form.
+    if (
+      data.intakeForm === "list-your-event" &&
+      !isInternal &&
+      (data.source ?? "community") === "community"
+    ) {
+      tagList.push("list-your-event");
+    }
 
     // Gate URLs against the domain classification table — community/vendor
     // submissions can include arbitrary URLs, so we filter aggregator domains
@@ -557,7 +573,7 @@ export async function POST(request: NextRequest) {
     //
     // Idempotent: `past_date` is only appended when absent, so a row already
     // gated above is unchanged.
-    if (effectiveStartDate && effectiveStartDate.getTime() < Date.now()) {
+    if (effectiveStartDate && hasCalendarDayPassed(effectiveStartDate, new Date())) {
       gateRoute = "PENDING_REVIEW";
       if (!gateReasons.includes("past_date")) gateReasons.push("past_date");
     }
@@ -606,9 +622,8 @@ export async function POST(request: NextRequest) {
     // never auto-published: a human looks first.
     const stateNeedsReview =
       venueDecision === "state-conflict" || sourceOutsideNewEngland(data.venueState);
-    const eventStatus =
-      gateRoute === "PENDING_REVIEW" || stateNeedsReview ? "PENDING" : baseEventStatus;
-    const gateFlagsJson = gateReasons.length > 0 ? JSON.stringify(gateReasons) : null;
+    // `eventStatus` / `gateFlagsJson` are derived BELOW the occurrence routing:
+    // OPE-1327 can still send an edition-ambiguous submission to review.
 
     // OPE-1180 — a resolved FORMER venue is kept only for pre-closure dates.
     // After the closure the submission lands WITHOUT a venue and flagged for
@@ -661,6 +676,21 @@ export async function POST(request: NextRequest) {
       // insert (safe default — better a standalone row than a dropped submission).
     }
 
+    // OPE-1327 — a multi-edition series could not place this edition safely
+    // (its key is held, or another edition starts within ±7 days). Never drop it:
+    // insert the standalone below, held for review and pointed at the edition it
+    // collided with, so an operator decides "same edition" vs "new edition".
+    let stagedEditionOf: string | null = null;
+    if (!occRoute.routed && "staged" in occRoute) {
+      stagedEditionOf = occRoute.nearEditionId;
+      gateReasons.push("edition_ambiguous");
+      gateRoute = "PENDING_REVIEW";
+    }
+
+    const eventStatus =
+      gateRoute === "PENDING_REVIEW" || stateNeedsReview ? "PENDING" : baseEventStatus;
+    const gateFlagsJson = gateReasons.length > 0 ? JSON.stringify(gateReasons) : null;
+
     // OPE-458 scope 3 — resolve the owning promoter instead of defaulting every
     // submission to the community placeholder.
     //
@@ -673,15 +703,33 @@ export async function POST(request: NextRequest) {
     // A wrong owner is invisibly incorrect (it publishes on someone else's
     // page); the placeholder is merely visibly incomplete.
     let resolvedPromoterId: string = COMMUNITY_PROMOTER_ID;
-    try {
-      const owner = await resolvePromoterForSource(db, {
-        sourceUrl: data.sourceUrl ?? null,
-        eventName: effectiveName,
-      });
-      if (owner) resolvedPromoterId = owner.promoterId;
-    } catch {
-      // Never fail a submission over ownership enrichment — the placeholder is
-      // a correct, reviewable answer.
+    // OPE-1286 — the newsletter lane already knows whose newsletter it read
+    // (sender domain, or the lists+<slug>@ subscription). An internal caller's
+    // promoterId wins over URL inference; a public caller's is ignored, and an
+    // id that names no row falls through to inference rather than failing.
+    const statedOwner =
+      isInternal && data.promoterId
+        ? await db
+            .select({ id: promoters.id })
+            .from(promoters)
+            .where(eq(promoters.id, data.promoterId))
+            .limit(1)
+            .then((r) => r[0]?.id ?? null)
+            .catch(() => null)
+        : null;
+    if (statedOwner) {
+      resolvedPromoterId = statedOwner;
+    } else {
+      try {
+        const owner = await resolvePromoterForSource(db, {
+          sourceUrl: data.sourceUrl ?? null,
+          eventName: effectiveName,
+        });
+        if (owner) resolvedPromoterId = owner.promoterId;
+      } catch {
+        // Never fail a submission over ownership enrichment — the placeholder is
+        // a correct, reviewable answer.
+      }
     }
 
     // OPE-627 — the caller-supplied tag WINS.
@@ -700,6 +748,7 @@ export async function POST(request: NextRequest) {
     // dated row the same name at the same venue is usually another edition.
     const possibleDuplicateOf =
       data.possibleDuplicateOf ??
+      stagedEditionOf ??
       (await detectPossibleDuplicate(db, {
         venueId: resolvedVenueId,
         startDate: effectiveStartDate,
@@ -809,16 +858,19 @@ export async function POST(request: NextRequest) {
       // EDITION that needs web-confirmation → OCCURRED in the review/analyst
       // lane (the headless worker can't web-confirm), not an upcoming event.
       // Operator triage queue at /admin/events?flagged=1.
-      flaggedForReview:
-        stateNeedsReview ||
-        formerCheck.flagForReview ||
-        anyHoursUnknown ||
-        gateReasons.includes("past_date") ||
-        // OPE-378 — an invented name reads perfectly, so it needs a human.
-        gateReasons.includes("ungrounded_name")
-          ? 1
-          : 0,
     });
+    // OPE-767 — each reason recorded, so each can be discharged on its own.
+    // (Was one boolean OR of all five; nothing could tell them apart later.)
+    // OPE-378 — an invented name reads perfectly, so it needs a human.
+    for (const reason of [
+      stateNeedsReview && "venue_state_mismatch",
+      formerCheck.flagForReview && "former_venue",
+      anyHoursUnknown && "missing_hours",
+      gateReasons.includes("past_date") && "past_dated",
+      gateReasons.includes("ungrounded_name") && "ungrounded_name",
+    ] as const) {
+      if (reason) await raiseEventReviewFlag(db, newEventId, reason);
+    }
 
     // OPE-541 — one row per submission saying how the venue resolved.
     // Deliberately logged for EVERY outcome, matches included: a record that
@@ -995,6 +1047,15 @@ export async function POST(request: NextRequest) {
         slug: finalEventSlug,
         name: effectiveName,
       },
+      // OPE-1152 — echo the match so the email lane can stage the submission's
+      // content against the EXISTING event (report-only), rather than leaving it
+      // only on a PENDING twin an operator will reject.
+      possibleDuplicateOf: possibleDuplicateOf ?? null,
+      // OPE-1558 — whether a receipt email was actually queued, so a form can
+      // say "check your inbox" only when there is something to check. False for
+      // the rate-limited second submission in an hour, a suppressed address, or
+      // the ack flag being off — all real outcomes the page must not paper over.
+      receiptSent: ackOutcome === "sent",
     });
   } catch (error) {
     await logError(db, {

@@ -35,7 +35,7 @@ describe("decideDomainMatch", () => {
   });
 
   it("blocks a freemail email even if the website equals it (non_matchable_email)", () => {
-    expect(decideDomainMatch("jane@gmail.com", "acme.com")).toEqual({
+    expect(decideDomainMatch("userjane@gmail.com", "acme.com")).toEqual({
       match: false,
       reason: "non_matchable_email",
     });

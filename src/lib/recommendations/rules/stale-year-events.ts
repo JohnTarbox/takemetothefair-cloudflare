@@ -11,8 +11,9 @@
  * actionable items rather than a silent backlog.
  */
 
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { events } from "@/lib/db/schema";
+import { pastEndPredicate } from "@/lib/event-dates";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
 export const staleYearEventsRule: RuleDefinition = {
@@ -34,7 +35,7 @@ export const staleYearEventsRule: RuleDefinition = {
         endDate: events.endDate,
       })
       .from(events)
-      .where(and(eq(events.status, "APPROVED"), lt(events.endDate, now)));
+      .where(and(eq(events.status, "APPROVED"), pastEndPredicate(now)));
 
     return rows.map((r) => ({
       targetType: "event",

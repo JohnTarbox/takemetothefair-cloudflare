@@ -27,7 +27,7 @@
 import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { inboundEmails, emailSendLedger } from "@/lib/db/schema";
-import { isSystemSender } from "@takemetothefair/utils";
+import { chunkedInArray, isSystemSender } from "@takemetothefair/utils";
 
 type Db = DrizzleD1Database<Record<string, unknown>>;
 
@@ -110,7 +110,8 @@ function isExternalSender(fromAddress: string | null | undefined): boolean {
  * Assemble the briefing.
  *
  * Bounded reads: one window scan, one prior-count aggregate over the addresses
- * found, one outbound lookup over the same addresses. No per-row queries — the
+ * found, one outbound lookup over the same addresses (each chunked at 90
+ * addresses per statement for D1's 100-param cap, OPE-1376). No per-row queries — the
  * N+1 shape would be invisible at 3 emails a week and quadratic the day it is
  * pointed at a backfill.
  */
@@ -154,32 +155,45 @@ export async function buildCorrespondentBriefing(
 
   // All-time message counts per address — "have they written before" is the
   // single most useful line, and it is not answerable from the window alone.
-  const priorRows = await db
-    .select({
-      fromAddress: inboundEmails.fromAddress,
-      n: sql<number>`count(*)`,
-    })
-    .from(inboundEmails)
-    .where(inArray(sql`lower(${inboundEmails.fromAddress})`, addresses))
-    .groupBy(sql`lower(${inboundEmails.fromAddress})`);
+  //
+  // OPE-1376: chunked. `addresses` is every distinct external sender in the
+  // window — 116 on prod at ?days=90 — and D1 rejects a statement binding more
+  // than 100 params (better-sqlite3 accepts 32,766, so only a statement-shape
+  // test can see it). Each address lands in exactly one batch, and the GROUP BY
+  // is per address, so concatenating the batches is the same result set.
+  const priorRows = await chunkedInArray(addresses, (batch) =>
+    db
+      .select({
+        fromAddress: inboundEmails.fromAddress,
+        n: sql<number>`count(*)`,
+      })
+      .from(inboundEmails)
+      .where(inArray(sql`lower(${inboundEmails.fromAddress})`, batch))
+      .groupBy(sql`lower(${inboundEmails.fromAddress})`)
+  );
   const priorByAddress = new Map(
     priorRows.map((r) => [(r.fromAddress ?? "").toLowerCase(), Number(r.n)])
   );
 
-  const outboundRows = await db
-    .select({
-      recipient: emailSendLedger.recipient,
-      sentAt: emailSendLedger.sentAt,
-      source: emailSendLedger.source,
-    })
-    .from(emailSendLedger)
-    .where(
-      and(
-        inArray(sql`lower(${emailSendLedger.recipient})`, addresses),
-        eq(emailSendLedger.status, "sent")
+  // Chunked for the same reason (OPE-1376); the batch plus the status literal
+  // stays at <= 91 params. Each batch is sorted newest-first and a recipient
+  // appears in only one batch, so "first wins" below is still "newest wins".
+  const outboundRows = await chunkedInArray(addresses, (batch) =>
+    db
+      .select({
+        recipient: emailSendLedger.recipient,
+        sentAt: emailSendLedger.sentAt,
+        source: emailSendLedger.source,
+      })
+      .from(emailSendLedger)
+      .where(
+        and(
+          inArray(sql`lower(${emailSendLedger.recipient})`, batch),
+          eq(emailSendLedger.status, "sent")
+        )
       )
-    )
-    .orderBy(desc(emailSendLedger.sentAt));
+      .orderBy(desc(emailSendLedger.sentAt))
+  );
 
   // Newest per recipient. The list is already sorted, so first wins.
   const lastOutbound = new Map<string, { sentAt: Date; source: string | null }>();

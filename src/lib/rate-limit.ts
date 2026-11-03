@@ -9,6 +9,14 @@ export interface RateLimitConfig {
   windowMs: number; // Window in milliseconds (e.g., 3600000 for 1 hour)
 }
 
+/**
+ * OPE-1412 — the most email-driven URL fetches (submit@ pipeline, all senders
+ * together, crawl pages included) allowed per UTC day. The ONE place to change
+ * it. Measured 90-day peak at ship time: 34 (4 URL emails + 30 crawl pages,
+ * 2026-09-19); typical days are under 10.
+ */
+export const EMAIL_FETCH_DAILY_CEILING = 50;
+
 // Pre-configured limits for suggest-event endpoints
 export const RATE_LIMITS = {
   "suggest-event-submit": {
@@ -127,6 +135,17 @@ export const RATE_LIMITS = {
     authenticatedLimit: 15,
     windowMs: 60 * 60 * 1000, // 1 hour
   },
+  // OPE-1379 (HARD9) — POST /api/vendor/claim/initiate. Each call mints a claim
+  // token and enqueues a confirmation email (to the vendor's contact address or
+  // the caller's own), so an unbounded caller could resend it at will. Per-user
+  // (the route requires a verified session); a legitimate claimer needs one
+  // send, maybe a resend or two. Anonymous is 0 for the same reason as
+  // claim-wizard. KV-only (SOFT): the burst cohort is John's fixed eight (OPE-904).
+  "vendor-claim-initiate": {
+    anonymousLimit: 0,
+    authenticatedLimit: 5,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
   // "Other events on these dates" widget on /events/[slug]. Lazy-fired
   // from a user button click, so well-behaved traffic is far below
   // these caps; the cap is here to prevent a misbehaving client from
@@ -168,6 +187,17 @@ export const RATE_LIMITS = {
     // Each call may escalate to Browser Rendering at most twice.
     authenticatedLimit: 60,
     windowMs: 60 * 60 * 1000, // 1 hour
+  },
+  // OPE-1412 — the GLOBAL ceiling on email-driven fetches, across every
+  // sender, checked IN ADDITION to the per-sender `import-url-fetch` bucket
+  // (OPE-1370 keyed that one per sender, which left a sender-rotating stream
+  // with no total cap). Counted under one key per UTC day
+  // (`global:YYYY-MM-DD`, see src/lib/email-fetch-ceiling.ts), so it resets
+  // at UTC midnight. Change the number at EMAIL_FETCH_DAILY_CEILING.
+  "import-url-fetch-email-daily": {
+    anonymousLimit: 0,
+    authenticatedLimit: EMAIL_FETCH_DAILY_CEILING,
+    windowMs: 24 * 60 * 60 * 1000,
   },
   "import-url-extract-image": {
     anonymousLimit: 0,
@@ -306,6 +336,14 @@ export interface MeteredRateLimitOptions {
  */
 export function meteredCallerIdentifier(request: Request, userId: string | null): string {
   if (userId) return `user:${userId}`;
+  // OPE-1370 (SSRF8) — an inbound-email fetch carries the ORIGINAL sender's
+  // hashed address (mcp-server submit.ts `senderMeterKey`). Keyed per sender,
+  // a stream of rotating senders spends its own buckets instead of the one
+  // shared `caller:`/IP bucket every email fetch used to fall into. Only ever
+  // read on routes that already authorized the caller (admin session or
+  // X-Internal-Key), and only a well-formed 32-hex digest is honoured.
+  const sender = request.headers.get("x-mmatf-sender");
+  if (sender && /^[0-9a-f]{32}$/.test(sender)) return `sender:${sender}`;
   const entrypoint = request.headers.get("x-mmatf-entrypoint");
   if (entrypoint) return `caller:${entrypoint}`;
   return `ip:${getClientIp(request)}`;

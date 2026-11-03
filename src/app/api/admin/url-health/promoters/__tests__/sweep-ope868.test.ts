@@ -29,6 +29,7 @@ const SCHEMA_SQL = `
   CREATE TABLE url_health_checks (
     id TEXT PRIMARY KEY, url TEXT NOT NULL, source_field TEXT NOT NULL,
     verdict TEXT NOT NULL, http_status INTEGER, signals TEXT, detail TEXT,
+    body_bytes INTEGER,
     checked_at INTEGER NOT NULL
   );
 `;
@@ -243,5 +244,39 @@ describe("OPE-868 — the operator-readable report", () => {
     // from a blip.
     expect(after.total_observations).toBe(2);
     PAGES["https://ledyardfair.org"] = { status: 200, body: LEDYARD };
+  });
+});
+
+/**
+ * OPE-1294 — every row records the raw response size. "0 visible chars" from
+ * the Worker was a bot wall or a JS-rendered site for 47 of 55 real promoter
+ * sites, and a parked shell for 5; the byte size is what separates them, and
+ * it was never stored.
+ */
+describe("OPE-1294 — body_bytes is recorded", () => {
+  beforeEach(() => {
+    seedPromoter("hebron", "https://www.hebronharvestfair.org/");
+    seedPromoter("dns", "https://dns-fail.example.org");
+  });
+
+  it("stores the UTF-8 byte length of the body, and NULL when there was no response", async () => {
+    await sweep();
+    const rows = raw
+      .prepare(`SELECT url, body_bytes FROM url_health_checks ORDER BY url`)
+      .all() as Array<{ url: string; body_bytes: number | null }>;
+    const byUrl = Object.fromEntries(rows.map((r) => [r.url, r.body_bytes]));
+    expect(byUrl["https://www.hebronharvestfair.org/"]).toBe(
+      new TextEncoder().encode(HEBRON).length
+    );
+    expect(byUrl["https://dns-fail.example.org"]).toBeNull();
+  });
+});
+
+describe("bodyBytesOf", () => {
+  it("counts BYTES, not characters (a parked page's size must compare to a client's)", async () => {
+    const { bodyBytesOf } = await import("@/lib/goodwill/url-health");
+    expect(bodyBytesOf("é")).toBe(2);
+    expect(bodyBytesOf("")).toBe(0);
+    expect(bodyBytesOf(null)).toBeNull();
   });
 });

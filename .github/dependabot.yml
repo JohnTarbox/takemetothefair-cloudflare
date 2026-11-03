@@ -33,13 +33,39 @@ updates:
     groups:
       # The runtime the site actually serves on. Kept separate because these
       # are the ones worth reading carefully.
-      cloudflare-runtime:
+      #
+      # OPE-1372 — every named group is split into a minor/patch half and a
+      # major half. Unsplit, a group's patches rode in the same PR as its
+      # breaking majors, so safe patches waited on a migration: #1232
+      # (react 18→19) sat open 35 days and #1433 (drizzle 0.45.2→0.45.4, a
+      # patch) 17 days.
+      # Dependabot assigns an update to the FIRST group whose rules match. The
+      # minor/patch half declines a major through update-types, so the major
+      # falls to the half directly below it. Each pair must therefore keep
+      # IDENTICAL patterns; no YAML anchors are used, so keep the two lists in
+      # step by hand. These groups set no `applies-to`, so they default to
+      # version updates only and security updates are unaffected.
+      cloudflare-runtime-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
         patterns:
           - "@opennextjs/*"
           - "wrangler"
           - "@cloudflare/*"
           - "miniflare"
-      next-and-auth:
+      cloudflare-runtime-major:
+        update-types:
+          - "major"
+        patterns:
+          - "@opennextjs/*"
+          - "wrangler"
+          - "@cloudflare/*"
+          - "miniflare"
+      next-and-auth-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
         patterns:
           - "next"
           - "next-auth"
@@ -47,13 +73,52 @@ updates:
           - "react"
           - "react-dom"
           - "@types/react*"
-      database:
+      next-and-auth-major:
+        update-types:
+          - "major"
+        patterns:
+          - "next"
+          - "next-auth"
+          - "@auth/*"
+          - "react"
+          - "react-dom"
+          - "@types/react*"
+      database-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "drizzle-orm"
+          - "drizzle-kit"
+      database-major:
+        update-types:
+          - "major"
         patterns:
           - "drizzle-orm"
           - "drizzle-kit"
       # Everything else, split by risk rather than by name.
-      dev-tooling:
+      #
+      # OPE-1400 — dev-tooling follows the OPE-1372 split too. Unsplit, a dev
+      # major (e.g. tailwindcss 3→4) rode in the same PR as the week's
+      # safe dev patches, so the patches waited on a migration. Keep the
+      # two halves' patterns and exclude-patterns IDENTICAL.
+      dev-tooling-minor-and-patch:
         dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@opennextjs/*"
+          - "wrangler"
+          - "@cloudflare/*"
+          - "next*"
+          - "drizzle*"
+      dev-tooling-major:
+        dependency-type: "development"
+        update-types:
+          - "major"
         patterns:
           - "*"
         exclude-patterns:
@@ -84,10 +149,11 @@ updates:
       # ORDER MATTERS. Dependabot assigns each update to the FIRST group (top to
       # bottom) whose rules match, so this group only ever sees what nothing
       # above claimed:
-      #   - cloudflare-runtime / next-and-auth / database have no update-types
-      #     filter, so their packages' majors (e.g. next 15→16) stay in those
-      #     named groups — the precedence is unchanged by adding this one;
-      #   - dev-tooling already takes every development major;
+      #   - the cloudflare-runtime / next-and-auth / database pairs together
+      #     cover every update type (OPE-1372 split each into minor-and-patch
+      #     + major), so their packages' majors (e.g. next 15→16) land in the
+      #     named *-major group and never reach this one;
+      #   - dev-tooling-major already takes every development major;
       #   - production-minor-and-patch filters to minor/patch, so a production
       #     major falls through it to here.
       # Keep this group LAST, and keep its exclude-patterns identical to the one
@@ -111,6 +177,16 @@ updates:
           - "@auth/*"
           - "react*"
           - "drizzle*"
+    # OPE-1400 — majors that already have a ticket deciding them. Without these,
+    # the dev-tooling-major PR reopens every Monday for a migration that has
+    # been explicitly deferred. Remove an entry when its ticket is picked up.
+    ignore:
+      # OPE-1406: skip TypeScript 7 (native/Go compiler) for now.
+      - dependency-name: "typescript"
+        versions: [">=7"]
+      # OPE-1405: Tailwind v4 migration is on hold.
+      - dependency-name: "tailwindcss"
+        versions: [">=4"]
     labels:
       - "dependencies"
     commit-message:

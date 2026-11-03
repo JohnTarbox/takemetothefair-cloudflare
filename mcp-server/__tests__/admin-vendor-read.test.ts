@@ -228,7 +228,7 @@ describe("get_vendor_details_admin (OPE-649)", () => {
 
   // ── OPE-986 — can the owner receive the verification link? ───────────────
   //
-  // The 2026-09-13 incident: the verification email to sanzaarts@gmail.vom
+  // The 2026-09-13 incident: the verification email to userstudios@gmail.vom
   // hard-bounced ("unknown public suffix") and the address was suppressed, but
   // this reader showed only `owner_email_verified: null` — indistinguishable
   // from "hasn't clicked yet".
@@ -262,18 +262,18 @@ describe("get_vendor_details_admin (OPE-649)", () => {
     }
 
     it("flags a hard-bounced, suppressed verification address as undeliverable", async () => {
-      await seedUnverifiedVendor("sanzaarts@gmail.vom");
+      await seedUnverifiedVendor("userstudios@gmail.vom");
       await db.insert(emailSendLedger).values({
         messageId: "m-bounce",
         sentAt: new Date("2026-09-13T17:45:02Z"),
-        recipient: "sanzaarts@gmail.vom",
+        recipient: "userstudios@gmail.vom",
         source: "auth.register",
         status: "sent",
         deliveryStatus: "bounced",
         deliveryDetail: BOUNCE_DETAIL,
       } as never);
       await db.insert(emailSuppressionList).values({
-        email: "sanzaarts@gmail.vom",
+        email: "userstudios@gmail.vom",
         reason: "bounce",
         source: "cf-email-event",
         createdAt: new Date("2026-09-13T17:45:18Z"),
@@ -289,11 +289,11 @@ describe("get_vendor_details_admin (OPE-649)", () => {
     });
 
     it("does not flag a delivered verification email that simply was not clicked", async () => {
-      await seedUnverifiedVendor("sanzaart@gmail.com");
+      await seedUnverifiedVendor("userstudio@gmail.com");
       await db.insert(emailSendLedger).values({
         messageId: "m-ok",
         sentAt: new Date("2026-09-13T17:37:21Z"),
-        recipient: "sanzaart@gmail.com",
+        recipient: "userstudio@gmail.com",
         source: "auth.register",
         status: "sent",
         deliveryStatus: "delivered",
@@ -307,11 +307,11 @@ describe("get_vendor_details_admin (OPE-649)", () => {
 
     it("ignores non-auth mail to the same address", async () => {
       // A bounced outreach email is not the verification link.
-      await seedUnverifiedVendor("sanzaart@gmail.com");
+      await seedUnverifiedVendor("userstudio@gmail.com");
       await db.insert(emailSendLedger).values({
         messageId: "m-outreach",
         sentAt: new Date("2026-09-13T18:00:00Z"),
-        recipient: "sanzaart@gmail.com",
+        recipient: "userstudio@gmail.com",
         source: "admin.send-vendor-email",
         status: "sent",
         deliveryStatus: "bounced",

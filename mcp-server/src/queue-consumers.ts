@@ -17,8 +17,13 @@ import { getDb, type Db } from "./db.js";
 import { indexnowSubmissions, emailSendLedger } from "./schema.js";
 import { ledgerEmailSend, wasEmailSent } from "./mailer.js";
 import { logError } from "./logger.js";
+import {
+  closeObligationsAnsweredBy,
+  closeNoteForSend,
+  shouldCloseOnSend,
+} from "./support-obligations-close.js";
 import { captureDiscrepancy, type FieldClass, type DetectedBy } from "./goodwill/capture.js";
-import { formatRecipientsForLedger, normalizeRecipients } from "@takemetothefair/utils";
+import { formatRecipientsForLedger, maskEmails, normalizeRecipients } from "@takemetothefair/utils";
 
 const HOST = "meetmeatthefair.com";
 const REPORT_API_BASE = "https://api.indexnow.org/IndexNow";
@@ -316,7 +321,7 @@ export async function handleEmailBatch(
         bodyText: m.body.text,
       });
       m.ack();
-      console.warn(`[queue:email] reply held (disabled) id=${m.id} → ${m.body.to}`);
+      console.warn(`[queue:email] reply held (disabled) id=${m.id} → ${maskEmails(m.body.to)}`);
       continue;
     }
 
@@ -339,8 +344,31 @@ export async function handleEmailBatch(
         bodyHtml: m.body.html,
         bodyText: m.body.text,
       });
+      // OPE-1252 — a manual reply closes the person's obligation only now that
+      // the provider accepted it and the `sent` row exists. Before the ack, so a
+      // crash leaves the redelivery to close it (the close is idempotent: it
+      // only touches rows still `open`). Never fails the send.
+      if (shouldCloseOnSend(m.body)) {
+        try {
+          await closeObligationsAnsweredBy(
+            db,
+            m.body.inboundEmailId!,
+            closeNoteForSend(m.id, result.messageId)
+          );
+        } catch (err) {
+          await logError(env.DB, {
+            source: "mcp:email-queue",
+            message: `support obligation close-on-send failed for inbound ${m.body.inboundEmailId}`,
+            sessionId,
+            error: err,
+            context: { id: m.id, inboundEmailId: m.body.inboundEmailId },
+          });
+        }
+      }
       m.ack();
-      console.log(`[queue:email] sent ${m.body.source} → ${m.body.to} (id=${result.messageId})`);
+      console.log(
+        `[queue:email] sent ${m.body.source} → ${maskEmails(m.body.to)} (id=${result.messageId})`
+      );
     } else {
       // OPE-151 — record the failed attempt so a silent drop / DLQ park is
       // visible in the ledger. status='failed' does NOT block the retry (dedup
@@ -370,7 +398,7 @@ export async function handleEmailBatch(
           sessionId,
           context: {
             permanent: true,
-            to: m.body.to,
+            to: maskEmails(m.body.to),
             subject: m.body.subject,
             messageSource: m.body.source,
             attempts: m.attempts,
@@ -389,7 +417,7 @@ export async function handleEmailBatch(
         message: "env.EMAIL.send failed; will retry via queue (max_retries=3, then DLQ)",
         sessionId,
         context: {
-          to: m.body.to,
+          to: maskEmails(m.body.to),
           subject: m.body.subject,
           messageSource: m.body.source,
           attempts: m.attempts,

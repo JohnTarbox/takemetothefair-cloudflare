@@ -29,6 +29,44 @@ import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
 const DAY = 86400; // seconds
+
+/** Platforms where the HOST says nothing about whose page it is. */
+const SOCIAL_HOSTS = new Set([
+  "facebook.com",
+  "instagram.com",
+  "twitter.com",
+  "x.com",
+  "youtube.com",
+  "tiktok.com",
+  "linktr.ee",
+  "bandcamp.com",
+  "soundcloud.com",
+  "reverbnation.com",
+]);
+
+/**
+ * OPE-958 — a comparable key for "whose site is this". The host without `www.`;
+ * on a social platform, host + first path segment (facebook.com/sparksark), so
+ * the organizer's own Facebook event is not mistaken for the act's page.
+ * Null for anything that does not parse as an http(s) URL.
+ */
+export function ownSiteKey(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let u: URL;
+  try {
+    u = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  const host = u.hostname
+    .toLowerCase()
+    .replace(/^www\./, "")
+    .replace(/^m\./, "");
+  if (!SOCIAL_HOSTS.has(host)) return host;
+  const first = u.pathname.split("/").filter(Boolean)[0]?.toLowerCase();
+  return first ? `${host}/${first}` : null;
+}
 /** end_date is midnight of the last day; 2 days clears the closing-day + TZ. */
 const RANGE_GRACE = 2 * DAY;
 /**
@@ -188,6 +226,66 @@ export async function getPerformerDataHealth(
     )
     .limit(limit);
 
+  // 5b. OPE-958 — the re-verification source is the act's OWN site.
+  //
+  // A band's own homepage is nearly always a rolling "upcoming gigs" list: the
+  // Grassholes @ Orono Arts Fest appearance cited worldfamousgrassholes.com, the
+  // June date rolled off within weeks, and the page still answered 200 while
+  // supporting nothing. Keyed on the RE-VERIFICATION target
+  // (last_verified_source, falling back to source_url) — once a dated asset
+  // supersedes it, the finding clears; the acquisition source_url is history.
+  const ownDomainRows = await db
+    .select({
+      appearance_id: eventPerformers.id,
+      event_id: eventPerformers.eventId,
+      performer_id: eventPerformers.performerId,
+      performer_name: performers.name,
+      website: performers.website,
+      source_url: eventPerformers.sourceUrl,
+      last_verified_source: eventPerformers.lastVerifiedSource,
+    })
+    .from(eventPerformers)
+    .innerJoin(performers, eq(performers.id, eventPerformers.performerId))
+    .where(
+      and(
+        eq(eventPerformers.status, "CONFIRMED"),
+        isNotNull(performers.website),
+        isNull(performers.deletedAt)
+      )
+    );
+  const ownDomain = ownDomainRows
+    .filter((r) => {
+      const site = ownSiteKey(r.website);
+      const src = ownSiteKey(r.last_verified_source ?? r.source_url);
+      return site !== null && src !== null && site === src;
+    })
+    .slice(0, limit)
+    .map((r) => ({
+      appearance_id: r.appearance_id,
+      event_id: r.event_id,
+      performer_id: r.performer_id,
+      performer_name: r.performer_name,
+      verification_source: r.last_verified_source ?? r.source_url,
+    }));
+
+  // 5c. OPE-958 — the last re-check of the source did not confirm it.
+  const recheckFailed = await db
+    .select({
+      appearance_id: eventPerformers.id,
+      event_id: eventPerformers.eventId,
+      performer_id: eventPerformers.performerId,
+      recheck_state: eventPerformers.recheckState,
+      recheck_note: eventPerformers.recheckNote,
+    })
+    .from(eventPerformers)
+    .where(
+      and(
+        eq(eventPerformers.status, "CONFIRMED"),
+        sql`${eventPerformers.recheckState} IN ('changed', 'unreachable')`
+      )
+    )
+    .limit(limit);
+
   // 6. Duplicate performers — reuse the OPE-116 sweep.
   const dup = await findDuplicatePerformers(db, { minScore: duplicateMinScore });
   const duplicates = dup.pairs.slice(0, limit).map((p) => ({
@@ -270,6 +368,22 @@ export async function getPerformerDataHealth(
         "Add the source it was learned from (needed to re-verify) via the appearance's source_url.",
       count: missingProvenance.length,
       findings: missingProvenance,
+    },
+    {
+      key: "own_domain_verification_source",
+      title: "CONFIRMED appearance re-verified against the act's OWN site",
+      suggested_action:
+        "An act's own site is usually a rolling gig list. Find the organizer's dated schedule/program and supersede via record_appearance_recheck(source_url=…, with a source_excerpt).",
+      count: ownDomain.length,
+      findings: ownDomain,
+    },
+    {
+      key: "source_recheck_failed",
+      title: "CONFIRMED appearance whose last source re-check was 'changed' or 'unreachable'",
+      suggested_action:
+        "Re-ground it against the organizer's current page and record the result via record_appearance_recheck — or move the appearance off CONFIRMED.",
+      count: recheckFailed.length,
+      findings: recheckFailed,
     },
     {
       key: "duplicate_performers",

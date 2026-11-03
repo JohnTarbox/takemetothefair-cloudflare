@@ -34,6 +34,8 @@ const ALLOWED_STATUSES = [
   "awaiting_human",
   // OPE-1163 — a reply that only said thanks; nobody is waiting.
   "closed_by_sender",
+  // OPE-1251 — an operator dismissed a parked row; nothing was sent.
+  "dismissed",
 ] as const;
 
 export async function GET(request: NextRequest) {

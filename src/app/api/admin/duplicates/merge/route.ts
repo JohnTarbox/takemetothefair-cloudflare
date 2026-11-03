@@ -6,7 +6,7 @@ import type { DuplicateEntityType, MergeRequest } from "@/lib/duplicates/types";
 import { logError } from "@/lib/logger";
 import { events } from "@/lib/db/schema";
 import { inArray } from "drizzle-orm";
-import { differentEditionYears } from "@/lib/series/merge-year-guard";
+import { differentEditions } from "@/lib/series/merge-year-guard";
 
 export const POST = withAuthorized(async ({ request, db, userId }) => {
   let body: (MergeRequest & { actorUserId?: string | null }) | null = null;
@@ -44,21 +44,25 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
     // / unknown-year pairs fall through to the normal merge.
     if (type === "events") {
       const rows = await db
-        .select({ id: events.id, startDate: events.startDate })
+        .select({ id: events.id, startDate: events.startDate, editionKey: events.editionKey })
         .from(events)
         .where(inArray(events.id, [primaryId, duplicateId]));
       const keeper = rows.find((r) => r.id === primaryId);
       const dup = rows.find((r) => r.id === duplicateId);
-      if (keeper && dup && differentEditionYears(keeper.startDate, dup.startDate)) {
+      // OPE-1327 — also refuses two different editions of ONE year (both keyed,
+      // keys differ), which fuses rosters exactly as a cross-year merge does.
+      if (keeper && dup && differentEditions(keeper, dup)) {
         return NextResponse.json(
           {
             error: "different_editions",
             keeper_year: keeper.startDate?.getUTCFullYear() ?? null,
             duplicate_year: dup.startDate?.getUTCFullYear() ?? null,
+            keeper_edition: keeper.editionKey ?? null,
+            duplicate_edition: dup.editionKey ?? null,
             message:
-              "These are different editions (different years), not duplicates. Link them as " +
-              "occurrences of one series with create_occurrence — merging would fuse their " +
-              "per-year vendor rosters across years.",
+              "These are different editions (different years, or different editions of a " +
+              "multi-edition series), not duplicates. Link them as occurrences of one series " +
+              "with create_occurrence — merging would fuse their per-edition vendor rosters.",
           },
           { status: 409 }
         );

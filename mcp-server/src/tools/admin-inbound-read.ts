@@ -21,8 +21,25 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
-import { emailSendLedger, events, inboundEmails, workflowRunSteps, containsCI } from "../schema.js";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import {
+  adminActions,
+  emailSendLedger,
+  events,
+  inboundEmails,
+  inboundNewsletters,
+  promoterContacts,
+  promoterListArrivals,
+  promoters,
+  workflowRunSteps,
+  containsCI,
+} from "../schema.js";
+import { normalizeEmailAddress } from "@takemetothefair/db-schema";
+import { presentPromoterContact } from "./admin-promoter-contacts.js";
+import {
+  ENRICH_NOTHING_STAGED_ACTION,
+  ENRICH_PROPOSED_ACTION,
+} from "../email-handlers/enrich-proposal.js";
 import { buildVendorInquiryBriefing } from "../inbound/vendor-inquiry-briefing.js";
 import { jsonContent } from "../helpers.js";
 import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
@@ -143,7 +160,7 @@ export function registerInboundReadTools(
       // second query.
       //
       // `inbound_emails.reply_kind` is SINGLE-VALUED and is overwritten by
-      // whatever replied last. Jeremy Hall's `ce16f4a1` row reads
+      // whatever replied last. Jordan Sample's `ce16f4a1` row reads
       // `reply_kind='manual'` because a human eventually answered it by hand —
       // which makes it look handled and destroys the evidence that no automated
       // acknowledgment ever fired. The ledger keeps every send, so it is the
@@ -195,6 +212,78 @@ export function registerInboundReadTools(
         acknowledgment = null;
       }
 
+      // OPE-1152 — what enrich-on-match staged (or recorded as dropped) for
+      // this email. Fail-soft: the row is what the caller came for.
+      let enrichOnMatch: Array<Record<string, unknown>> | null = null;
+      try {
+        const rows = await db
+          .select({
+            id: adminActions.id,
+            action: adminActions.action,
+            targetId: adminActions.targetId,
+            payloadJson: adminActions.payloadJson,
+            createdAt: adminActions.createdAt,
+          })
+          .from(adminActions)
+          .where(
+            and(
+              inArray(adminActions.action, [ENRICH_PROPOSED_ACTION, ENRICH_NOTHING_STAGED_ACTION]),
+              sql`json_extract(${adminActions.payloadJson}, '$.inboundEmailId') = ${row.id}`
+            )
+          )
+          .orderBy(adminActions.createdAt);
+        enrichOnMatch = rows.map((r) => {
+          const p = safeJson<Record<string, unknown>>(r.payloadJson, {});
+          return {
+            action: r.action,
+            event_id: r.targetId,
+            created_at: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+            path: p.path ?? null,
+            match_type: p.matchType ?? null,
+            proposals: p.proposals ?? {},
+            extracted_fields: p.extractedFields ?? [],
+            unstaged_fields: p.unstagedFields ?? [],
+          };
+        });
+      } catch {
+        enrichOnMatch = null;
+      }
+
+      // OPE-1265 — mail to lists@: attribution, and a double-opt-in's confirm
+      // link (opened BY HAND — nothing fetches it). Null for every other row.
+      const [listArrival] = await db
+        .select()
+        .from(promoterListArrivals)
+        .where(eq(promoterListArrivals.inboundEmailId, row.id))
+        .limit(1)
+        .catch(() => []);
+
+      // OPE-1330 — is this sender a recorded promoter contact? Every contact row
+      // for the From address (one per promoter), so the reader sees status,
+      // method and first-validated next to matched_entities. [] when none.
+      const senderAddr = normalizeEmailAddress(row.fromAddress);
+      const contactRows = senderAddr
+        ? await db
+            .select({
+              c: promoterContacts,
+              companyName: promoters.companyName,
+              slug: promoters.slug,
+            })
+            .from(promoterContacts)
+            .leftJoin(promoters, eq(promoters.id, promoterContacts.promoterId))
+            .where(eq(promoterContacts.email, senderAddr))
+            .catch(() => [])
+        : [];
+
+      // OPE-1264 — recognised as a promoter newsletter: markers, whose it is and
+      // on what basis. Null for every other row.
+      const [newsletter] = await db
+        .select()
+        .from(inboundNewsletters)
+        .where(eq(inboundNewsletters.inboundEmailId, row.id))
+        .limit(1)
+        .catch(() => []);
+
       // OPE-604 — on a `vendor_inquiry`, assemble the answer's inputs.
       //
       // Attached to the READ rather than left to the operator because the six
@@ -225,6 +314,7 @@ export function registerInboundReadTools(
             subject: row.subject,
             parsedUrl: row.parsedUrl,
             bodyText: row.bodyText ?? row.bodyTextExcerpt ?? null,
+            receivedAt: row.receivedAt ?? null,
           });
         } catch (err) {
           briefingError = err instanceof Error ? err.message : String(err);
@@ -311,6 +401,9 @@ export function registerInboundReadTools(
              * result.
              */
             matched_entities: safeJson<unknown[]>(row.matchedEntities, []),
+            promoter_contacts: contactRows.map((r) =>
+              presentPromoterContact(r.c, { companyName: r.companyName, slug: r.slug })
+            ),
             matched_entity_type: row.matchedEntityType,
             matched_entity_id: row.matchedEntityId,
             match_basis: row.matchBasis,
@@ -327,6 +420,21 @@ export function registerInboundReadTools(
             // "did we acknowledge them?". `null` means the ledger read failed,
             // which is distinguishable from `{auto_acked: false}`.
             acknowledgment,
+            list_arrival: listArrival ?? null,
+            // OPE-1285 — `items` is the parsed item list with each item's
+            // disposition (matched / discrepancy / unmatched / skipped).
+            newsletter: newsletter
+              ? {
+                  ...newsletter,
+                  items: (() => {
+                    try {
+                      return newsletter.itemsJson ? JSON.parse(newsletter.itemsJson) : null;
+                    } catch {
+                      return null;
+                    }
+                  })(),
+                }
+              : null,
             workflow_instance_id: row.workflowInstanceId,
             message_id: row.messageId,
             parsed_url: row.parsedUrl,
@@ -343,6 +451,9 @@ export function registerInboundReadTools(
             resulting_event: resulting[0] ?? null,
             resulting_event_note:
               "Singular by schema — an email that created several events records only one here (OPE-464).",
+            enrich_on_match: enrichOnMatch,
+            enrich_on_match_note:
+              "OPE-1152 — one row per match against an EXISTING event: `dedup.enrich_proposed` (fill-empty proposals, staged only — nothing was applied) or `dedup.enrich_nothing_staged` (`unstaged_fields` = carried by the email but the event already holds a different value; compare by hand). `null` means the read failed. Empty = no match was staged from this email (or it predates OPE-1152).",
             attachment_count: row.attachmentCount,
             attachment_refs: refs,
             attachment_skips: skips,

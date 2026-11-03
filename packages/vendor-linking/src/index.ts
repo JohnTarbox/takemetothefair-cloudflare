@@ -31,8 +31,9 @@ import {
   getVendorComparisonString,
   normalizeVendorName,
   VENDOR_FORM_WORDS,
+  US_STATE_ABBREVIATION_MAP,
   type Slug,
-  buildPlaceholderEmail,
+  freePlaceholderEmail,
 } from "@takemetothefair/utils";
 import {
   SITE_URL,
@@ -59,6 +60,8 @@ export type VendorLinkDb = DrizzleD1Database<typeof schema>;
 const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
 const FUZZY_THRESHOLD = 0.92;
 const FUZZY_CANDIDATE_CAP = 200;
+/** Each token binds 2 params in the ranked pass; 8 keeps it far under D1's 100. */
+const RANKED_PASS_MAX_TOKENS = 8;
 const REDIRECT_CHAIN_MAX_DEPTH = 5;
 
 export const DEDUP_STRATEGY_VALUES = ["strict", "fuzzy", "skip"] as const;
@@ -201,6 +204,37 @@ async function resolveRedirectChain(db: VendorLinkDb, startRow: VendorRow): Prom
 }
 
 /**
+ * A live row whose name equals `businessName` case-insensitively — no stem, no
+ * cap, no scorer. Lowest id wins, so a name that is already duplicated links
+ * the same row every time.
+ *
+ * OPE-1544 — `fuzzy` had no such pass: it reached an exact name only through
+ * the capped stem narrowing, so on 2026-10-30 "Tree House Brewing" minted a
+ * second byte-identical row once 350 live vendors contained "brewing" against
+ * a 200-row cap. An exact name must never depend on the narrowing.
+ */
+async function findExactNameMatch(
+  db: VendorLinkDb,
+  businessName: string
+): Promise<VendorRow | null> {
+  const rows = await db
+    .select({
+      id: vendors.id,
+      businessName: vendors.businessName,
+      vendorType: vendors.vendorType,
+      redirectToVendorId: vendors.redirectToVendorId,
+      slug: vendors.slug,
+    })
+    .from(vendors)
+    .where(
+      and(sql`lower(${vendors.businessName}) = lower(${businessName})`, isNull(vendors.deletedAt))
+    )
+    .orderBy(vendors.id)
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
  * `strict` — "case-insensitive exact match", which is what the tool has always
  * documented and, until OPE-451, not what it did.
  *
@@ -228,20 +262,8 @@ export async function findStrictMatch(
   db: VendorLinkDb,
   businessName: string
 ): Promise<VendorRow | null> {
-  const caseInsensitive = await db
-    .select({
-      id: vendors.id,
-      businessName: vendors.businessName,
-      vendorType: vendors.vendorType,
-      redirectToVendorId: vendors.redirectToVendorId,
-      slug: vendors.slug,
-    })
-    .from(vendors)
-    .where(
-      and(sql`lower(${vendors.businessName}) = lower(${businessName})`, isNull(vendors.deletedAt))
-    )
-    .limit(1);
-  if (caseInsensitive.length > 0) return caseInsensitive[0];
+  const caseInsensitive = await findExactNameMatch(db, businessName);
+  if (caseInsensitive) return caseInsensitive;
 
   const normalizedTarget = normalizeVendorName(businessName);
   if (!normalizedTarget) return null;
@@ -254,7 +276,33 @@ export async function findStrictMatch(
     if (normalizeVendorName(candidate.businessName) !== normalizedTarget) continue;
     if (!bestId || candidate.id < bestId.id) bestId = candidate;
   }
-  return bestId;
+  if (bestId) return bestId;
+
+  // OPE-1223 — no live row, but a MERGED-AWAY one with exactly this name. The
+  // tombstone is soft-deleted and redirects to its keeper; returning it lets
+  // the caller's resolveRedirectChain land on the keeper instead of creating a
+  // fresh duplicate of a vendor a person already merged. Only a tombstone that
+  // HAS a redirect qualifies — a plain delete has no keeper to resolve to.
+  // ("Kim Ferreira ~ Joie De Vivre" → tombstone "Kim Ferreira - Joie de Vivre"
+  // → keeper "Kim Ferreira", 2026-09-30.)
+  const tombstones = await db
+    .select({
+      id: vendors.id,
+      businessName: vendors.businessName,
+      vendorType: vendors.vendorType,
+      redirectToVendorId: vendors.redirectToVendorId,
+      slug: vendors.slug,
+    })
+    .from(vendors)
+    .where(
+      and(sql`${vendors.deletedAt} IS NOT NULL`, sql`${vendors.redirectToVendorId} IS NOT NULL`)
+    );
+  let tomb: VendorRow | null = null;
+  for (const t of tombstones) {
+    if (normalizeVendorName(t.businessName) !== normalizedTarget) continue;
+    if (!tomb || t.id < tomb.id) tomb = t;
+  }
+  return tomb;
 }
 
 /**
@@ -298,9 +346,23 @@ const LOW_SELECTIVITY_TOKENS = new Set(["and", "the"]);
  *             `%company%` cannot find the stored "Soap Co." This is caught by
  *             OPE-451's "folds a trailing legal form" test, which failed the
  *             first time this selector was changed to prefer the longest token.
+ *  - state names — normalize ADDS them, from a mapped code (`nh` → "new
+ *             hampshire"), so the abbreviated row never contains them. OPE-739's
+ *             review return: "New Hampshire State Grange" (minted 2026-10-01
+ *             beside two "NH State Grange" rows) stemmed on `hampshire`, the
+ *             stored rows were never fetched, so they were never scored. It
+ *             now stems on `grange`, which both spellings contain.
  */
+const STATE_EXPANSION_WORDS = new Set(
+  Object.values(US_STATE_ABBREVIATION_MAP).flatMap((name) => name.split(" "))
+);
+
 function isUnsafeStem(token: string): boolean {
-  return LOW_SELECTIVITY_TOKENS.has(token) || VENDOR_FORM_WORDS.has(token);
+  return (
+    LOW_SELECTIVITY_TOKENS.has(token) ||
+    VENDOR_FORM_WORDS.has(token) ||
+    STATE_EXPANSION_WORDS.has(token)
+  );
 }
 
 /**
@@ -437,21 +499,75 @@ async function selectStemCandidates(db: VendorLinkDb, businessName: string): Pro
     stem ? containsCI(vendors.businessName, stem) : undefined
   );
 
-  const slugToken = slugStem(businessName);
-  // No stem at all already means "scan the cap unfiltered"; a second pass over
+  // No stem at all already means "scan the cap unfiltered"; a further pass over
   // the same unfiltered set would add nothing.
-  if (!slugToken || !stem) return byName;
+  if (!stem) return byName;
 
-  const bySlug = await fetchCandidates(db, containsCI(vendors.slug, slugToken));
+  const passes = [byName];
+  const slugToken = slugStem(businessName);
+  if (slugToken) passes.push(await fetchCandidates(db, containsCI(vendors.slug, slugToken)));
+  const tokens = safeNameTokens(businessName);
+  if (tokens.length >= 2) passes.push(await fetchRankedCandidates(db, tokens));
 
-  const seen = new Set(byName.map((r) => r.id));
-  const merged = byName.slice();
-  for (const row of bySlug) {
+  const seen = new Set<string>();
+  const merged: VendorRow[] = [];
+  for (const row of passes.flat()) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
     merged.push(row);
   }
   return merged;
+}
+
+/** Every distinct raw-name token a stem could use (>= 3 chars, not unsafe). */
+function safeNameTokens(businessName: string): string[] {
+  const tokens = businessName
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length >= 3 && !isUnsafeStem(t));
+  return [...new Set(tokens)].slice(0, RANKED_PASS_MAX_TOKENS);
+}
+
+/**
+ * OPE-1544 — the longest token is not always the distinctive one.
+ *
+ * "Tree House Brewing", "Castle Island Brewing Co.", "True West Brewing Co."
+ * and "Night Shift Brewing" all stem on "brewing", the longest token. Measured
+ * on prod 2026-10-30: **350 of 13,070 live vendors contain "brewing"** against
+ * the 200-row cap, and the 200 fetched held none of the four existing rows, so
+ * a Mass Craft Brewers roster pass minted a duplicate of each. "Arlington
+ * Brewing Co." and "Aeronaut Brewing Co." stemmed on their own names and
+ * matched. OPE-715 was this shape with "the"; any category word ("farm",
+ * "pottery", "brewing") becomes it as the table grows.
+ *
+ * This pass matches on ANY safe token but RANKS by the total length of the
+ * tokens a row contains, so a row sharing several of the incoming tokens
+ * outranks the mass of rows sharing only the category word, and lands inside
+ * the cap. It supplements the longest-stem pass rather than replacing it: a
+ * row sharing only one rare token still arrives through that pass, so no
+ * candidate the old selector found is lost. Lowest id breaks ties, for the
+ * same repeat-backfill determinism as the scorer.
+ */
+async function fetchRankedCandidates(db: VendorLinkDb, tokens: string[]): Promise<VendorRow[]> {
+  const contains = (t: string) => sql`(instr(lower(${vendors.businessName}), ${t}) > 0)`;
+  const weight = sql.join(
+    tokens.map((t) => sql`${contains(t)} * ${t.length}`),
+    sql` + `
+  );
+  return db
+    .select({
+      id: vendors.id,
+      businessName: vendors.businessName,
+      vendorType: vendors.vendorType,
+      redirectToVendorId: vendors.redirectToVendorId,
+      slug: vendors.slug,
+    })
+    .from(vendors)
+    .where(and(isNull(vendors.deletedAt), sql`(${sql.join(tokens.map(contains), sql` OR `)})`))
+    .orderBy(sql`${weight} DESC`, vendors.id)
+    .limit(FUZZY_CANDIDATE_CAP);
 }
 
 /**
@@ -463,6 +579,9 @@ export async function findFuzzyMatch(
   businessName: string,
   vendorType: string | null | undefined
 ): Promise<{ row: VendorRow; score: number } | null> {
+  const exact = await findExactNameMatch(db, businessName);
+  if (exact) return { row: exact, score: 1 };
+
   const candidates = await selectStemCandidates(db, businessName);
   if (candidates.length === 0) return null;
 
@@ -661,7 +780,16 @@ export async function createOrLinkVendor(
     // OPE-835 — the third construction site. The filed ticket named only
     // the promoter one; a fix wired there alone would have left this and
     // the vendor site in admin.ts still minting invalid addresses.
-    const placeholderEmail = buildPlaceholderEmail("pending+", finalSlug);
+    // OPE-1223 — a FREE address: a tombstone's owner row can still hold the
+    // one this slug would give (the slug was renamed on merge, the email not).
+    const placeholderEmail = await freePlaceholderEmail("pending+", finalSlug, async (email) => {
+      const taken = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
+      return taken.length > 0;
+    });
     const userId = crypto.randomUUID();
     await db.insert(users).values({
       id: userId,

@@ -6,6 +6,7 @@ import { eq, and, or, sql } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import { containsCI } from "@/lib/db/contains-ci";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -56,13 +57,13 @@ export async function GET(request: Request) {
         // comments here claimed ms; that was wrong, and the resulting
         // *1000 made the filter `seconds >= ms` which is always false.
         // Result: every venue card showed event_count = 0 sitewide until
-        // PR #161 corrected it.
+        // PR #161 corrected it. OPE-1396 (DUP5) — shared upcomingEndPredicate.
         eventCount: sql<number>`(
           SELECT COUNT(*) FROM events
           WHERE events.venue_id = venues.id
           AND events.status IN ('APPROVED', 'TENTATIVE')
           AND events.lifecycle_status NOT IN ('CANCELLED', 'NO_SHOW')
-          AND events.end_date >= unixepoch('now')
+          AND ${upcomingEndPredicate(new Date())}
         )`.as("event_count"),
       })
       .from(venues)

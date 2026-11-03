@@ -15,8 +15,9 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@takemetothefair/db-schema";
 import { parseJsonArray } from "@/types";
 import type { VendorDigestEvent } from "@/lib/email/vendor-digest";
+import { summarizeLaneCapacity } from "@takemetothefair/constants";
 
-const { events, promoters } = schema;
+const { events, promoters, eventApplications } = schema;
 type Db = DrizzleD1Database<typeof schema>;
 
 /** Start-of-day UTC for the past-date guard — an event today still counts. */
@@ -56,6 +57,7 @@ export function datesAreUnconfirmed(row: {
 export async function selectNewThisWeekEvents(db: Db, now: Date): Promise<VendorDigestEvent[]> {
   const rows = await db
     .select({
+      id: events.id,
       name: events.name,
       slug: events.slug,
       startDate: events.startDate,
@@ -127,7 +129,34 @@ export async function selectNewThisWeekEvents(db: Db, now: Date): Promise<Vendor
     .orderBy(desc(events.startDate))
     .limit(50);
 
-  const mapped: VendorDigestEvent[] = rows.map((r) => ({
+  // OPE-794 — capacity per event, across its application lanes. One batched
+  // read (≤50 ids, well under D1's 100-parameter cap).
+  const lanesByEvent = new Map<string, string[]>();
+  if (rows.length > 0) {
+    const lanes = await db
+      .select({ eventId: eventApplications.eventId, status: eventApplications.capacityStatus })
+      .from(eventApplications)
+      .where(
+        inArray(
+          eventApplications.eventId,
+          rows.map((r) => r.id)
+        )
+      );
+    for (const l of lanes) {
+      const list = lanesByEvent.get(l.eventId) ?? [];
+      list.push(l.status);
+      lanesByEvent.set(l.eventId, list);
+    }
+  }
+
+  // OPE-794 (John, 2026-09-30) — a show with no lane a vendor can apply to or
+  // wait for is not "new this week for vendors". Every lane FULL or CLOSED drops
+  // it; a WAITLIST show stays, rendered without an apply button.
+  const withCapacity = rows
+    .map((r) => ({ r, capacity: summarizeLaneCapacity(lanesByEvent.get(r.id) ?? []) }))
+    .filter(({ capacity }) => capacity !== "UNAVAILABLE");
+
+  const mapped: VendorDigestEvent[] = withCapacity.map(({ r, capacity }) => ({
     name: r.name,
     slug: r.slug,
     startDate: r.startDate ?? null,
@@ -145,6 +174,7 @@ export async function selectNewThisWeekEvents(db: Db, now: Date): Promise<Vendor
     applicationUrl: r.applicationUrl ?? null,
     sourceUrl: r.sourceUrl ?? null,
     promoterWebsite: r.promoterWebsite ?? null,
+    capacity: capacity as "OPEN" | "UNKNOWN" | "WAITLIST",
   }));
 
   // Curate: soonest real date first; dateless/tentative last. (The SQL ordered

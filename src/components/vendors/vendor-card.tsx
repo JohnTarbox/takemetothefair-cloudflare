@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import { CheckCircle, Calendar, MapPin } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,7 @@ import { formatDateRange } from "@/lib/utils";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { VendorTierBadges } from "./VendorTierBadges";
 import { isOwnerConfirmed } from "@/lib/claims/owner-confirmed";
-import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, focalPointGravity } from "@/lib/cdn-image";
 import { VendorMonogramLogo } from "./VendorMonogramLogo";
 import {
   displayVendorName,
@@ -113,20 +113,15 @@ export function VendorCard({ vendor, brandParent, operatorParent }: VendorCardPr
                 // get rescued via the admin focal-point picker.
                 (() => {
                   const gravity = focalPointGravity(vendor.imageFocalX, vendor.imageFocalY);
-                  const srcSet = [64, 128]
-                    .map(
-                      (w) =>
-                        `${cdnImage(vendor.logoUrl!, {
-                          width: w,
-                          height: w,
-                          fit: "cover",
-                          ...(gravity ? { gravity } : {}),
-                          format: "auto",
-                          quality: 80,
-                          onerror: "redirect",
-                        })} ${w}w`
-                    )
-                    .join(", ");
+                  const srcSet = cdnSrcSet(vendor.logoUrl, [64, 128], (w) => ({
+                    width: w,
+                    height: w,
+                    fit: "cover",
+                    ...(gravity ? { gravity } : {}),
+                    format: "auto",
+                    quality: 80,
+                    onerror: "redirect",
+                  }));
                   const src = cdnImage(vendor.logoUrl, {
                     width: 64,
                     height: 64,

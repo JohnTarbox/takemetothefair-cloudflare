@@ -23,7 +23,7 @@ beforeEach(() => {
 });
 
 const ROSTER_PAGE = "https://mainecheesefestival.org/?page_id=21";
-const FROM = "organizer@mainecheesefestival.org";
+const FROM = "yarrowdesk@mainecheesefestival.org";
 
 function seedEvent(id = "event-1"): string {
   db.insert(promoters)

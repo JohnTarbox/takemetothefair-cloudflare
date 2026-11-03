@@ -41,10 +41,12 @@ import {
   analyzeForward,
   isRfc822Attachment,
   POSTAL_MIME_OPTIONS,
+  type AttachmentDispositionToken,
   type ForwardAnalysis,
 } from "./email-handlers/forwarded-message.js";
 import { createDohResolver } from "./email-handlers/dkim-verify.js";
 import { getDb, type Db } from "./db.js";
+import { findHeldPhotoParents, parseThreadMessageIds } from "./photo/resolve-held-photos.js";
 import {
   inboundEmails,
   inboundEmailSenders,
@@ -55,10 +57,13 @@ import {
 } from "./schema.js";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import {
+  htmlToPlainText,
+  maskEmail,
   participantKey,
   normalizeThreadSubject,
   resolveThread,
   type ThreadBasis,
+  identifyUnsupportedImageFormat,
 } from "@takemetothefair/utils";
 import {
   isPhotoOnlySubmission,
@@ -88,6 +93,7 @@ import {
 import { hasMultiIntentOrSpecialSignal, isReplyToOurThread } from "./intent-fastpath.js";
 import { isDenylistedHost } from "./url-denylist.js";
 import { resolveSenderIdentity } from "./inbound/resolve-sender-identity.js";
+import { decideSolicitationHold } from "./email-handlers/solicitation-hold.js";
 import {
   parseEmailAuth,
   parseEmailAuthDetail,
@@ -95,6 +101,7 @@ import {
   type SenderAuthVerdict,
 } from "./email-auth.js";
 import { isNonActionableSender } from "./email-handlers/audit-sender.js";
+import { sniffAttachmentType } from "./attachment-sniff.js";
 import {
   automationHeadersJson,
   BURST_THRESHOLD_KEYS,
@@ -104,6 +111,7 @@ import {
   isBurstCrossing,
   type BurstThresholds,
 } from "./email-handlers/automated-mail.js";
+import { logAuditWriteFailure } from "./audit/log-audit-failure.js";
 
 // ---------------------------------------------------------------------------
 // Env shape required by this module
@@ -262,7 +270,7 @@ export async function handleInboundEmail(
         message: "PostalMime parse failed",
         error: err,
         sessionId,
-        context: { from: message.from, to: toAddr, rawSize: message.rawSize },
+        context: { from: maskEmail(message.from), to: toAddr, rawSize: message.rawSize },
       });
       await forwardToAdminBestEffort(message, env, `parse-failed: ${errMsg(err)}`, sessionId);
       return;
@@ -318,7 +326,15 @@ export async function handleInboundEmail(
     const mergedText = forward?.nested?.text
       ? `${parsed.text ?? ""}\n\n${forward.nested.text}`.trim()
       : (parsed.text ?? "");
-    const bodyText = mergedText.slice(0, MAX_BODY_LEN);
+    // OPE-1504 — a message with NO text/plain part (Apple Mail sends HTML-only)
+    // used to be stored with body_text NULL, so the classifier decided from the
+    // subject alone and every reader showed it as empty. Derive the text from
+    // the HTML here, before anything reads `bodyText`, so the classifier, the
+    // excerpt, the stored row and the workflow all see the same body. Recorded
+    // in `capture_meta` so a reader can tell the text was derived.
+    const bodyTextFromHtml = !mergedText.trim() && parsed.html ? htmlToPlainText(parsed.html) : "";
+    const bodyText = (bodyTextFromHtml || mergedText).slice(0, MAX_BODY_LEN);
+    const bodyCaptureMeta = bodyTextFromHtml ? JSON.stringify({ body_text_source: "html" }) : null;
     const bodyHtml = parsed.html || "";
     const bodyTextExcerpt = bodyText.slice(0, BODY_EXCERPT_LEN);
     // OPE-156 — full body persisted for the admin viewer (list preview stays
@@ -379,6 +395,7 @@ export async function handleInboundEmail(
           bodyTextExcerpt,
           bodyTextStored,
           bodyHtmlStored,
+          bodyCaptureMeta,
           senderSignals,
           senderIdentity,
           threadColumns,
@@ -393,7 +410,7 @@ export async function handleInboundEmail(
           message:
             "non-actionable audit/system sender; recorded audit-noop, skipped classifier + workflow",
           sessionId,
-          context: { from: fromAddr, to: toAddr, reason: nonActionable.reason },
+          context: { from: maskEmail(fromAddr), to: toAddr, reason: nonActionable.reason },
         }).catch(() => {});
       } catch (err) {
         await logError(env.DB, {
@@ -401,7 +418,7 @@ export async function handleInboundEmail(
           message: "failed to insert audit-noop row for non-actionable sender",
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr, reason: nonActionable.reason },
+          context: { from: maskEmail(fromAddr), to: toAddr, reason: nonActionable.reason },
         }).catch(() => {});
       }
       return;
@@ -419,6 +436,7 @@ export async function handleInboundEmail(
       bodyTextExcerpt,
       bodyTextStored,
       bodyHtmlStored,
+      bodyCaptureMeta,
       senderSignals,
       senderIdentity,
       threadColumns,
@@ -426,11 +444,19 @@ export async function handleInboundEmail(
       rawSize: message.rawSize,
       messageId: (parsed.messageId || "").trim() || null,
     };
-    const automated = detectAutomatedMail({
-      headers: message.headers,
-      fromAddr,
-      sendingHost: senderSignals.sendingHost,
-    });
+    // OPE-1265 — mail to lists@ IS automated bulk mail by design: every arrival
+    // carries List-Unsubscribe / precedence:bulk. Holding it here as
+    // `held-automated` would swallow every issue before it reached its lane. The
+    // list lane is itself a no-reply hold, so it skips this hold and the burst
+    // hold below (an ESP send is not a per-address burst).
+    const isListAddress = resolveIntent(toAddr) === "list_subscription";
+    const automated = isListAddress
+      ? null
+      : detectAutomatedMail({
+          headers: message.headers,
+          fromAddr,
+          sendingHost: senderSignals.sendingHost,
+        });
     if (automated) {
       const operatorRelevant = automated.kind !== "automated";
       try {
@@ -450,7 +476,7 @@ export async function handleInboundEmail(
           message: "failed to insert held-automated row",
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr, reason: automated.reason },
+          context: { from: maskEmail(fromAddr), to: toAddr, reason: automated.reason },
         }).catch(() => {});
       }
       if (automated.kind === "forwarding-confirmation") {
@@ -468,13 +494,13 @@ export async function handleInboundEmail(
               ? `auto-forwarded mailbox mail held (no reply, no event): ${automated.reason}`
               : `automated sender held (no reply, no event): ${automated.reason}`,
         sessionId,
-        context: { from: fromAddr, to: toAddr, subject, reason: automated.reason },
+        context: { from: maskEmail(fromAddr), to: toAddr, subject, reason: automated.reason },
       }).catch(() => {});
       return;
     }
 
     const burst = await checkInboundBurst(getDb(env.DB), toAddr, fromAddr);
-    if (burst.tripped) {
+    if (burst.tripped && !isListAddress) {
       try {
         await insertAuditNoopRow(getDb(env.DB), {
           ...heldTerminalArgs,
@@ -492,7 +518,7 @@ export async function handleInboundEmail(
           message: "failed to insert burst-held row",
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr },
+          context: { from: maskEmail(fromAddr), to: toAddr },
         }).catch(() => {});
       }
       if (burst.crossing) {
@@ -504,6 +530,47 @@ export async function handleInboundEmail(
           context: { to: toAddr, counts: burst.counts, thresholds: burst.thresholds },
         }).catch(() => {});
       }
+      return;
+    }
+
+    // 1c. OPE-278 — an operator-BLOCKED sender, or an attendee-list broker by
+    //     sender token / subject shape, is held here: no classifier, no
+    //     workflow, no ack. Before this, `blocked` only suppressed the UNROUTED
+    //     follow-up question, and a broker on a fresh address re-ran the whole
+    //     gauntlet (one got a support-ack through a classifier timeout). The
+    //     trust lookup is hoisted here and reused by the trusted fast-path below.
+    const senderTrust = await lookupSenderTrust(env.DB, fromAddr);
+    const solicitation = decideSolicitationHold({ senderTrust, subject, fromAddr });
+    if (solicitation) {
+      try {
+        await insertAuditNoopRow(getDb(env.DB), {
+          ...heldTerminalArgs,
+          reason: solicitation.reason,
+          disposition: {
+            intent: "held-automated",
+            status: "held-automated",
+            routingSource: `solicitation:${solicitation.kind}`,
+            // A pattern hold is reviewable in case the shape ever catches a
+            // real organizer; an explicit block is the operator's own decision.
+            flagged: solicitation.kind === "list-broker" ? 1 : 0,
+          },
+        });
+      } catch (err) {
+        await logError(env.DB, {
+          source: SOURCE,
+          message: "failed to insert solicitation-held row",
+          error: err,
+          sessionId,
+          context: { from: maskEmail(fromAddr), to: toAddr, reason: solicitation.reason },
+        }).catch(() => {});
+      }
+      await logError(env.DB, {
+        level: "info",
+        source: SOURCE,
+        message: `solicitation held (no reply, no event): ${solicitation.reason}`,
+        sessionId,
+        context: { from: maskEmail(fromAddr), to: toAddr, subject, reason: solicitation.reason },
+      }).catch(() => {});
       return;
     }
 
@@ -520,7 +587,7 @@ export async function handleInboundEmail(
         message: "rate-limited sender; dropped without reply or forward",
         sessionId,
         context: {
-          from: fromAddr,
+          from: maskEmail(fromAddr),
           subject,
           to: toAddr,
           limit: senderLimit,
@@ -566,17 +633,16 @@ export async function handleInboundEmail(
     // 3b. Look up sender trust tier (B6, drizzle/0075). Drives the
     //     trusted-sender fast-path decision below. Failure-safe: any
     //     lookup error treats the sender as 'unknown'.
-    const senderTrust = await lookupSenderTrust(env.DB, fromAddr);
+    //     (Hoisted to step 1c — OPE-278 — and reused here.)
 
     // 3b-ii. WS3e (2026-06-11) — verify the message actually authenticated
     //     before the trusted fast-path honors a (spoofable) From address.
     //     Cloudflare Email Routing attaches an Authentication-Results header;
-    //     parseEmailAuth condenses it to pass/fail/unknown. We only DOWNGRADE
-    //     on a proven "fail" (fail-open on "unknown" so existing trusted
-    //     senders aren't broken if the header is absent). Log trusted senders
-    //     whose mail isn't a clean "pass" so prod can confirm header presence
-    //     before we tighten the gate to require "pass".
-    const emailAuth = parseEmailAuth(message.headers?.get("Authentication-Results"));
+    //     parseEmailAuth reads ONLY Cloudflare's own (first) header and calls
+    //     "pass" only an aligned DMARC pass for fromAddr's domain (OPE-1369).
+    //     Anything else — partial, unknown, fail — does not honour the trusted
+    //     tier. Trusted senders whose mail isn't a "pass" are logged.
+    const emailAuth = parseEmailAuth(message.headers?.get("Authentication-Results"), fromAddr);
 
     // 3b-iii. OPE-315 — a photo-only mail is a photo submission whatever
     //     address it arrived at. John mailed two booth photos to submit@ with
@@ -593,6 +659,8 @@ export async function handleInboundEmail(
     let effectiveAddressIntent = addressIntent;
     if (
       addressIntent !== "photo_intake" &&
+      // OPE-1265 — a list issue stays in the list lane whatever it carries.
+      addressIntent !== "list_subscription" &&
       senderTrust === "trusted" &&
       isPhotoOnlySubmission({ attachments: effectiveAttachments, bodyText })
     ) {
@@ -602,7 +670,7 @@ export async function handleInboundEmail(
         source: "email-handler:ope-315-photo-only",
         message: `photo-only mail to ${toAddr} rerouted from ${addressIntent} to photo_intake`,
         sessionId,
-        context: { from: fromAddr, to: toAddr, addressIntent, attachmentCount },
+        context: { from: maskEmail(fromAddr), to: toAddr, addressIntent, attachmentCount },
       });
     }
     if (senderTrust === "trusted" && emailAuth !== "pass") {
@@ -611,9 +679,11 @@ export async function handleInboundEmail(
         message:
           emailAuth === "fail"
             ? "trusted sender failed email auth — fast-path downgraded (possible From spoof)"
-            : "trusted sender email auth unverifiable (no/none Authentication-Results)",
+            : emailAuth === "partial"
+              ? "trusted sender has no aligned DMARC pass — fast-path not honoured"
+              : "trusted sender email auth unverifiable (no Cloudflare Authentication-Results)",
         source: "email-handler:ws3e-auth-gate",
-        context: { from: fromAddr, to: toAddr, emailAuth },
+        context: { from: maskEmail(fromAddr), to: toAddr, emailAuth },
       });
     }
 
@@ -652,7 +722,7 @@ export async function handleInboundEmail(
             ? `GSC milestone email auto-ingested (status ${res.status})`
             : `GSC milestone auto-ingest returned ${res.status}`,
           sessionId,
-          context: { from: fromAddr, subject },
+          context: { from: maskEmail(fromAddr), subject },
         });
 
         // OPE-456 scope 1a — a successfully-ingested milestone is TERMINAL.
@@ -682,6 +752,7 @@ export async function handleInboundEmail(
               bodyTextExcerpt,
               bodyTextStored,
               bodyHtmlStored,
+              bodyCaptureMeta,
               senderSignals,
               senderIdentity,
               threadColumns,
@@ -696,7 +767,7 @@ export async function handleInboundEmail(
               message: "failed to record terminal row for ingested GSC milestone",
               error: err,
               sessionId,
-              context: { from: fromAddr, subject },
+              context: { from: maskEmail(fromAddr), subject },
             }).catch(() => {});
           }
           await logError(env.DB, {
@@ -705,7 +776,7 @@ export async function handleInboundEmail(
             message:
               "GSC milestone ingested; skipped classifier + submission workflow (OPE-456 scope 1a)",
             sessionId,
-            context: { from: fromAddr, subject },
+            context: { from: maskEmail(fromAddr), subject },
           }).catch(() => {});
           return;
         }
@@ -716,7 +787,7 @@ export async function handleInboundEmail(
           message: "GSC milestone auto-ingest failed (email still processed normally)",
           error: e,
           sessionId,
-          context: { from: fromAddr, subject },
+          context: { from: maskEmail(fromAddr), subject },
         });
       }
     }
@@ -767,6 +838,7 @@ export async function handleInboundEmail(
         bodyTextExcerpt,
         bodyTextStored,
         bodyHtmlStored,
+        bodyCaptureMeta,
         senderSignals,
         senderIdentity,
         threadColumns,
@@ -852,21 +924,32 @@ export async function handleInboundEmail(
     let attachmentSkipsJson: string | null = null;
     if (attachmentCount > 0) {
       try {
-        // Derive a stable, path-safe group id from the Message-ID so a
-        // redelivery overwrites the same R2 keys (idempotent — no orphans)
-        // rather than storing a fresh copy under a random id.
-        const safeMsgId = messageId
-          ? messageId
-              .replace(/[^a-zA-Z0-9._-]+/g, "-")
-              .replace(/^-+|-+$/g, "")
-              .slice(0, 80)
-          : "";
-        const groupId = safeMsgId || crypto.randomUUID();
-        const { refs, skipped } = await captureAttachments(
+        // OPE-1364 — dedup on message_id BEFORE anything is written, then store
+        // under a random per-delivery key. See captureDeliveryAttachments.
+        const capture = await captureDeliveryAttachments(
+          getDb(env.DB),
           env.VENDOR_ASSETS,
-          groupId,
+          messageId,
           effectiveAttachments
         );
+        if (capture.duplicateOf !== null) {
+          await logError(env.DB, {
+            level: "warn",
+            source: SOURCE,
+            message:
+              "duplicate inbound delivery (message_id seen); skipping before attachment capture",
+            sessionId,
+            context: {
+              from: maskEmail(fromAddr),
+              to: toAddr,
+              subject,
+              messageId,
+              priorRowId: capture.duplicateOf,
+            },
+          }).catch(() => {});
+          return;
+        }
+        const { refs, skipped } = capture;
         if (refs.length > 0) attachmentRefsJson = JSON.stringify(refs);
         if (skipped.length > 0) attachmentSkipsJson = JSON.stringify(skipped);
 
@@ -889,7 +972,7 @@ export async function handleInboundEmail(
             message: `attachment accounting mismatch: claimed ${attachmentCount}, stored ${refs.length}, skipped ${skipped.length}`,
             sessionId,
             context: {
-              from: fromAddr,
+              from: maskEmail(fromAddr),
               to: toAddr,
               attachmentCount,
               stored: refs.length,
@@ -905,7 +988,7 @@ export async function handleInboundEmail(
           message: "attachment capture failed; continuing without attachment_refs",
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr, attachmentCount },
+          context: { from: maskEmail(fromAddr), to: toAddr, attachmentCount },
         }).catch(() => {});
       }
     }
@@ -946,6 +1029,7 @@ export async function handleInboundEmail(
             bodyTextExcerpt: bodyTextExcerpt || null,
             bodyText: bodyTextStored,
             bodyHtml: bodyHtmlStored,
+            captureMeta: bodyCaptureMeta,
             // OPE-763 / OPE-764 — report-only capture; nothing branches on these.
             ...senderSignals,
             ...senderIdentity,
@@ -981,17 +1065,18 @@ export async function handleInboundEmail(
           message: "failed to insert multi-intent parent row; aborting",
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr, subject },
+          context: { from: maskEmail(fromAddr), to: toAddr, subject },
         });
         return;
       }
       if (parentInserted.length === 0) {
+        await discardStoredAttachments(env.VENDOR_ASSETS, attachmentRefsJson);
         await logError(env.DB, {
           level: "warn",
           source: SOURCE,
           message: "duplicate inbound delivery (multi-intent); skipping",
           sessionId,
-          context: { from: fromAddr, to: toAddr, subject, messageId },
+          context: { from: maskEmail(fromAddr), to: toAddr, subject, messageId },
         });
         return;
       }
@@ -1019,6 +1104,7 @@ export async function handleInboundEmail(
             bodyTextExcerpt: bodyTextExcerpt || null,
             bodyText: bodyTextStored,
             bodyHtml: bodyHtmlStored,
+            captureMeta: bodyCaptureMeta,
             // OPE-763 / OPE-764 — report-only capture; nothing branches on these.
             ...senderSignals,
             ...senderIdentity,
@@ -1057,7 +1143,7 @@ export async function handleInboundEmail(
           message: `failed to insert inbound_emails row [${i}]; aborting remaining`,
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr, subject, intent: r.intent },
+          context: { from: maskEmail(fromAddr), to: toAddr, subject, intent: r.intent },
         });
         return;
       }
@@ -1065,12 +1151,21 @@ export async function handleInboundEmail(
         // Should only happen for single-intent rows (messageId dedup).
         // Multi-intent children have null messageId; their parent INSERT
         // already handled the dedup gate.
+        //
+        // OPE-1364 — reached only by a concurrent duplicate that passed the
+        // pre-capture check too. Its attachments went to fresh random keys
+        // that no row references; delete them so a race leaves no orphans.
+        // (Single-intent only: a multi-intent child can't conflict, and its
+        // refs already belong to the parent row that did insert.)
+        if (!parentRowId) {
+          await discardStoredAttachments(env.VENDOR_ASSETS, attachmentRefsJson);
+        }
         await logError(env.DB, {
           level: "warn",
           source: SOURCE,
           message: "duplicate inbound delivery; skipping workflow create",
           sessionId,
-          context: { from: fromAddr, to: toAddr, subject, intent: r.intent, messageId },
+          context: { from: maskEmail(fromAddr), to: toAddr, subject, intent: r.intent, messageId },
         });
         return;
       }
@@ -1103,7 +1198,7 @@ export async function handleInboundEmail(
           message: "INBOUND_EMAIL.create failed; row remains in 'received' state",
           error: err,
           sessionId,
-          context: { messageRowId: rowId, intent: r.intent, from: fromAddr },
+          context: { messageRowId: rowId, intent: r.intent, from: maskEmail(fromAddr) },
         });
       }
     }
@@ -1137,7 +1232,7 @@ export async function handleInboundEmail(
       message: "unhandled exception in email entrypoint",
       error: err,
       sessionId,
-      context: { from: message.from, to: toAddr, rawSize: message.rawSize },
+      context: { from: maskEmail(message.from), to: toAddr, rawSize: message.rawSize },
     }).catch(() => {});
     throw err;
   }
@@ -1306,7 +1401,7 @@ interface CapturableAttachment {
    * lost.
    */
   contentId?: string;
-  disposition?: "attachment" | "inline" | null;
+  disposition?: AttachmentDispositionToken | null;
   related?: boolean;
 }
 
@@ -1314,7 +1409,7 @@ interface CapturableAttachment {
  * Largest an inline, `cid:`-referenced image can be and still be assumed to be
  * signature furniture rather than a payload.
  *
- * 64 KB. The observed specimen (inbound `ce16f4a1`, jeremy.hall@ct.gov) is the
+ * 64 KB. The observed specimen (inbound `ce16f4a1`, pat.tamarack@ct.gov) is the
  * calibration: four social icons at 498–713 B, a LinkedIn icon at 1,083 B, and
  * a CT DEEP logo at 24,897 B — all six `cid:`-referenced Outlook signature
  * graphics. 64 KB clears the logo with room to spare.
@@ -1346,6 +1441,81 @@ export function isSignatureFurniture(
   if (!mime.startsWith("image/")) return false;
   const embedded = !!a.contentId || a.disposition === "inline" || a.related === true;
   return embedded && sizeBytes > 0 && sizeBytes <= SIGNATURE_MAX_BYTES;
+}
+
+/**
+ * OPE-1364 — has a delivery with this Message-ID already been recorded?
+ * Returns the prior row id, or null (also for a null Message-ID: those skip
+ * dedup, as they always have). Same column the INSERT's partial-unique index
+ * covers, so this answers exactly the question the INSERT gate would.
+ * Exported for unit tests.
+ */
+export async function findPriorDeliveryByMessageId(
+  db: Db,
+  messageId: string | null
+): Promise<string | null> {
+  if (!messageId) return null;
+  const [row] = await db
+    .select({ id: inboundEmails.id })
+    .from(inboundEmails)
+    .where(eq(inboundEmails.messageId, messageId))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+/**
+ * OPE-1364 — the receive-time attachment step for one delivery.
+ *
+ * 1. If a row with this Message-ID already exists, return `{ duplicateOf }`
+ *    having written NOTHING. This used to be decided only at the row INSERT,
+ *    after the bytes were stored under a key derived from the sender's
+ *    Message-ID: a second email reusing a Message-ID (anyone on the thread has
+ *    it) overwrote the original message's attachments, then had its own row
+ *    skipped as a "duplicate", leaving the original row's attachment_refs
+ *    (OCR, poster hero, photo intake) pointing at the attacker's file.
+ * 2. Otherwise store under a RANDOM group id. The Message-ID lives only in
+ *    the row. Readers take keys from attachment_refs and never rebuild them.
+ *
+ * Redelivery idempotency: a true redelivery stops at (1). Two concurrent
+ * copies can both pass (1); the INSERT's partial-unique index still picks one,
+ * and the loser deletes its own freshly-keyed objects
+ * (discardStoredAttachments), so neither case leaves orphans or touches the
+ * winner's bytes.
+ *
+ * The lookup is fail-open: an error there falls through to the INSERT gate,
+ * which is the previous behaviour. Exported for unit tests.
+ */
+export async function captureDeliveryAttachments(
+  db: Db,
+  bucket: R2Bucket | undefined,
+  messageId: string | null,
+  attachments: CapturableAttachment[] | undefined
+): Promise<{ duplicateOf: string } | ({ duplicateOf: null } & AttachmentCapture)> {
+  const prior = await findPriorDeliveryByMessageId(db, messageId).catch(() => null);
+  if (prior) return { duplicateOf: prior };
+  const capture = await captureAttachments(bucket, crypto.randomUUID(), attachments);
+  return { duplicateOf: null, ...capture };
+}
+
+/**
+ * OPE-1364 — delete objects this delivery stored when its row lost the
+ * message_id INSERT race. Best-effort; never throws. Only `inbound-attachments/`
+ * keys are touched. Exported for unit tests.
+ */
+export async function discardStoredAttachments(
+  bucket: R2Bucket | undefined,
+  refsJson: string | null
+): Promise<void> {
+  if (!bucket || !refsJson) return;
+  try {
+    const refs = JSON.parse(refsJson) as AttachmentRef[];
+    const keys = refs
+      .map((r) => r?.key)
+      .filter((k): k is string => typeof k === "string" && k.startsWith("inbound-attachments/"));
+    if (keys.length > 0) await bucket.delete(keys);
+  } catch {
+    // An orphan is a storage cost, not a correctness fault.
+  }
 }
 
 /** Filesystem-safe attachment name for the R2 key. Collapses anything that
@@ -1393,6 +1563,10 @@ export type AttachmentSkipReason =
   | "too-large"
   /** Zero-length or undecodable content. */
   | "empty"
+  /** OPE-1364 — declared as media, but the bytes are none of JPEG / PNG / GIF /
+   *  WebP / HEIC / HEIF / PDF. Includes every SVG (refused by policy: it is an
+   *  image type that executes script). */
+  | "unrecognized-content"
   /** The R2 put threw. The only reason here that is unambiguously a fault. */
   | "put-failed";
 
@@ -1404,6 +1578,13 @@ export interface AttachmentSkip {
   mimeType: string;
   size: number;
   reason: AttachmentSkipReason;
+  /**
+   * OPE-1550 — on an `unrecognized-content` skip, the image format the bytes
+   * actually are when we can name it (e.g. "image/jxl" for JPEG XL, "image/avif",
+   * "image/tiff"). Absent when the bytes are nothing we recognise. Lets the
+   * operator notice say "a JPEG XL was refused" instead of "something was".
+   */
+  detectedFormat?: string;
   /**
    * OPE-760 — was this skip signature furniture rather than something the
    * sender meant to send?
@@ -1436,7 +1617,9 @@ export interface AttachmentCapture {
  * (tests / non-R2 envs) short-circuits. Callers wrap the whole thing in their
  * own try/catch too — this helper never throws.
  *
- * Only `image/*` and `application/pdf` attachments are stored, within a
+ * Candidates are parts DECLARED `image/*` / `application/pdf` (plus forwarded
+ * messages); OPE-1364 then admits only those whose BYTES are JPEG, PNG, GIF,
+ * WebP, HEIC/HEIF or PDF, stored under the sniffed type — within a
  * per-attachment size cap (ATTACHMENT_MAX_BYTES) and a total-count cap
  * (ATTACHMENT_MAX_COUNT).
  *
@@ -1466,7 +1649,7 @@ export async function captureAttachments(
   //
   // The cap used to fill in arrival order, so six Outlook signature icons
   // could exhaust it before the sender's actual poster was reached. Observed
-  // on inbound `ce16f4a1` (jeremy.hall@ct.gov): five icons stored, the sixth
+  // on inbound `ce16f4a1` (pat.tamarack@ct.gov): five icons stored, the sixth
   // skipped `over-count-cap`, and every one of them decorative.
   //
   // Nothing of value was lost that time. The defect is that nothing about the
@@ -1561,6 +1744,22 @@ export async function captureAttachments(
       note("too-large");
       continue;
     }
+    // OPE-1364 — the declared type above only decides whether a part is a
+    // CANDIDATE. What is stored, and under what Content-Type, is decided by
+    // the bytes: an `image/svg+xml` part (script-capable) or a mislabelled
+    // HTML file is refused here, and a PNG declared as anything is stored as
+    // `image/png`. Forwarded-message containers keep their OPE-944 handling
+    // (stored verbatim — DKIM needs the octets) under a fixed, inert type.
+    const storedType = item.container ? "message/rfc822" : sniffAttachmentType(bytes);
+    if (!storedType) {
+      note("unrecognized-content");
+      // OPE-1550 — name it when we can: JPEG XL (Chrome 155 / Firefox 158 open
+      // .jxl natively now), AVIF, TIFF, BMP. Cloudflare's transform can't read
+      // JXL, so this stays a refusal — but a named one.
+      const known = identifyUnsupportedImageFormat(bytes);
+      if (known) skipped[skipped.length - 1].detectedFormat = known.mime;
+      continue;
+    }
     // Two quotas, so furniture cannot consume a payload slot. This is the
     // whole fix: the acceptance case is "six icons plus one real poster stores
     // the poster", and it holds because the poster is not furniture and the
@@ -1578,8 +1777,19 @@ export async function captureAttachments(
     }
     const key = `inbound-attachments/${groupId}/${i}-${name}`;
     try {
-      await bucket.put(key, bytes, { httpMetadata: { contentType: mimeType } });
-      refs.push({ key, name, mimeType, size: bytes.byteLength });
+      // OPE-1364 — never overwrite. The caller's group id is random per
+      // delivery, so an existing object here means a collision, and the bytes
+      // already stored belong to some other row's attachment_refs.
+      if (await bucket.head(key)) throw new Error(`refusing to overwrite ${key}`);
+      await bucket.put(key, bytes, {
+        // `attachment`: a direct CDN navigation downloads rather than renders.
+        // <img> loading ignores Content-Disposition, and the admin viewer
+        // streams through its own route with its own headers
+        // (src/lib/inbound-attachment-stream.ts), so nothing that displays
+        // these is affected.
+        httpMetadata: { contentType: storedType, contentDisposition: "attachment" },
+      });
+      refs.push({ key, name, mimeType: storedType, size: bytes.byteLength });
       if (item.container) storedContainers++;
       else if (item.furniture) storedFurniture++;
       else stored++;
@@ -1675,7 +1885,7 @@ async function forwardToAdminBestEffort(
       source: SOURCE,
       message: "SUBMIT_ADMIN_FORWARD env not set; dropping forward attempt",
       sessionId,
-      context: { reason, from: message.from, to: message.to },
+      context: { reason, from: maskEmail(message.from), to: message.to },
     });
     return;
   }
@@ -1689,8 +1899,8 @@ async function forwardToAdminBestEffort(
       sessionId,
       context: {
         reason,
-        destination: env.SUBMIT_ADMIN_FORWARD,
-        from: message.from,
+        destination: maskEmail(env.SUBMIT_ADMIN_FORWARD),
+        from: maskEmail(message.from),
         to: message.to,
       },
     });
@@ -1771,6 +1981,83 @@ async function lookupSenderTrust(db: D1Database, fromAddr: string): Promise<Send
   }
 }
 
+/**
+ * OPE-254 — a reply threaded to a held photo goes to the held-photo resolver,
+ * whatever its words look like.
+ *
+ * The hold notice says "reply to this email naming the fair", and the resolver
+ * for that reply (`resolveHeldPhotosFromReply`) is reached only through the
+ * `correction` handler. A reply only got there if the CLASSIFIER called it a
+ * correction — and a bare fair name does not read like one. Since #990 shipped,
+ * every real reply took another lane: "New Portland Lions Fair" (09-18,
+ * `unknown`, forwarded) and "Senior Expo / Southern Maine Successful Aging Expo
+ * 2026" (10-01 `a38d02bf`, `new_event`, prose extraction failed). The row had
+ * recorded that it threaded to a held photo; routing ignored it.
+ *
+ * Thread parentage is a fact; the intent label is a guess. So this runs BEFORE
+ * the classifier and the trusted fast-path, keyed on the same predicate the
+ * resolver itself uses (`findHeldPhotoParents`: the parent's message-id is in
+ * the reply's In-Reply-To/References, it is still `photo-intake-unresolved`
+ * with no event, and it is from the same sender). One predicate, so a reply
+ * routed here is exactly a reply the resolver will find parents for.
+ *
+ * Routing to `correction` rather than a new lane keeps the fall-through: a
+ * reply that threads to a hold but names no resolvable fair continues as an
+ * ordinary correction, which is what it was before #990.
+ *
+ * Fail-soft: a lookup error returns null and the classifier routes as before.
+ */
+export async function heldPhotoReplyRouting(
+  dbOrD1: Db | D1Database,
+  args: { fromAddr: string; inReplyTo: string | null; references: string | null; sessionId: string }
+): Promise<RoutingDecision | null> {
+  const ids = parseThreadMessageIds(args.inReplyTo, args.references);
+  if (ids.length === 0) return null;
+  let parents: { id: string }[];
+  try {
+    const db =
+      typeof (dbOrD1 as { insert?: unknown }).insert === "function"
+        ? (dbOrD1 as Db)
+        : getDb(dbOrD1 as D1Database);
+    parents = await findHeldPhotoParents(db, ids, args.fromAddr);
+  } catch (err) {
+    await logError(dbOrD1, {
+      level: "warn",
+      source: SOURCE,
+      message: "held-photo reply lookup failed; routing by classifier",
+      error: err,
+      sessionId: args.sessionId,
+    });
+    return null;
+  }
+  if (parents.length === 0) return null;
+
+  const rationale = `held-photo-reply: threads to ${parents.length} held photo email(s) (${parents
+    .map((p) => p.id.slice(0, 8))
+    .join(", ")})`;
+  return {
+    routed: [
+      {
+        intent: "correction",
+        classifiedIntent: null,
+        classifiedSubIntent: null,
+        confidence: null,
+        rationale,
+        routingSource: "held_photo_reply",
+        flaggedForReview: false,
+        refUrl: null,
+      },
+    ],
+    classifierVersion: null,
+    routingSource: "held_photo_reply",
+    aggregateConfidence: null,
+    aggregateRationale: rationale,
+    flaggedForReview: false,
+    spamQuarantine: false,
+    spamRationale: "",
+  };
+}
+
 /** Drive the per-email routing decision. Single source of truth for the
  *  classifier ↔ address-fallback ↔ trusted-fastpath logic. Pure(ish) —
  *  reaches into env.AI for the classifier call but does not write to D1
@@ -1780,8 +2067,8 @@ async function computeRouting(args: {
   sessionId: string;
   addressIntent: EmailIntent;
   senderTrust: SenderTrustTier;
-  /** WS3e — pass/fail/unknown verdict from the Authentication-Results header. */
-  emailAuth: "pass" | "fail" | "unknown";
+  /** WS3e / OPE-1369 — verdict from Cloudflare's Authentication-Results header. */
+  emailAuth: EmailAuthVerdict;
   toAddr: string;
   fromAddr: string;
   subject: string;
@@ -1816,8 +2103,48 @@ async function computeRouting(args: {
   // (SPF/DKIM/DMARC). On "fail" we skip the fast-path and fall through to the
   // full classifier, so a spoofed From of a trusted sender gets normal
   // scrutiny instead of a free pass. "unknown" still takes the fast-path.
+  // OPE-1265 — lists@ is ADDRESS-BOUND. Its senders are promoters' email
+  // service providers: untrusted by construction, so they would hit the
+  // classifier, which can re-route a newsletter to the submit lane or
+  // quarantine it as spam. What arrives at an address we subscribed ourselves
+  // is a list issue by definition; the address is the fact.
+  if (addressIntent === "list_subscription") {
+    return {
+      routed: [
+        {
+          intent: "list_subscription",
+          classifiedIntent: null,
+          classifiedSubIntent: null,
+          confidence: null,
+          rationale: "list-subscription address (OPE-1265): never classified",
+          routingSource: "list_subscription_address",
+          flaggedForReview: false,
+          refUrl: null,
+        },
+      ],
+      classifierVersion: null,
+      routingSource: "list_subscription_address",
+      aggregateConfidence: null,
+      aggregateRationale: "list-subscription address (OPE-1265): never classified",
+      flaggedForReview: false,
+      spamQuarantine: false,
+      spamRationale: "",
+    };
+  }
+
+  // OPE-254 — before the fast-path AND the classifier: see heldPhotoReplyRouting.
+  const heldPhotoReply = await heldPhotoReplyRouting(env.DB, {
+    fromAddr,
+    inReplyTo,
+    references,
+    sessionId,
+  });
+  if (heldPhotoReply) return heldPhotoReply;
+
   const replyChainHeader = isReplyToOurThread(inReplyTo, references);
-  if (senderTrust === "trusted" && emailAuth !== "fail" && env.AI) {
+  // OPE-1369 — only an aligned DMARC pass honours the (spoofable) trusted From.
+  // "partial"/"unknown" used to fail open here; they now take the classifier.
+  if (senderTrust === "trusted" && emailAuth === "pass" && env.AI) {
     const fastpath = hasMultiIntentOrSpecialSignal({
       bodyText,
       bodyHtml,
@@ -1907,7 +2234,7 @@ async function computeRouting(args: {
       source: SOURCE,
       message: "claim_request sibling dropped: no explicit claim ask in the sender's own text",
       sessionId,
-      context: { from: fromAddr, intents: rawResult.intents.map((c) => c.intent) },
+      context: { from: maskEmail(fromAddr), intents: rawResult.intents.map((c) => c.intent) },
     });
   }
 
@@ -1917,7 +2244,7 @@ async function computeRouting(args: {
     message: "classifier result",
     sessionId,
     context: {
-      from: fromAddr,
+      from: maskEmail(fromAddr),
       to: toAddr,
       addressIntent,
       classifierIntents: result.intents.map((c) => ({
@@ -2324,7 +2651,7 @@ async function resolveSenderColumns(
       message: "sender identity resolution failed; recording no-match",
       error: err,
       sessionId,
-      context: { from: fromAddr },
+      context: { from: maskEmail(fromAddr) },
     }).catch(() => {});
     return { ...NO_SENDER_MATCH, matchedEntities: null };
   }
@@ -2341,8 +2668,8 @@ async function resolveSenderColumns(
  * scale. A spread cannot be half-applied.
  *
  * ⚠️ REPORT-ONLY. Nothing here branches, blocks, routes or sends. The
- * trusted-sender fast-path still calls `parseEmailAuth` on its own, and that
- * function is untouched — see the note on `parseEmailAuthDetail`.
+ * trusted-sender fast-path calls `parseEmailAuth` on its own — see the note on
+ * `parseEmailAuthDetail`.
  */
 export interface SenderSignals {
   authResultsRaw: string | null;
@@ -2421,7 +2748,7 @@ export function extractSenderSignals(
     senderAuth: auth.verdict,
     // Deliberately NOT lowercased and NOT defaulted to the address: a display
     // name that merely repeats the address is a real, different observation
-    // from having none, and both differ from `"Jeremy Hall" <random@gmail.com>`.
+    // from having none, and both differ from `"Jordan Sample" <userquince@gmail.com>`.
     fromDisplayName: clip(parsed.from && "name" in parsed.from ? parsed.from.name : null),
     replyTo: clip(replyTo),
     returnPath: clip(parsed.returnPath),
@@ -2498,6 +2825,9 @@ export async function insertSpamAuditRow(
      */
     bodyTextStored: string | null;
     bodyHtmlStored: string | null;
+    /** OPE-1504 — `{"body_text_source":"html"}` when body_text was derived from
+     *  the HTML part, else null. REQUIRED for the OPE-762 reason above. */
+    bodyCaptureMeta: string | null;
     /** OPE-763 — captured once by `extractSenderSignals`, spread into the row. */
     senderSignals: SenderSignals;
     /** OPE-764 — resolved once at ingest, spread into the row. */
@@ -2522,6 +2852,7 @@ export async function insertSpamAuditRow(
     bodyTextExcerpt,
     bodyTextStored,
     bodyHtmlStored,
+    bodyCaptureMeta,
     senderSignals,
     senderIdentity,
     threadColumns,
@@ -2548,6 +2879,7 @@ export async function insertSpamAuditRow(
         bodyTextExcerpt: bodyTextExcerpt || null,
         bodyText: bodyTextStored,
         bodyHtml: bodyHtmlStored,
+        captureMeta: bodyCaptureMeta,
         ...senderSignals,
         ...senderIdentity,
         ...threadColumns,
@@ -2576,7 +2908,7 @@ export async function insertSpamAuditRow(
       message: "failed to insert spam-quarantine audit row",
       error: err,
       sessionId,
-      context: { from: fromAddr, to: toAddr, subject },
+      context: { from: maskEmail(fromAddr), to: toAddr, subject },
     });
     // No row, so nothing to attach an observation to.
     return null;
@@ -2623,8 +2955,15 @@ async function recordSpamTripleObservation(
       }),
       createdAt: new Date(),
     });
-  } catch {
-    // Intentionally silent — see the note above.
+  } catch (error) {
+    // Never throws (see the note above) — but the lost observation is logged (OPE-1374).
+    await logAuditWriteFailure(db, {
+      source: "mcp:email-handler",
+      action: "spam.event_triple",
+      targetType: "inbound_email",
+      targetId: args.inboundEmailId,
+      error,
+    });
   }
 }
 
@@ -2666,6 +3005,9 @@ export async function insertAuditNoopRow(
      */
     bodyTextStored: string | null;
     bodyHtmlStored: string | null;
+    /** OPE-1504 — `{"body_text_source":"html"}` when body_text was derived from
+     *  the HTML part, else null. REQUIRED for the OPE-762 reason above. */
+    bodyCaptureMeta: string | null;
     /** OPE-763 — same object, same reason: a spread cannot be half-applied. */
     senderSignals: SenderSignals;
     /** OPE-764 — likewise. */
@@ -2706,6 +3048,7 @@ export async function insertAuditNoopRow(
       bodyTextExcerpt: args.bodyTextExcerpt || null,
       bodyText: args.bodyTextStored,
       bodyHtml: args.bodyHtmlStored,
+      captureMeta: args.bodyCaptureMeta,
       ...args.senderSignals,
       ...args.senderIdentity,
       ...args.threadColumns,
@@ -2817,7 +3160,7 @@ void CLASSIFIER_VERSION;
 export function looksLikeGscMilestone(fromAddr: string, subject: string): boolean {
   if (fromAddr.toLowerCase().includes("sc-noreply@google.com")) return true;
   // Milestone congrats mail.
-  if (/reaching\s+[\d.,]+\s*k?\s+(clicks|impressions)\s+in\s+\d+\s+days/i.test(subject)) {
+  if (/reaching\s+[\d.,]+\s*[km]?\s+(clicks|impressions)\s+in\s+\d+\s+days/i.test(subject)) {
     return true;
   }
   // OPE-344 — the monthly "Search performance" report, when a human forwards it

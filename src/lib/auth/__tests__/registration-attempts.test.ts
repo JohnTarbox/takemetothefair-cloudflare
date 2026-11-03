@@ -49,14 +49,14 @@ describe("capturing the refusal", () => {
     // The OPE-150 shape. Before this, everyone who reached exactly here
     // vanished without trace.
     await recordRegistrationAttempt(db as never, {
-      email: "Celina@FreedomBoatClub.com",
+      email: "Wren1desk@FreedomBoatClub.com",
       outcome: REGISTRATION_ATTEMPT_OUTCOME.TURNSTILE,
       detail: "missing-input-response",
     });
     const rows = await blocked();
     expect(rows).toHaveLength(1);
     // Normalized, so the anti-join against users.email is exact.
-    expect(rows[0].email).toBe("celina@freedomboatclub.com");
+    expect(rows[0].email).toBe("wren1desk@freedomboatclub.com");
     expect(rows[0].outcome).toBe("turnstile");
   });
 

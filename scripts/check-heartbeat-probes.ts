@@ -29,6 +29,7 @@ import {
   HEARTBEAT_INVENTORY,
   type InventoryEntry,
 } from "../src/lib/heartbeat-inventory";
+import { readWranglerConfig, wranglerTables, type WranglerConfig } from "./lib/wrangler-config";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -82,13 +83,17 @@ export function seededNames(drizzleDir: string): {
 }
 
 /** Execution paths declared by the MCP Worker's config and dispatcher. */
-export function discoverPaths(mcpWrangler: string, mcpIndex: string): string[] {
+export function discoverPaths(mcpWrangler: WranglerConfig, mcpIndex: string): string[] {
   const paths = new Set<string>();
-  for (const m of mcpWrangler.matchAll(/\[\[queues\.consumers\]\]\s*\nqueue = "([^"]+)"/g)) {
-    paths.add(`queue:${m[1]}`);
+  // OPE-1292 — read from the PARSED config. The regexes this replaced needed
+  // `queue = ` on the very next line after `[[queues.consumers]]` and stopped a
+  // workflow scan at any `[`, so a comment or an array value silently dropped a
+  // path out of the inventory and this guard passed over it.
+  for (const c of wranglerTables(mcpWrangler, "queues.consumers")) {
+    if (typeof c.queue === "string") paths.add(`queue:${c.queue}`);
   }
-  for (const m of mcpWrangler.matchAll(/\[\[workflows\]\][^[]*?class_name = "([^"]+)"/g)) {
-    paths.add(`workflow:${m[1]}`);
+  for (const w of wranglerTables(mcpWrangler, "workflows")) {
+    if (typeof w.class_name === "string") paths.add(`workflow:${w.class_name}`);
   }
   const start = mcpIndex.indexOf("async scheduled(");
   if (start === -1) throw new Error("scheduled() handler not found in mcp-server/src/index.ts");
@@ -198,7 +203,7 @@ export function runCheck(root = ROOT): IntegrityReport & { applied: number; tota
   const registry = registryNames(readFileSync(join(root, "src/lib/heartbeat.ts"), "utf8"));
   const seeded = seededNames(join(root, "drizzle"));
   const paths = discoverPaths(
-    readFileSync(join(root, "mcp-server/wrangler.toml"), "utf8"),
+    readWranglerConfig("mcp", root),
     readFileSync(join(root, "mcp-server/src/index.ts"), "utf8")
   );
   const report = checkIntegrity({

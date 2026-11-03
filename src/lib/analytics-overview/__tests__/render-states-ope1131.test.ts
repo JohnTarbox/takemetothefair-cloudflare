@@ -90,27 +90,33 @@ describe("measurementText — only `ok` prints a naked number", () => {
 });
 
 describe("Overview — CTR / brand share over a capped GSC sample", () => {
+  // OPE-1347 #4 — the CTR card now reads un-dimensioned `gsc_daily_totals` (the
+  // same table and window as its headline badge), so it is a full measurement,
+  // never a top-500 sample: the "truncated" state no longer applies to it. What
+  // these tests protect is unchanged — an empty measurement never reads as a
+  // number. Brand share (below) is still a sample and keeps its sample test.
+  const totals = (clicks: number, impressions: number, days: number) =>
+    [{ clicks, impressions, days }] as never;
+
   it("0 impressions is an undefined rate, not 0%", async () => {
-    sc.getSiteSearchQueries.mockResolvedValue(gscResult(0, 0, 0, 0));
-    const c = await loadSiteCtr({} as never, 7);
+    const c = await loadSiteCtr(stubDb([totals(0, 0, 7), totals(0, 0, 7)]), 7);
     if (!c.ok) throw new Error("expected ok");
     expect(c.ctrMeasured.state).toBe("undefined-rate");
     expect(isBareNumber(measurementText(c.ctrMeasured, pct))).toBe(false);
+    expect(c.previousMeasured.state).toBe("undefined-rate");
   });
 
-  it("a sample that hit the 500 cap is truncated and says so", async () => {
-    sc.getSiteSearchQueries.mockResolvedValue(gscResult(10, 1000, 500, 1234));
-    const c = await loadSiteCtr({} as never, 7);
-    if (!c.ok) throw new Error("expected ok");
-    expect(c.ctrMeasured.state).toBe("truncated");
-    expect(measurementText(c.ctrMeasured, pct)).toMatch(/500 of 1,234 sampled/);
-  });
-
-  it("an uncapped sample is an ordinary reading — no false 'partial' badge", async () => {
-    sc.getSiteSearchQueries.mockResolvedValue(gscResult(10, 1000, 120, 120));
-    const c = await loadSiteCtr({} as never, 7);
+  it("CTR is a full-table measurement — never marked as a capped sample", async () => {
+    const c = await loadSiteCtr(stubDb([totals(1893, 108170, 7), totals(5398, 358093, 7)]), 7);
     if (!c.ok) throw new Error("expected ok");
     expect(c.ctrMeasured.state).toBe("ok");
+    expect(measurementText(c.ctrMeasured, pct)).not.toMatch(/sampled/);
+    expect(sc.getSiteSearchQueries).not.toHaveBeenCalled(); // landmark: not the query API
+  });
+
+  it("no gsc_daily_totals rows for the window is not ok — never a 0% CTR", async () => {
+    const c = await loadSiteCtr(stubDb([totals(0, 0, 0), totals(0, 0, 0)]), 7);
+    expect(c.ok).toBe(false);
   });
 
   it("brand share over no clicks is undefined", async () => {

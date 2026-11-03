@@ -135,3 +135,58 @@ export async function classifyRepliedToSend(
   if (sends.length === 0) return "unknown";
   return sends.some((s) => isHumanSendSource(s.source)) ? "human" : "automated";
 }
+
+/**
+ * OPE-1240 — one of OUR automatic replies: any `reply:*` send no person wrote
+ * (`reply:support-ack`, `reply:correction-ack`, `reply:photo-intake-unresolved`,
+ * `reply:sweep-exceeded`, …). A PREFIX rule, not a list, so a reply kind added
+ * next month is covered the day it ships.
+ *
+ * Notices such as `content-links-sync.*`, newsletters and digests are NOT
+ * `reply:*` sends and are NOT covered: their recipient holds no reply from us.
+ */
+export function isOwnAutomaticReply(source: string | null | undefined): boolean {
+  return typeof source === "string" && source.startsWith("reply:") && !isHumanSendSource(source);
+}
+
+/**
+ * Reply kinds that still go out on a reply to our own automatic reply, because
+ * they are the ANSWER the parent asked the sender for, not a second receipt.
+ *
+ *  - `photo-intake-resolved` — the hold notice (`photo-intake-unresolved`) asks
+ *    "reply with the fair's name"; this reports that the photos were attached
+ *    (OPE-254). Withholding it would leave the sender not knowing it worked.
+ *
+ * ⚠️ OPE-1263 HOOK — the unmatched-photo-hold reply (proposed kind
+ * `photo-intake-reply-unmatched`, copy awaiting John) belongs HERE when it is
+ * built. Until then an unmatched reply falls through to `correction-ack`, which
+ * this rule withholds: the sender hears nothing, and the correction lane's
+ * `admin_actions` row + support obligation still reach a human.
+ *
+ * Keep this list to replies that carry the outcome the parent requested. A
+ * generic ack or a submit-pipeline verdict is not one (John, 2026-09-30).
+ */
+export const ANSWERS_TO_OWN_AUTOMATIC_REPLY: readonly ReplyKind[] = ["photo-intake-resolved"];
+
+/**
+ * True when the message replies to one of our automatic replies and to nothing
+ * a person sent. John's ruling (2026-09-30): such a reply gets no automatic
+ * reply — the sender already holds one from us for this conversation, and a
+ * second is the OPE-720 "two robot emails for one exchange" shape. The message
+ * is still logged, still opens/joins its support obligation, still queues.
+ */
+export async function repliesToOwnAutomaticReply(
+  db: Db,
+  inReplyTo: string | null | undefined,
+  emailReferences: string | null | undefined
+): Promise<boolean> {
+  const forms = storedMessageIdForms(inReplyTo, emailReferences);
+  if (forms.length === 0) return false;
+  const sends = await db
+    .select({ source: emailSendLedger.source })
+    .from(emailSendLedger)
+    .where(inArray(emailSendLedger.providerMessageId, forms))
+    .limit(forms.length);
+  if (sends.some((x) => isHumanSendSource(x.source))) return false;
+  return sends.some((x) => isOwnAutomaticReply(x.source));
+}

@@ -1,3 +1,4 @@
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { Calendar, ChevronRight, Eye, Heart, MapPin, Store, FileText } from "lucide-react";
 import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
@@ -207,6 +208,9 @@ async function getCoverage(
         state: vendors.state,
       })
       .from(vendors)
+      // OPE-1347 #2 — live vendors only (catalog-basis.ts); soft-deleted rows
+      // are not part of the catalog this page grades.
+      .where(isNull(vendors.deletedAt))
       .orderBy(desc(vendors.id));
   }
 
@@ -516,6 +520,7 @@ export default async function AdminCoveragePage({
 }: {
   searchParams: Promise<{ scope?: string; filter?: string; sort?: string }>;
 }) {
+  await requireAdmin();
   const { scope: rawScope, filter: rawFilter, sort: rawSort } = await searchParams;
   const scope: EventScope = rawScope === "upcoming" ? "upcoming" : "all";
   const filter: CoverageFilter =

@@ -7,9 +7,8 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { eq } from "drizzle-orm";
-import { auth } from "@/lib/auth";
+import { requireRole } from "@/lib/require-role";
 import { formatDateRange } from "@/lib/utils";
-import { redirect } from "next/navigation";
 
 const statusConfig: Record<
   string,
@@ -43,11 +42,7 @@ async function getSubmissions(userId: string) {
 export const dynamic = "force-dynamic";
 
 export default async function VendorSubmissionsPage() {
-  const session = await auth();
-
-  if (!session?.user?.id) {
-    redirect("/login?callbackUrl=/vendor/submissions");
-  }
+  const session = await requireRole("VENDOR", "/vendor/submissions");
 
   const submissions = await getSubmissions(session.user.id);
 

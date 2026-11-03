@@ -5,7 +5,7 @@
  * `gmail.com`. `brandKey("gmail.com")` is `"gmailcom"` — eight characters, so
  * it cleared the fragment matcher's six-character gate — and it
  * substring-matched the vendor whose `businessName` is the bare address
- * `craftigalcreative@gmail.com`.
+ * `usermoss1@gmail.com`.
  *
  * **6 of 12** real inbound emails in the 2026-09-09 audit census carried that
  * false "existing vendor" match.
@@ -51,19 +51,19 @@ beforeEach(() => {
 
 describe("OPE-856 — senderNameVariants drops mailbox providers", () => {
   it("REGRESSION: a gmail sender contributes NO domain variants", () => {
-    expect(senderNameVariants("joe@gmail.com")).toEqual([]);
+    expect(senderNameVariants("userjoe@gmail.com")).toEqual([]);
   });
 
   it("drops the bare label too, not just the full domain", () => {
     // `gmail` alone is five chars and would fail the fragment gate today, but
     // it still reaches the exact and brand-key matchers above it — and a
     // vendor literally named "Gmail" is not the sender's business either.
-    expect(senderNameVariants("joe@gmail.com")).not.toContain("gmail");
-    expect(senderNameVariants("joe@gmail.com")).not.toContain("gmail.com");
+    expect(senderNameVariants("userjoe@gmail.com")).not.toContain("gmail");
+    expect(senderNameVariants("userjoe@gmail.com")).not.toContain("gmail.com");
   });
 
   it("keeps the signature name — that IS evidence about who is writing", () => {
-    expect(senderNameVariants("joe@gmail.com", "Joe's Woodworks")).toEqual(["Joe's Woodworks"]);
+    expect(senderNameVariants("userjoe@gmail.com", "Joe's Woodworks")).toEqual(["Joe's Woodworks"]);
   });
 
   it("a REAL business domain is untouched — the landmark", () => {
@@ -91,13 +91,13 @@ describe("OPE-856 — senderNameVariants drops mailbox providers", () => {
 describe("OPE-856 — the matcher no longer lands on craftigalcreative", () => {
   beforeEach(() => {
     // The real row: businessName is itself a bare gmail address.
-    seed("8290caae", "craftigalcreative@gmail.com");
+    seed("8290caae", "usermoss1@gmail.com");
     seed("fbc", "Freedom Boat Club", "https://freedomboatclub.us");
     seed("baf", "Before A Fall");
   });
 
   it("REGRESSION: a gmail sender with no other signal matches NOTHING", async () => {
-    const r = await matchVendorByVariants(db, senderNameVariants("joe@gmail.com"));
+    const r = await matchVendorByVariants(db, senderNameVariants("userjoe@gmail.com"));
     expect(r.match).toBeNull();
   });
 
@@ -117,7 +117,10 @@ describe("OPE-856 — the matcher no longer lands on craftigalcreative", () => {
   });
 
   it("an exact business-name match still resolves", async () => {
-    const r = await matchVendorByVariants(db, senderNameVariants("x@gmail.com", "Before A Fall"));
+    const r = await matchVendorByVariants(
+      db,
+      senderNameVariants("userx@gmail.com", "Before A Fall")
+    );
     expect(r.match?.id).toBe("baf");
     expect(r.match?.matchedVariant).toBe("exact");
   });
@@ -141,7 +144,7 @@ describe("OPE-856 — the matcher no longer lands on craftigalcreative", () => {
     // The filter takes the first USABLE row, not merely the first row — so a
     // bare-address vendor sorting ahead of a real one must not swallow the
     // match. This is the case a naive `.limit(1)` + reject would lose.
-    seed("bare", "handmadegoods@gmail.com");
+    seed("bare", "usernettle1@gmail.com");
     seed("real", "Handmade Goods Co");
     const r = await matchVendorByVariants(db, ["handmadegoods"]);
     expect(r.match?.id).toBe("real");

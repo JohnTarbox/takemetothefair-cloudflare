@@ -88,17 +88,17 @@ describe("OPE-249 #5 — regex-email domain affinity", () => {
     expect(emailHasDomainAffinity("info@anything.com", "https://promoter.org")).toBe(true);
   });
   it("accepts an email whose domain matches the site", () => {
-    expect(emailHasDomainAffinity("k@granitemediagroup.com", "https://granitemediagroup.com")).toBe(
-      true
-    );
+    expect(
+      emailHasDomainAffinity("irisdesk@granitemediagroup.com", "https://granitemediagroup.com")
+    ).toBe(true);
   });
   it("rejects a personal email at a THIRD domain (promoter #894)", () => {
     expect(
-      emailHasDomainAffinity("kkeating@granitemediagroup.com", "https://somepromoter.org")
+      emailHasDomainAffinity("jasminedesk@granitemediagroup.com", "https://somepromoter.org")
     ).toBe(false);
   });
   it("stages a non-affinity regex email BELOW the clean bar, not dropped", () => {
-    const html = `<html><body>Reach us: kkeating@granitemediagroup.com</body></html>`;
+    const html = `<html><body>Reach us: jasminedesk@granitemediagroup.com</body></html>`;
     const out = extractVendorContact(html, "https://somepromoter.org");
     expect(out.email?.method).toBe("regex");
     expect(out.email?.confidence).toBeLessThan(0.3); // flagged, not clean

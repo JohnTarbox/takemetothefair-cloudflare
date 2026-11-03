@@ -107,6 +107,22 @@ function allHoursUnknown(days: EventDay[]): boolean {
  *  construction (the stored flag is `!areDatesContiguous(dates)`). This
  *  wrapper keeps the EventDay-shaped call site and passes only the OPEN days'
  *  dates through. */
+/** OPE-1063 — a day's PUBLIC note, trimmed; null when there is nothing to
+ *  show. `notes` is visitor-facing (OPE-572 moved provenance to
+ *  `internal_notes`), so a non-empty note must always reach the page. */
+export function dayNote(day: EventDay): string | null {
+  const n = day.notes?.trim();
+  return n ? n : null;
+}
+
+/** OPE-1063 — true when any visible open day carries a public note. The
+ *  collapsed one-line "Daily: …" summary has nowhere to put a per-day note,
+ *  so it is only allowed when this is false; otherwise the per-day breakout
+ *  renders and every note reaches the reader. */
+export function hasAnyDayNote(days: EventDay[]): boolean {
+  return days.some((d) => !d.closed && dayNote(d) !== null);
+}
+
 export function isContiguousDaily(openDays: EventDay[]): boolean {
   return areDatesContiguous(openDays.map((d) => d.date));
 }
@@ -133,6 +149,33 @@ export function DailyScheduleDisplay({
     return null;
   }
 
+  // OPE-1063 — a single open day that carries a note keeps a one-line form,
+  // "Sat, Oct 10, 2026: 10am - 4pm (Rain or shine.)", instead of falling to the
+  // per-day list below (an "Open …" summary plus a one-row "Dates:" list).
+  // Without a note it still takes the "Daily:" line below, unchanged.
+  if (
+    visibleDays.length === 1 &&
+    openDays.length === 1 &&
+    !openDays[0].vendorOnly && // a lone vendor-only day keeps its badge (list view)
+    hasAnyDayNote(openDays)
+  ) {
+    const only = openDays[0];
+    const range = formatRange(only.openTime, only.closeTime, only.closeTimeUnpublished);
+    const note = dayNote(only);
+    return (
+      <div className={className}>
+        <p className="text-sm text-muted-foreground flex items-start gap-1">
+          <Clock className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>
+            <span className="whitespace-nowrap">{formatDateShort(only.date)}:</span>{" "}
+            <span className="text-foreground">{range}</span>
+            {range === HOURS_UNKNOWN_COPY ? ` — ${note}` : ` (${note})`}
+          </span>
+        </p>
+      </div>
+    );
+  }
+
   // For discontinuous events, always show per-day listing (users need to see which dates)
   // For contiguous events with same hours, show simplified display.
   // DQ-HOURS1: gate on COMPUTED contiguity (isContiguousDaily), not just the
@@ -143,7 +186,11 @@ export function DailyScheduleDisplay({
     !discontinuousDates &&
     isContiguousDaily(openDays) &&
     allSameHours(visibleDays) &&
-    openDays.length > 0
+    openDays.length > 0 &&
+    // OPE-1063 — the one-line summary has no slot for a per-day note, so it
+    // silently discarded every one (most visibly on all-hours-unknown events,
+    // where the note is often the only per-day information we have).
+    !hasAnyDayNote(visibleDays)
   ) {
     // Only use simplified display if no visible vendor-only days need badges
     const hasVendorDays = showVendorDays !== "hide" && visibleDays.some((d) => d.vendorOnly);
@@ -207,8 +254,13 @@ function RecurringScheduleView({
   // DQ4: if every open day has unknown hours, surface "Hours not yet
   // confirmed" instead of "Open null – null". formatRange handles partial
   // information too (e.g. open known, close not).
+  //
+  // OPE-1063 — when every day's hours are unknown AND some day has a note,
+  // each row states it inline ("Thu, Sep 17: Hours not yet confirmed —
+  // <note>"), so a summary line would only repeat it.
+  const hoursUnknownWithNotes = allHoursUnknown(openDays) && hasAnyDayNote(visibleDays);
   const summaryUniformHoursLabel =
-    uniformHours && openDays.length > 0
+    uniformHours && openDays.length > 0 && !hoursUnknownWithNotes
       ? allHoursUnknown(openDays)
         ? HOURS_UNKNOWN_COPY
         : `Open ${formatRange(openDays[0].openTime, openDays[0].closeTime, openDays[0].closeTimeUnpublished)}`
@@ -255,7 +307,10 @@ function RecurringScheduleView({
           )}
           <div className="space-y-1">
             {visibleDays.map((day) => {
-              const showHours = !uniformHours || hasVendorBadges || day.closed;
+              const showHours =
+                !uniformHours || hasVendorBadges || day.closed || hoursUnknownWithNotes;
+              const note = dayNote(day);
+              const range = formatRange(day.openTime, day.closeTime, day.closeTimeUnpublished);
               return (
                 <div
                   key={day.id}
@@ -292,7 +347,7 @@ function RecurringScheduleView({
                           (both known / either-known / neither). The "hours
                           not yet confirmed" fallback lands on the same
                           baseline so the column alignment is stable. */}
-                      {formatRange(day.openTime, day.closeTime, day.closeTimeUnpublished)}
+                      {range}
                       {/* UX-R3 (2026-06-07) — semantic-token migration. Shape kept
                           (text-xs, rounded not rounded-full) to match the inline
                           time-row layout; color pair moves to amber-light +
@@ -305,14 +360,17 @@ function RecurringScheduleView({
                       {day.vendorOnly && showVendorDays === "all" && (
                         <span className="ml-2 text-xs text-amber-600">[Vendor Only]</span>
                       )}
-                      {day.notes && (
-                        <span className="text-muted-foreground ml-2">({day.notes})</span>
-                      )}
+                      {/* OPE-1063 — an unknown-hours day reads as one
+                          sentence: "Hours not yet confirmed — <note>". */}
+                      {note &&
+                        (range === HOURS_UNKNOWN_COPY ? (
+                          <span className="text-muted-foreground"> — {note}</span>
+                        ) : (
+                          <span className="text-muted-foreground ml-2">({note})</span>
+                        ))}
                     </span>
                   ) : (
-                    day.notes && (
-                      <span className="text-muted-foreground text-sm">({day.notes})</span>
-                    )
+                    note && <span className="text-muted-foreground text-sm">({note})</span>
                   )}
                 </div>
               );

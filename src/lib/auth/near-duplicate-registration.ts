@@ -4,8 +4,8 @@
  * ── The case ────────────────────────────────────────────────────────────────
  * 2026-09-13, eight minutes apart, one person:
  *
- *   17:37  "Sansa Studio Creations"  sanzaart@gmail.com     (address missing an s)
- *   17:45  "Sanza Studio Creations"  sanzaarts@gmail.vom    (bounced)
+ *   17:37  "Sansa Studio Creations"  userstudio@gmail.com     (address missing an s)
+ *   17:45  "Sanza Studio Creations"  userstudios@gmail.vom    (bounced)
  *
  * OPE-573's collision pre-flight compares SLUGS, and `sansa-studio-creations`
  * ≠ `sanza-studio-creations`, so the second signup minted a second account and

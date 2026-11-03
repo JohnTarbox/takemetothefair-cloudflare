@@ -155,9 +155,14 @@ async function deliverEvent(db: Db, eventId: string): Promise<void> {
 
   if (subs.length === 0) return;
 
+  // OPE-1493: `sentAt` rides INSIDE the signed body so a receiver can bound
+  // replay (the HMAC covers only the body; a timestamp header would be
+  // rewritable). Stamped per delivery attempt, not at outbox-write time, so a
+  // queue retry after backoff carries a fresh time and is not read as stale.
   const payload = {
     eventId,
     eventVersion: row.eventVersion,
+    sentAt: new Date().toISOString(),
     ...buildEventSnapshot(
       { name: row.name, slug: row.slug, startDate: row.startDate, endDate: row.endDate },
       row.venueName !== null ||

@@ -10,15 +10,16 @@
  *   NH Trappers Association   / New Hampshire Trappers Association
  *   NH Bear Hunters Assoc.    / New Hampshire Bear Hunters Assoc.
  *
- * ## What this is NOT
+ * ## The narrowing — wrong once, then right (review return 2026-10-04)
  *
- * OPE-739 was filed claiming this needed the narrowing fix too, because `nh` is
- * not a substring of `new hampshire`. **That was wrong, and reading
- * `rawNameStem` settles it.** Since OPE-715 both stems take the LONGEST safe
- * token, and for these names that is `association` — shared by both spellings.
- * The candidate was always fetched; only the score was short. So this is a
- * one-sided change to normalization, and the tests below prove the narrowing
- * carries it rather than assuming so.
+ * The first pass said the narrowing needed no fix: since OPE-715 the stem is the
+ * LONGEST safe token, and for the Trappers/Bear Hunters names that is
+ * `association`, shared by both spellings. True for THOSE names — and generalised
+ * too far. On 2026-10-01 "New Hampshire State Grange" was minted beside two
+ * "NH State Grange" rows: its longest token is `hampshire`, which the NH rows
+ * never contain, so they were never fetched and never scored. The words of a
+ * mapped state name are now unsafe stems (it stems on `grange`). The last
+ * describe below reproduces that case.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
@@ -97,19 +98,16 @@ describe("the narrowing still reaches the candidate — verified, not assumed", 
     expect((await findStrictMatch(db, "NH Trappers Association"))?.id).toBe("target");
   });
 
-  it("is bounded by the SHARED 200-row cap, not by anything this fix introduced", async () => {
-    // Characterising a real limit rather than hiding it. Past 200 rows sharing a
-    // stem, the narrowing fetches an arbitrary 200 and the true match can fall
-    // outside — the OPE-715 mechanism, which applies to every stem and not just
-    // this one.
-    //
-    // Headroom today: 56 of 6,805 live vendors contain "association", so the
-    // stem is 3.5x under the cap. Pinned so that if "association" ever crosses
-    // 200 this test starts failing and names the reason, instead of the NH pairs
-    // quietly beginning to duplicate again.
+  it("survives a stem past the SHARED 200-row cap (OPE-1544 closed the limit)", async () => {
+    // This test used to pin the cap as a known limit: past 200 rows sharing a
+    // stem the narrowing fetched an arbitrary 200, and it asserted a MISS so a
+    // crossing would announce itself. A different stem crossed first — 350 live
+    // vendors contained "brewing" on 2026-10-30, and six breweries duplicated
+    // (OPE-1544). The ranked multi-token pass now orders by the tokens a row
+    // shares, so "trappers" lifts the target into the cap.
     for (let i = 0; i < 260; i++) seed(`noise-${i}`, `Barnstable Association ${i}`);
     seed("target", "New Hampshire Trappers Association", "Nonprofit");
-    expect(await findStrictMatch(db, "NH Trappers Association")).toBeNull();
+    expect((await findStrictMatch(db, "NH Trappers Association"))?.id).toBe("target");
   });
 });
 
@@ -161,5 +159,43 @@ describe("the expansion is token-wise and the threshold is not loosened", () => 
   it("does NOT match NH to a different state's version of the same club", async () => {
     seed("vt", "Vermont Trappers Association", "Nonprofit");
     expect(await findFuzzyMatch(db, "NH Trappers Association", "Nonprofit")).toBeNull();
+  });
+});
+
+/**
+ * OPE-739 review return — the case the first pass's reasoning missed. When the
+ * longest token IS part of the state name, the NH spelling never contains it.
+ */
+describe("when the longest word is part of the state name (New Hampshire State Grange, 2026-10-01)", () => {
+  it("New Hampshire State Grange finds the stored NH State Grange (fuzzy AND strict)", async () => {
+    seed("nh-sg", "NH State Grange", "Nonprofit");
+    expect((await findFuzzyMatch(db, "New Hampshire State Grange", "Nonprofit"))?.row.id).toBe(
+      "nh-sg"
+    );
+    expect((await findStrictMatch(db, "New Hampshire State Grange"))?.id).toBe("nh-sg");
+  });
+
+  it("and the other direction", async () => {
+    seed("long", "New Hampshire State Grange", "Nonprofit");
+    expect((await findFuzzyMatch(db, "NH State Grange", "Nonprofit"))?.row.id).toBe("long");
+  });
+
+  it("still finds it when other Granges share the narrowing word", async () => {
+    for (let i = 0; i < 40; i++) seed(`g${i}`, `Grange Hall ${i} Supper Club`, "Food");
+    seed("nh-sg", "NH State Grange", "Nonprofit");
+    expect((await findFuzzyMatch(db, "New Hampshire State Grange", "Nonprofit"))?.row.id).toBe(
+      "nh-sg"
+    );
+  });
+
+  it("does NOT match another state's Grange", async () => {
+    seed("vt", "Vermont State Grange", "Nonprofit");
+    expect(await findFuzzyMatch(db, "New Hampshire State Grange", "Nonprofit")).toBeNull();
+    expect(await findStrictMatch(db, "New Hampshire State Grange")).toBeNull();
+  });
+
+  it("does NOT match a different NH organisation", async () => {
+    seed("other", "NH Bee Keepers", "Nonprofit");
+    expect(await findFuzzyMatch(db, "New Hampshire State Grange", "Nonprofit")).toBeNull();
   });
 });

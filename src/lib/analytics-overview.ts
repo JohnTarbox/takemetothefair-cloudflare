@@ -124,7 +124,7 @@ export async function loadOverviewSnapshot(
     loadPublishingSparkline(db, sparklineSinceDate),
     loadSearchVisibilitySparkline(env),
     loadActivity(db, sinceDate),
-    loadSiteCtr(env, days),
+    loadSiteCtr(db, days),
     loadConversionRate(db, env, 7),
     loadBrandVsNonBrand(env, days),
     loadSitemapQuality(db),

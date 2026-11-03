@@ -1098,13 +1098,48 @@ export type SitemapStatus = {
   generatedAt: string;
 };
 
+/**
+ * OPE-1347 #1 — the submitted/indexed totals across a property's sitemaps,
+ * counting each URL ONCE.
+ *
+ * A sitemap INDEX (`/sitemap.xml`, `isSitemapsIndex: true`) reports its
+ * children's URLs in its own `contents`, so adding it to the children counts
+ * every URL twice — measured 2026-10-13: 7 children summed to 10,530 and the tile
+ * read 21,060. Index entries are skipped whenever any non-index sitemap is
+ * listed (the same rule Bing's tile already applies, bing-tiles.ts). A property
+ * that submitted ONLY an index still counts it — otherwise the total would be 0.
+ */
+export function sumSitemapContents(
+  sitemaps: ReadonlyArray<{
+    path?: string;
+    isSitemapsIndex?: boolean;
+    contents: ReadonlyArray<{ submitted: number; indexed: number }>;
+  }>
+): { submitted: number; indexed: number } {
+  const isIndex = (s: { path?: string; isSitemapsIndex?: boolean }) =>
+    s.isSitemapsIndex === true || /\/sitemap\.xml$/i.test(s.path ?? "");
+  const hasChildren = sitemaps.some((s) => !isIndex(s));
+  let submitted = 0;
+  let indexed = 0;
+  for (const s of sitemaps) {
+    if (hasChildren && isIndex(s)) continue;
+    for (const c of s.contents) {
+      submitted += c.submitted;
+      indexed += c.indexed;
+    }
+  }
+  return { submitted, indexed };
+}
+
 export async function getSitemapStatus(
   env: ScEnv,
   opts: { skipCache?: boolean } = {}
 ): Promise<SitemapStatus> {
   const siteUrl = resolveSiteUrl(env);
   const kv = env.RATE_LIMIT_KV;
-  const cacheKey = `sc:sitemaps:${await hashRequest({ siteUrl })}`;
+  // v2 (OPE-1347) — totals now exclude index sitemaps; a v1 entry still holds
+  // the double-counted denominator for up to 24h, so it is not reused.
+  const cacheKey = `sc:sitemaps:v2:${await hashRequest({ siteUrl })}`;
 
   if (!opts.skipCache && kv) {
     const cached = await kv.get<SitemapStatus>(cacheKey, "json");
@@ -1177,14 +1212,7 @@ export async function getSitemapStatus(
     })),
   }));
 
-  let submittedTotal = 0;
-  let indexedTotal = 0;
-  for (const s of sitemaps) {
-    for (const c of s.contents) {
-      submittedTotal += c.submitted;
-      indexedTotal += c.indexed;
-    }
-  }
+  const { submitted: submittedTotal, indexed: indexedTotal } = sumSitemapContents(sitemaps);
 
   const sitemapStatusResult: SitemapStatus = {
     sitemaps,

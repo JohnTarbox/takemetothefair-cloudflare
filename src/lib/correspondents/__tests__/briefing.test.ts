@@ -101,9 +101,9 @@ describe("the ticket's replay cases", () => {
   it("Katie: a stranger with a problem, in one line", async () => {
     // "gmail sender, no matched entity, no prior contact, first contact,
     // intent support. That is enough to see she is a stranger with a problem."
-    inbound("k1", "katie@gmail.com", daysAgo(2), { intent: "support", matchBasis: "none" });
+    inbound("k1", "userhazel2@gmail.com", daysAgo(2), { intent: "support", matchBasis: "none" });
     const b = await build();
-    const katie = b.rows.find((r) => r.fromAddress === "katie@gmail.com")!;
+    const katie = b.rows.find((r) => r.fromAddress === "userhazel2@gmail.com")!;
     expect(katie.isFirstContact).toBe(true);
     expect(katie.priorMessageCount).toBe(1);
     expect(katie.matchedEntityType).toBeNull();
@@ -220,5 +220,44 @@ describe("facts only", () => {
     const b = await build();
     expect(b.rows[0].lastOutboundAt).toBeNull();
     expect(b.rows[0].waitingOnUs).toBe(true);
+  });
+});
+
+describe("OPE-1376: D1's 100-bound-param cap", () => {
+  // better-sqlite3 accepts 32,766 params, so the unchunked inArray passed here
+  // with 130 addresses. Count bound params per prepared statement instead —
+  // the statement SHAPE is what D1 rejects.
+  it("130 distinct senders: no statement binds 100+ params, and every sender is still resolved", async () => {
+    const N = 130; // prod measured 116 at ?days=90
+    for (let i = 0; i < N; i++) {
+      const addr = `sender${i}@example.com`;
+      inbound(`b${i}`, addr, daysAgo(5));
+      inbound(`b${i}-old`, addr, daysAgo(60)); // a prior message, outside the window
+      outbound(`ob${i}`, addr, daysAgo(4), i % 2 === 0 ? "reply:human" : "reply:support-ack");
+    }
+
+    let maxParams = 0;
+    let statements = 0;
+    const prepare = raw.prepare.bind(raw);
+    (raw as unknown as { prepare: typeof raw.prepare }).prepare = ((sqlText: string) => {
+      statements++;
+      maxParams = Math.max(maxParams, (sqlText.match(/\?/g) ?? []).length);
+      return prepare(sqlText);
+    }) as typeof raw.prepare;
+
+    const b = await build(30);
+
+    // Positive landmark: the reads ran and bound real lists, so the max is not a vacuous 0.
+    expect(maxParams).toBeGreaterThan(50);
+    expect(maxParams).toBeLessThan(100);
+    expect(statements).toBeGreaterThanOrEqual(5); // scan + 2 batches x 2 lookups
+
+    // Merged across batches: every sender got its all-time count and its outbound.
+    expect(b.rows).toHaveLength(N);
+    for (const r of b.rows) {
+      expect(r.priorMessageCount).toBe(2);
+      expect(r.lastOutboundAt).not.toBeNull();
+    }
+    expect(b.rows.filter((r) => r.ackOnly)).toHaveLength(N / 2);
   });
 });

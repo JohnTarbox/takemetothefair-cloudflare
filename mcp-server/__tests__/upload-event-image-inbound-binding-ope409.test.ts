@@ -130,3 +130,54 @@ describe("upload_event_image on an inbound-attachments URL (OPE-409)", () => {
     expect(cdnFetches().length).toBeGreaterThan(0);
   });
 });
+
+// OPE-1370 (SSRF6) — the source URL is caller-supplied and had no guard; the
+// body was buffered whole before the 5 MB check.
+describe("upload_event_image fetch is SSRF-guarded and capped (OPE-1370)", () => {
+  it("refuses a source that redirects to 127.0.0.1, and never requests the hop or uploads", async () => {
+    const seen: string[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      seen.push(url);
+      if (url === "https://organizer.example.org/poster.png") {
+        return init?.redirect === "manual"
+          ? new Response(null, { status: 302, headers: { location: "http://127.0.0.1/x.png" } })
+          : new Response(PNG as BlobPart, { headers: { "Content-Type": "image/png" } });
+      }
+      return new Response(PNG as BlobPart, { headers: { "Content-Type": "image/png" } });
+    }) as unknown as typeof fetch;
+    register({});
+    const res = (await server.invoke("upload_event_image", {
+      event_id: "e1",
+      image_url: "https://organizer.example.org/poster.png",
+    })) as { isError?: boolean; content: Array<{ text: string }> };
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/internal host/i);
+    expect(seen).toEqual(["https://organizer.example.org/poster.png"]);
+  });
+
+  it("stops an oversize source at 5 MB and says so", async () => {
+    let sent = 0;
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(c) {
+              if (sent >= 64 * 1024 * 1024) return c.close();
+              sent += 1024 * 1024;
+              c.enqueue(new Uint8Array(1024 * 1024));
+            },
+          }),
+          { headers: { "Content-Type": "image/png" } }
+        )
+    ) as unknown as typeof fetch;
+    register({});
+    const res = (await server.invoke("upload_event_image", {
+      event_id: "e1",
+      image_url: "https://organizer.example.org/huge.png",
+    })) as { isError?: boolean; content: Array<{ text: string }> };
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/max 5 MB/);
+    expect(sent).toBeLessThan(16 * 1024 * 1024);
+  });
+});

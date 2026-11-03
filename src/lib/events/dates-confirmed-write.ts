@@ -10,10 +10,11 @@
 import { and, eq } from "drizzle-orm";
 import {
   gateDatesConfirmed,
+  organizerHostsFrom,
   type CallDateSource,
   type DatesConfirmedGateResult,
 } from "@takemetothefair/utils";
-import { eventDataCitations } from "@/lib/db/schema";
+import { eventDataCitations, events, promoters } from "@/lib/db/schema";
 import type { getCloudflareDb } from "@/lib/cloudflare";
 
 type Db = ReturnType<typeof getCloudflareDb>;
@@ -40,9 +41,20 @@ export async function gateDatesConfirmedWrite(
           )
         )
     : [];
+  // OPE-1231 — the event's own promoter's site counts as the organizer even
+  // when its host is on the aggregator list (Visit Freeport → visitfreeport.com).
+  const promoterSite = args.eventId
+    ? await db
+        .select({ website: promoters.website })
+        .from(events)
+        .innerJoin(promoters, eq(promoters.id, events.promoterId))
+        .where(eq(events.id, args.eventId))
+        .limit(1)
+    : [];
   return gateDatesConfirmed({
     requested: true,
     citations,
     callSource: args.callSource ?? null,
+    organizerHosts: organizerHostsFrom(promoterSite.map((p) => p.website)),
   });
 }

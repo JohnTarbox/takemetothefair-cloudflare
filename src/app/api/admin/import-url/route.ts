@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { raiseEventReviewFlag } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { venueStateConflict, sourceOutsideNewEngland } from "@takemetothefair/utils";
@@ -254,7 +255,6 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     });
     await db.insert(events).values({
       possibleDuplicateOf,
-      ...(stateNeedsReview || formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
       id: newEventId,
       name: event.name,
       slug: finalEventSlug,
@@ -446,10 +446,16 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     const pastDated =
       gateResult.reasons.includes("start_date_in_past") ||
       gateResult.reasons.includes("end_date_in_past");
-    if (anyHoursUnknown || pastDated) {
-      // DQ4 / OPE-201: flag the parent event so the operator triage queue
-      // (/admin/events?flagged=1) surfaces it for human follow-up.
-      await db.update(events).set({ flaggedForReview: 1 }).where(eq(events.id, newEventId));
+    // DQ4 / OPE-201 / OPE-767 — every reason recorded on its own, so the
+    // operator triage queue (/admin/events?flagged=1) can say WHY, and the
+    // hours axis can later clear missing_hours without touching the rest.
+    for (const reason of [
+      stateNeedsReview && "venue_state_mismatch",
+      formerCheck.flagForReview && "former_venue",
+      anyHoursUnknown && "missing_hours",
+      pastDated && "past_dated",
+    ] as const) {
+      if (reason) await raiseEventReviewFlag(db, newEventId, reason);
     }
 
     // Store schema.org data if JSON-LD was provided

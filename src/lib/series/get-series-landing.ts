@@ -12,13 +12,15 @@
  * is inert and event pages behave exactly as today.
  */
 import { cache } from "react";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { unsafeSlug } from "@takemetothefair/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { eventSeries, events, venues, promoters } from "@/lib/db/schema";
+import { withD1ReadLogged } from "@/lib/db/d1-resilience";
+import { eventSeries, events, eventDays, venues, promoters } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { pickHeroOccurrence, resolveSeriesLandingContent } from "@/lib/series/occurrence-view";
 import type { PlaceVenue } from "@/lib/seo/place-jsonld";
+import type { JsonLdEventDay } from "@/lib/seo/column-date-jsonld";
 import type { SchemaOrganizer } from "@/lib/series/series-schema-org";
 
 export interface LandingOccurrence {
@@ -47,12 +49,23 @@ export interface LandingOccurrence {
   ticketUrl: string | null;
   ticketPriceMinCents: number | null;
   ticketPriceMaxCents: number | null;
+  /** OPE-1326 — the stored edition key (null on an annual series). */
+  editionKey: string | null;
+  /**
+   * OPE-1547 — the occurrence's day rows (only the four fields the JSON-LD date
+   * rule reads; no notes/provenance reach the page) and its venue zone, so the
+   * series JSON-LD dates match the event page's.
+   */
+  eventDays: JsonLdEventDay[];
+  venueTimezone: string | null;
 }
 
 export interface SeriesLanding {
   series: {
     canonicalSlug: string;
     name: string;
+    /** OPE-1326 — 'annual' | 'multi'; decides year vs edition-key URLs. */
+    editionMode: string;
     description: string | null;
     imageUrl: string | null;
     /**
@@ -65,7 +78,19 @@ export interface SeriesLanding {
   occurrences: LandingOccurrence[];
 }
 
-export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLanding | null> => {
+/**
+ * OPE-1301 — retry-wrapped like the browse fetchers (OPE-790). Both the event
+ * page and its metadata call this BEFORE their getEvent try-block, so a D1 blip
+ * here used to bypass the degraded panel entirely.
+ */
+export const getSeriesLanding = cache(
+  (slug: string): Promise<SeriesLanding | null> =>
+    withD1ReadLogged("lib/series/get-series-landing.ts:getSeriesLanding", () =>
+      getSeriesLandingOnce(slug)
+    )
+);
+
+async function getSeriesLandingOnce(slug: string): Promise<SeriesLanding | null> {
   const db = getCloudflareDb();
 
   // OPE-18 — leftJoin the series promoter so the EventSeries JSON-LD can emit
@@ -76,6 +101,7 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
       id: eventSeries.id,
       canonicalSlug: eventSeries.canonicalSlug,
       name: eventSeries.name,
+      editionMode: eventSeries.editionMode,
       description: eventSeries.description,
       imageUrl: eventSeries.imageUrl,
       promoterCompanyName: promoters.companyName,
@@ -103,6 +129,7 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
       ticketUrl: events.ticketUrl,
       ticketPriceMinCents: events.ticketPriceMinCents,
       ticketPriceMaxCents: events.ticketPriceMaxCents,
+      editionKey: events.editionKey,
       venueName: venues.name,
       venueAddress: venues.address,
       venueCity: venues.city,
@@ -110,6 +137,7 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
       venueZip: venues.zip,
       venueLat: venues.latitude,
       venueLng: venues.longitude,
+      venueTimezone: venues.timezone,
     })
     .from(events)
     .leftJoin(venues, eq(events.venueId, venues.id))
@@ -134,6 +162,31 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
   // never unmask an event page that used to render as a landing.
   if (rows.length === 0) return null;
 
+  // OPE-1547 — day rows for the JSON-LD date rule. One SELECT per 50 ids
+  // ([[feedback_d1_batch_param_limit]]: D1 caps a statement at 100 bound params,
+  // and a long-running market series can hold well over 100 occurrences).
+  const daysByEvent = new Map<string, JsonLdEventDay[]>();
+  const ids = rows.map((r) => r.id);
+  for (let i = 0; i < ids.length; i += 50) {
+    const dayRows = await db
+      .select({
+        eventId: eventDays.eventId,
+        date: eventDays.date,
+        openTime: eventDays.openTime,
+        closeTime: eventDays.closeTime,
+        closed: eventDays.closed,
+        // OPE-1563 — read by isPublicEventDay so a setup row can't set a start.
+        vendorOnly: eventDays.vendorOnly,
+      })
+      .from(eventDays)
+      .where(inArray(eventDays.eventId, ids.slice(i, i + 50)));
+    for (const { eventId, ...day } of dayRows) {
+      const list = daysByEvent.get(eventId) ?? [];
+      list.push(day);
+      daysByEvent.set(eventId, list);
+    }
+  }
+
   const occurrences: LandingOccurrence[] = rows.map((r) => ({
     id: r.id,
     slug: r.slug,
@@ -146,6 +199,9 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
     ticketUrl: r.ticketUrl,
     ticketPriceMinCents: r.ticketPriceMinCents,
     ticketPriceMaxCents: r.ticketPriceMaxCents,
+    editionKey: r.editionKey,
+    eventDays: daysByEvent.get(r.id) ?? [],
+    venueTimezone: r.venueTimezone ?? null,
     // venueName is the leftJoin discriminator: null name ⇒ no venue row.
     venue: r.venueName
       ? {
@@ -193,10 +249,11 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
     series: {
       canonicalSlug: series.canonicalSlug,
       name: series.name,
+      editionMode: series.editionMode,
       description: effective.description,
       imageUrl: effective.imageUrl,
       organizer,
     },
     occurrences,
   };
-});
+}

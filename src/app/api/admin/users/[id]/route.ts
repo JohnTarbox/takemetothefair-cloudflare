@@ -4,6 +4,7 @@ import { withAuth } from "@/lib/api/with-auth";
 import { users, adminActions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { userUpdateSchema, validateRequestBody } from "@/lib/validations";
+import { bumpSessionVersion } from "@/lib/auth/session-version";
 
 export const PATCH = withAuth<{ id: string }>(
   { role: "ADMIN", source: "api/admin/users/[id]" },
@@ -36,6 +37,9 @@ export const PATCH = withAuth<{ id: string }>(
     // WS3d — audit row when the role actually transitions (compare against the
     // snapshot so a no-op PATCH or a name-only edit doesn't spam the log).
     if (data.role && priorUser && data.role !== priorUser.role) {
+      // OPE-1366 — end the sessions this user holds under the old role: web
+      // JWTs at their next re-check (<= 5 min), MCP grants at next refresh.
+      await bumpSessionVersion(db, id);
       await db.insert(adminActions).values({
         action: "user.role_change",
         actorUserId: session.user.id,

@@ -17,15 +17,15 @@
  * filter-by-ingestion-method via query string.
  */
 
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
-import { and, eq, gte, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { SUBMIT_PIPELINE_INTENTS } from "@takemetothefair/constants";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDateDriftFindings, inboundEmails } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { extractDomain } from "@/lib/url-classification";
-
-export const revalidate = 300; // 5-min ISR — these numbers don't churn fast
 
 // Sources with fewer than this many total events are too small to score
 // meaningfully. Filtering them keeps the table focused on the high-volume
@@ -106,7 +106,7 @@ async function loadSourceQuality(filterMethod: string | null): Promise<SourceRow
     .from(inboundEmails)
     .where(
       and(
-        eq(inboundEmails.intent, "submit"),
+        inArray(inboundEmails.intent, [...SUBMIT_PIPELINE_INTENTS]),
         gte(inboundEmails.receivedAt, sql`${thirtyDaysAgoSeconds}`)
       )
     );
@@ -251,6 +251,7 @@ export default async function SourceQualityPage({
 }: {
   searchParams: Promise<{ method?: string }>;
 }) {
+  await requireAdmin();
   const params = await searchParams;
   const filterMethod = params.method && params.method !== "all" ? params.method : null;
 

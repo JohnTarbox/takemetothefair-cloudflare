@@ -1,5 +1,5 @@
 import { eq, and, inArray, sql, or, isNull } from "drizzle-orm";
-import { differentEditionYears } from "@/lib/series/merge-year-guard";
+import { differentEditions, differentEditionYears } from "@/lib/series/merge-year-guard";
 import type { Database } from "@/lib/db";
 import {
   venues,
@@ -17,7 +17,11 @@ import {
   adminActions,
 } from "@/lib/db/schema";
 import { unsafeSlug } from "@takemetothefair/utils";
-import { repointPromoterChildren } from "@takemetothefair/db-schema";
+import {
+  repointInboundEmailsToKeeper,
+  repointPromoterChildren,
+  repointVenueChildren,
+} from "@takemetothefair/db-schema";
 import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
 import { logError } from "@/lib/logger";
 import type {
@@ -26,6 +30,7 @@ import type {
   MergeResponse,
   RelationshipCounts,
 } from "./types";
+import { logAuditWriteFailure } from "@/lib/audit/log-audit-failure";
 
 /**
  * Get merge preview for two entities
@@ -222,6 +227,10 @@ async function mergeVenues(
   // Transfer favorites (D1-safe in-memory exclusion + chunked PK transfer).
   transferred.favorites = await transferFavorites(db, "VENUE", primaryId, duplicateId);
 
+  // OPE-1232 — BEFORE the hard delete below: event_series would be SET NULL and
+  // periods / name variants / claim citations / slug history CASCADE-deleted.
+  await repointVenueChildren(db, primaryId, duplicateId);
+
   // Batch 2: Cleanup and final fetch
   await db.batch([
     db
@@ -373,8 +382,15 @@ async function mergePromoters(
       }),
       createdAt: new Date(),
     });
-  } catch {
+  } catch (error) {
     // Audit failure shouldn't fail the merge itself (same rule as the MCP tool).
+    await logAuditWriteFailure(db, {
+      source: "admin:duplicates:merge",
+      action: "promoter.merge",
+      targetType: "promoter",
+      targetId: primaryId,
+      error,
+    });
   }
 
   const [mergedEntity] = await db.select().from(promoters).where(eq(promoters.id, primaryId));
@@ -732,6 +748,8 @@ async function mergeEvents(
         sourceName: events.sourceName,
         // OPE-481 — needed by the cross-year guard below.
         startDate: events.startDate,
+        // OPE-1327 — and the edition key, for the same-year/different-edition case.
+        editionKey: events.editionKey,
       })
       .from(events)
       .where(eq(events.id, primaryId)),
@@ -746,6 +764,8 @@ async function mergeEvents(
         sourceName: events.sourceName,
         // OPE-481 — needed by the cross-year guard below.
         startDate: events.startDate,
+        // OPE-1327 — and the edition key, for the same-year/different-edition case.
+        editionKey: events.editionKey,
       })
       .from(events)
       .where(eq(events.id, duplicateId)),
@@ -782,14 +802,22 @@ async function mergeEvents(
   // `allowCrossYearMerge` exists so a deliberate cross-year merge is still
   // possible, but only by saying so explicitly — the force_create shape used in
   // intake. Never default it to true.
-  if (
-    !options?.allowCrossYearMerge &&
-    differentEditionYears(keeper.startDate, duplicate.startDate)
-  ) {
+  //
+  // OPE-1327 — and same-year merges of two DIFFERENT editions of a multi-edition
+  // series (both carry an edition key, and the keys differ). The same override
+  // applies: the cost is the same fused roster.
+  if (!options?.allowCrossYearMerge && differentEditions(keeper, duplicate)) {
+    // The cross-year wording is unchanged (callers and tests match on it); the
+    // same-year/different-key case says which keys collided.
     throw new Error(
-      `mergeEvents: refusing cross-year merge — keeper ${primaryId} and duplicate ${duplicateId} ` +
-        `start in different years. These are different editions of a series; link them as ` +
-        `occurrences instead. Pass allowCrossYearMerge to override deliberately.`
+      differentEditionYears(keeper.startDate, duplicate.startDate)
+        ? `mergeEvents: refusing cross-year merge — keeper ${primaryId} and duplicate ${duplicateId} ` +
+            `start in different years. These are different editions of a series; link them as ` +
+            `occurrences instead. Pass allowCrossYearMerge to override deliberately.`
+        : `mergeEvents: refusing a merge of two different editions — keeper ${primaryId} ` +
+            `(${keeper.editionKey}) and duplicate ${duplicateId} (${duplicate.editionKey}) are ` +
+            `different editions of a multi-edition series; link them as occurrences instead. ` +
+            `Pass allowCrossYearMerge to override deliberately.`
     );
   }
 
@@ -1034,6 +1062,18 @@ async function mergeEvents(
       ? unsafeSlug(`${currentSlug}-merged-${duplicateId.slice(0, 8)}`)
       : unsafeSlug(keeper.slug);
 
+  // OPE-1352 — the inbound email(s) that produced the duplicate now name the
+  // keeper. Same helper as the two reject-as-duplicate paths. Runs after every
+  // refusal above and before the tombstone batch, like repointVenueChildren:
+  // if the batch then fails, the inbound already names the event the operator
+  // chose to keep, which is the less wrong of the two half-states.
+  const inboundRepoint = await repointInboundEmailsToKeeper(db, {
+    loserId: duplicateId,
+    keeperId: primaryId,
+    reason: "merged_into",
+    actorUserId,
+  });
+
   // K3 Steps 1-3 + cleanup, in one db.batch so the slug rename + history
   // insert + status update are atomic. Order matters: the rename must
   // commit BEFORE the history row is inserted, so eventSlugHistory's
@@ -1124,6 +1164,7 @@ async function mergeEvents(
         duplicateSlugRenamed: renamedDupSlug,
         keeperSlug: keeper.slug,
         seriesCanonicalRepointed: seriesToRepoint.map((r) => r.id),
+        inboundEmailsRepointed: inboundRepoint.repointed,
         transferred,
       }),
       createdAt: new Date(),

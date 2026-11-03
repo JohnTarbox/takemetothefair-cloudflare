@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { SQLiteSyncDialect } from "drizzle-orm/sqlite-core";
+import type { SQL } from "drizzle-orm";
 import { unsafeSlug } from "@/lib/utils";
 import {
   insertEventDaysBatched,
@@ -22,6 +24,9 @@ type Row = Record<string, unknown>;
 function mockInsertDb(opts: { daysChecked?: number; unknownDays?: number } = {}) {
   const batches: Row[][] = [];
   const flagUpdates: Row[] = [];
+  // OPE-767 — the reason writes go through db.run(sql); keep their SQL text.
+  const runs: string[] = [];
+  const dialect = new SQLiteSyncDialect();
   const db = {
     insert: () => ({
       values: (rows: Row[]) => {
@@ -52,8 +57,13 @@ function mockInsertDb(opts: { daysChecked?: number; unknownDays?: number } = {})
         },
       }),
     }),
+    run: (q: SQL) => {
+      const { sql, params } = dialect.sqlToQuery(q);
+      runs.push(`${sql} ${JSON.stringify(params)}`);
+      return Promise.resolve();
+    },
   };
-  return { db, batches, flagUpdates };
+  return { db, batches, flagUpdates, runs };
 }
 
 /** Minimal drizzle-shaped mock whose select() resolves to the given slugs. */
@@ -156,22 +166,29 @@ describe("resolveUniqueEventSlug", () => {
 });
 
 describe("insertEventDaysBatched — OPE-759 hours flag", () => {
-  it("raises flagged_for_review when a written day lacks hours", async () => {
+  it("raises flagged_for_review when a written day lacks hours — as the missing_hours REASON", async () => {
     // The defect: this writer inserted days and never touched the flag, so an
     // 18-date farmers market with no hours at all stayed unflagged.
-    const { db, flagUpdates } = mockInsertDb({ daysChecked: 3, unknownDays: 3 });
+    // OPE-767 — the raise now records WHY, so the hours axis can later clear it.
+    const { db, runs } = mockInsertDb({ daysChecked: 3, unknownDays: 3 });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await insertEventDaysBatched(db as any, "evt", [day("2026-07-01")] as any);
-    expect(flagUpdates).toHaveLength(1);
-    expect(flagUpdates[0].flaggedForReview).toBe(1);
+    expect(
+      runs.some((r) => r.includes("INSERT INTO event_review_flags") && r.includes("missing_hours"))
+    ).toBe(true);
+    expect(runs.some((r) => r.includes("SET flagged_for_review = 1"))).toBe(true);
   });
 
-  it("LANDMARK: does not raise when every day has hours", async () => {
+  it("LANDMARK: every day houred → raises nothing, and clears ONLY missing_hours (OPE-767)", async () => {
     // Without this, a version that raises unconditionally passes the test above
     // — and would flag all 502 correctly-houred events in the census.
-    const { db, flagUpdates } = mockInsertDb({ daysChecked: 3, unknownDays: 0 });
+    const { db, runs } = mockInsertDb({ daysChecked: 3, unknownDays: 0 });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await insertEventDaysBatched(db as any, "evt", [day("2026-07-01")] as any);
-    expect(flagUpdates).toHaveLength(0);
+    expect(runs.some((r) => r.includes("INSERT INTO event_review_flags"))).toBe(false);
+    const clear = runs.find((r) => r.includes("UPDATE event_review_flags SET cleared_at"));
+    expect(clear).toContain("missing_hours");
+    // The flag is recomputed from whatever is still active — not forced to 0.
+    expect(runs.some((r) => r.includes("CASE WHEN EXISTS"))).toBe(true);
   });
 });

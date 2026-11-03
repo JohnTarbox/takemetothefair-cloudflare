@@ -164,12 +164,12 @@ describe("the operator notice", () => {
       threadId: "t-peter",
       previousSendSource: "reply:manual",
       previousSendAt: "2026-09-14T16:55:23.000Z",
-      fromAddress: "plpescado@gmail.com",
+      fromAddress: "userelm1@gmail.com",
       subject: "Re: listing",
       excerpt: "Yes - please add us to the directory",
       receivedAt: "2026-09-14T16:59:40.000Z",
     });
-    expect(n.subject).toContain("plpescado@gmail.com");
+    expect(n.subject).toContain("userelm1@gmail.com");
     expect(n.text).toContain("57c3a91d");
     expect(n.text).toContain("Yes - please add us to the directory");
     expect(n.text).toContain("reply_to_inbound_email");
@@ -204,7 +204,9 @@ describe("workflow wiring (source-level: the fix is an ordering and a gate)", ()
     );
     const notify = at('"notify/owed-human"');
     expect(notify).toBeGreaterThan(at('"mark-done"'));
-    expect(SRC.slice(notify, notify + 1400)).toContain("source: OWED_HUMAN_NOTICE_SOURCE");
+    // 2200, not 1400: OPE-954 added the replay-suppression check at the top of
+    // this step, which moved the send further down. The send is unchanged.
+    expect(SRC.slice(notify, notify + 2200)).toContain("source: OWED_HUMAN_NOTICE_SOURCE");
     expect(OWED_HUMAN_STATUS).toBe("awaiting_human");
   });
 });

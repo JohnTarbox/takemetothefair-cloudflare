@@ -10,6 +10,7 @@
  */
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { safeHref } from "@takemetothefair/utils";
 import { CalendarClock, MapPin, Search, CircleSlash, HelpCircle } from "lucide-react";
 import { formatDateMedium } from "@/lib/datetime";
 import {
@@ -64,9 +65,9 @@ function DeadlineCard({
 
       {row.notes && <p className="mt-1 text-xs text-muted-foreground">{row.notes}</p>}
 
-      {row.url && (
+      {safeHref(row.url, { allowMailto: true }) && (
         <a
-          href={row.url}
+          href={safeHref(row.url, { allowMailto: true })}
           target="_blank"
           rel="noopener noreferrer nofollow"
           className="mt-2 inline-block text-sm text-royal hover:underline"

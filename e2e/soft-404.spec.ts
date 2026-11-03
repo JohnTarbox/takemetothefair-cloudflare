@@ -103,3 +103,24 @@ test.describe("route-group moves did not change any URL", () => {
     });
   }
 });
+
+/**
+ * OPE-574 — an event that EXISTS but was REJECTED answers 410 Gone, from the
+ * explicit branch in src/middleware.ts (not by accident of a not-found path).
+ * On 2026-08-16 these served an empty 200 that every status-code check read as
+ * healthy; on 2026-09-02 they were re-probed live at 410. This pins it.
+ *
+ * The APPROVED sibling is the positive landmark: without it, a seed that
+ * failed to load would 404 both and the 410 assertion alone could not say why.
+ */
+test.describe("a REJECTED event is Gone, an APPROVED one is served", () => {
+  test("/events/e2e-rejected-test-fair -> 410", async ({ request }) => {
+    const res = await request.get("/events/e2e-rejected-test-fair", { maxRedirects: 0 });
+    expect(res.status()).toBe(410);
+  });
+
+  test("/events/artisan-market-festival (APPROVED, same seed) -> 200", async ({ page }) => {
+    const response = await page.goto("/events/artisan-market-festival");
+    expect(response?.status()).toBe(200);
+  });
+});

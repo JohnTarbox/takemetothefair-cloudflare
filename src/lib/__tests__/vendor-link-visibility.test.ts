@@ -25,7 +25,8 @@ const PUBLIC_SURFACES = [
   // Route groups do not change URLs; only these source paths moved.
   "src/app/events/(listing)/page.tsx",
   "src/app/events/(listing)/past/page.tsx",
-  "src/app/vendors/(listing)/page.tsx",
+  // OPE-1395 — the /vendors listing query moved out of the page into this loader.
+  "src/lib/vendors/listing-page.ts",
   "src/app/vendors/[slug]/page.tsx",
   "src/app/api/events/[slug]/vendors/route.ts",
   "src/components/events/state-events-page.tsx",

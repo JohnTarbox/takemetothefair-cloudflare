@@ -57,7 +57,9 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
       "no pin is correct for it, so it is not forceable and needs no research. If Google resolves the venue " +
       "to a Place another venue already owns, it returns 'duplicate-with' (with the owning venue's id/name/" +
       "slug in `duplicate`) instead of a raw DB error — a ready-made merge_venue candidate; not written even " +
-      "with force. Returns a per-venue outcome record. Admin only.",
+      "with force. A stored pin more than 10 km from the median of the other venues in the same " +
+      "city+state carries `pin_warning` and is logged (admin_actions venue.pin.far_from_town) — it is still " +
+      "written; verify it (OPE-1079). Returns a per-venue outcome record. Admin only.",
     {
       venue_id: z.string().optional().describe("Geocode a single venue by id."),
       venue_ids: z

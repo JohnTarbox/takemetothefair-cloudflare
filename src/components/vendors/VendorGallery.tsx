@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import { X } from "lucide-react";
 
 export interface GalleryImage {

@@ -14,6 +14,8 @@ import { eq, and, isNull } from "drizzle-orm";
 import { events, inboundEmails } from "./schema.js";
 import type { Db } from "./db.js";
 import { issueToken } from "./feedback-tokens.js";
+import { isEmailSuppressed } from "@takemetothefair/db-schema/email-suppression";
+import { recordWorkflowOutcome } from "@takemetothefair/db-schema/intent-feedback";
 
 interface EmailJobMessage {
   to: string;
@@ -81,6 +83,7 @@ export type NotifyApprovalOutcome =
   | "skipped:no-suggester-email"
   | "skipped:not-approved"
   | "skipped:already-notified"
+  | "skipped:suppressed"
   | "skipped:not-found"
   | "error:queue-missing";
 
@@ -112,6 +115,11 @@ export async function notifyApprovalIfNeeded(
   if (!e.suggesterEmail) return { outcome: "skipped:no-suggester-email" };
   if (e.status !== "APPROVED") return { outcome: "skipped:not-approved" };
   if (e.approvalNotifiedAt !== null) return { outcome: "skipped:already-notified" };
+  // OPE-1396 (DUP8) — same suppression check as the app twin and the receipt ack.
+  if (await isEmailSuppressed(db, e.suggesterEmail)) {
+    await recordApprovalOutcome(db, eventId);
+    return { outcome: "skipped:suppressed" };
+  }
 
   if (!env.EMAIL_JOBS) return { outcome: "error:queue-missing" };
 
@@ -157,5 +165,20 @@ export async function notifyApprovalIfNeeded(
     .set({ approvalNotifiedAt: new Date() })
     .where(and(eq(events.id, eventId), isNull(events.approvalNotifiedAt)));
 
+  await recordApprovalOutcome(db, eventId);
+
   return { outcome: "sent" };
+}
+
+/**
+ * OPE-1396 (DUP7) — the app twin always fed the classifier's workflow-outcome
+ * signal on approval; this copy did not, so MCP approvals were invisible to it.
+ * Same shared writer (@takemetothefair/db-schema), same best-effort swallow.
+ */
+async function recordApprovalOutcome(db: Db, eventId: string): Promise<void> {
+  try {
+    await recordWorkflowOutcome(db, { eventId, newStatus: "APPROVED" });
+  } catch {
+    // Intentional swallow — observability, not user-facing.
+  }
 }

@@ -54,8 +54,14 @@
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
+import {
+  classifyExtractFailure,
+  isZeroEventsFailure,
+  pipelineErrorMessage,
+} from "./pipeline-error.js";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
+import { persistExtractContext } from "./extract-context.js";
 import { ledgerEmailSend } from "../mailer.js";
 import { isAutoReplyEnabled, AUTO_REPLY_HELD_REASON, type EmailGateEnv } from "../email-gates.js";
 import {
@@ -77,14 +83,16 @@ import {
   type OwedHumanVerdict,
 } from "../email-handlers/owed-human.js";
 import { openObligationIfOwed } from "../email-handlers/open-obligation.js";
+import { heldSendReason } from "../inbound/replies-suppressed.js";
 import { isZeroConfidenceUnclear } from "../email-handlers/automated-mail.js";
-import { inboundEmails, adminActions, events } from "../schema.js";
+import { inboundEmails, adminActions } from "../schema.js";
 import { logError } from "../logger.js";
 import {
   classifyDomainTier,
   isHigherTier,
   classifyDedupTier,
   isBlankAskAboutEventBody,
+  yearlessDaySplitLosers,
 } from "@takemetothefair/utils";
 import type { EmailIntent } from "../email-intents.js";
 import type { SenderTrustTier } from "../intent-classifier.js";
@@ -107,6 +115,19 @@ import { handle as handleUnsubscribe } from "../email-handlers/unsubscribe.js";
 import { handle as handleUnknown } from "../email-handlers/unknown.js";
 import { handle as handleSpam } from "../email-handlers/spam.js";
 import { handle as handleNoop } from "../email-handlers/noop.js";
+import { handle as handleGemba } from "../email-handlers/gemba.js";
+import { handle as handleListSubscription } from "../email-handlers/list-subscription.js";
+import { classifyAndRecordNewsletter } from "../inbound/newsletter-record.js";
+import {
+  captureNeedsWarning,
+  capturePromoterContacts,
+} from "../inbound/promoter-contact-capture.js";
+import { linkOutreachReplies } from "../inbound/outreach-reply-link.js";
+import { processNewsletter } from "../inbound/newsletter-process.js";
+import {
+  createNewsletterCandidates,
+  newsletterLaneOwns,
+} from "../inbound/newsletter-candidates.js";
 import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
 import { routeToProject } from "../inbound/project-router.js";
 import {
@@ -116,7 +137,10 @@ import {
   type HoldSuppressionReason,
 } from "../inbound/unrouted-hold.js";
 import { handle as handleSourceSuggestion } from "../email-handlers/source-suggestion.js";
-import { handle as handlePhotoIntake } from "../email-handlers/photo-intake.js";
+import {
+  handle as handlePhotoIntake,
+  photoIntakeFailureReply,
+} from "../email-handlers/photo-intake.js";
 import {
   isContentFreeEmail,
   assessContentFreeBurst,
@@ -141,6 +165,7 @@ import {
   mergeRosterLinkOutcomes,
   ROSTER_LINK_MAX,
 } from "../email-handlers/roster-link.js";
+import { recordSelfAnnouncedExhibitor } from "../email-handlers/self-announcement.js";
 import {
   crawlSecondaryPages,
   applyCrawlEnrichment,
@@ -153,6 +178,9 @@ import {
   submitFreeTextExtract,
   submitCheckDuplicate,
   submitEvent,
+  refusalForCandidate,
+  recordCandidateRefusal,
+  type EmailCandidateRefusal,
   stripSignature,
   stripForwardedPreamble,
   MAX_FETCH_CONTENT_LEN,
@@ -171,7 +199,9 @@ import { countOutcomes } from "../email-handlers/outcome-counts.js";
 import { clusterSubmissionCandidates } from "../email-handlers/cluster-candidates.js";
 import { classifySourceStaleness, sourceDomainOf } from "../email-handlers/stale-source.js";
 import { recordSourceStale } from "../goodwill/scoring.js";
-import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js";
+import { stageEnrichOnMatch, type StageEnrichInput } from "../email-handlers/enrich-proposal.js";
+import { matchEventFromText, type TextMatchResult } from "../inbound/text-event-match.js";
+import { findVisitorFacts } from "@takemetothefair/utils";
 import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
 import { toMarkdownWithRetry } from "../email-handlers/ocr-retry.js";
@@ -268,37 +298,45 @@ const ROSTER_CITATION_MAX_CHARS = 2000;
 // strand the OCR. Non-transient errors fail fast (see isTransientAiError).
 const MAX_OCR_ATTEMPTS = 3;
 
+// OPE-1316 Ask 2 — a step that WAITS on /api/admin/import-url/extract must
+// outlast the route's unattended AI limit (UNATTENDED_AI_EXTRACT_TIMEOUT_MS,
+// 90 s, in src/lib/url-import/ai-extractor.ts) plus the page fetch and the
+// round trip. At 30 s the step killed every slow-but-successful extraction the
+// route had just been allowed to finish.
+const EXTRACT_STEP_TIMEOUT = "120 seconds" as const;
+
+// OPE-1057 rework — the B2 free-text extraction: one attempt, plus one more
+// only when the first was a Workers AI timeout. Step names must be
+// deterministic across replays, so each attempt has its own fixed label.
+const FREE_TEXT_EXTRACT_STEP_LABELS = [
+  "submit/free-text-extract",
+  "submit/free-text-extract-retry",
+] as const;
+
+// `classifyExtractFailure` (the K7.4 extract_fail_reason buckets) lives in
+// ./pipeline-error.ts with the step-boundary token reader it depends on (OPE-1316).
+
 /**
- * Classify an error thrown by the AI extract step into the small bucket
- * persisted to inbound_emails.extract_fail_reason (drizzle/0094, K7.4).
- *
- * Why a fixed taxonomy: `error` already carries the full message text,
- * which is good for triage but terrible for GROUP BY on the source-
- * quality dashboard. This collapses the variability into 5 buckets that
- * lend themselves to "what's broken this week" queries.
- *
- * Bucket meanings:
- *   - 'zero-events'  : AI returned success with an empty events[]
- *   - 'thin-content' : content sent to AI was <500 chars after strip
- *   - 'parse-error'  : AI response wasn't parseable JSON
- *   - 'ai-timeout'   : Workers AI didn't respond within budget
- *   - 'other'        : anything else; check `error` column for detail
- *
- * Pattern-matches on the NonRetryableError messages produced by
- * submitExtract (`extract-upstream: zero-events`, `extract-network:`,
- * `extract-<status>`).
+ * OPE-1253 — the text a fan-out candidate's fields were read from. A URL
+ * candidate has its fetched page; an attachment or body candidate has the
+ * text it was extracted from. The OCR text was missing before: a poster's
+ * date was grounded against the email body only, so it was usually dropped
+ * as "unsupported" — and a dateless row is now refused, not written.
  */
-function classifyExtractFailure(e: unknown): string {
-  if (!(e instanceof Error) || typeof e.message !== "string") return "other";
-  const msg = e.message;
-  if (msg.startsWith("extract-upstream: zero-events")) return "zero-events";
-  if (msg.startsWith("extract-upstream: thin-content")) return "thin-content";
-  // Workers AI load timeouts surface as 'extract-network: timeout' or as
-  // a step-level timeout that doesn't reach our catch. The network
-  // bucket covers the former.
-  if (msg.startsWith("extract-network:") && /timeout|timed.?out/i.test(msg)) return "ai-timeout";
-  if (msg.startsWith("extract-upstream: ") && /parse|json/i.test(msg)) return "parse-error";
-  return "other";
+function candidateSourceTexts(
+  cand: { snapshot?: { text: string }; source: SubmitSource },
+  emailBody: string | null | undefined
+): string[] {
+  const own = cand.snapshot?.text ?? (cand.source.kind === "url" ? "" : (cand.source.text ?? ""));
+  return [own, emailBody ?? ""];
+}
+
+/** OPE-1253 — one reason for a set of refusals; a missing date is the floor that matters most. */
+function refusedReason(refused: Array<{ reason: EmailCandidateRefusal }>): string {
+  if (refused.some((r) => r.reason === "no-date")) return "no-date";
+  // OPE-1332 — one year-less day expression split into two candidates.
+  if (refused.some((r) => r.reason === "over-split-year")) return "over-split-year";
+  return "non-event-name";
 }
 
 /** Dispatch table for non-submit, non-new_event intents. The submit
@@ -338,6 +376,10 @@ const HANDLERS: Record<Exclude<EmailIntent, "submit" | "new_event">, HandlerFn> 
   // send the sender a "we couldn't understand this" reply after they had
   // just successfully signed up.
   newsletter_subscribe: handleNoop,
+  // OPE-328 — gemba@: queue the observation for an agent to post; no reply.
+  gemba_observation: handleGemba,
+  // OPE-1265 — lists@: record + attribute + hold; never replies.
+  list_subscription: handleListSubscription,
 };
 
 /** Map an error message thrown by a submit-leg or handler to a user-
@@ -347,7 +389,7 @@ const HANDLERS: Record<Exclude<EmailIntent, "submit" | "new_event">, HandlerFn> 
  *  treatment. */
 function errorToReplyKind(intent: EmailIntent, errMsg: string): ReplyKind | null {
   if (intent === "submit" || intent === "new_event") {
-    if (errMsg.startsWith("submit-")) return "submit-failed";
+    if (pipelineErrorMessage(errMsg).startsWith("submit-")) return "submit-failed";
     return "extract-failed";
   }
   return null;
@@ -392,9 +434,26 @@ function decisionToReplyKind(intent: EmailIntent, decision: AdminDecision | null
 /** Shape of the payload sent via instance.sendEvent for correction/press
  *  intents. The MCP endpoint at /api/admin/inbound-emails/:id/decide
  *  produces this; the admin UI's action buttons drive it. */
-interface AdminDecision {
-  action: "applied" | "rejected" | "needs-more-info";
+export interface AdminDecision {
+  // OPE-1251 — `dismissed`: an operator ended a parked row that should never
+  // have waited (a mis-split demux child). Sends NOTHING; marks it dismissed.
+  action: "applied" | "rejected" | "needs-more-info" | "dismissed";
   note?: string;
+}
+
+/**
+ * OPE-1251 — what the workflow does once the admin-decision wait ends.
+ *   timeout   → nothing (OPE-766: the arrival ack already went out)
+ *   dismissed → nothing, and the row is marked `dismissed`
+ *   reply     → the decision's tailored reply
+ * Pulled out so "a dismissal never sends" is a tested guard, not a comment.
+ */
+export function decisionDisposition(
+  decision: AdminDecision | null
+): "timeout" | "dismissed" | "reply" {
+  if (decision === null) return "timeout";
+  if (decision.action === "dismissed") return "dismissed";
+  return "reply";
 }
 
 export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailParams> {
@@ -711,6 +770,38 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       }
     );
 
+    // OPE-1264 / OPE-1286 — recognise a promoter newsletter and record whose it
+    // is. Runs for EVERY email (cheap: string markers + one promoter read only
+    // when it IS a newsletter) and records its step every time, which is the
+    // heartbeat's evidence. It runs BEFORE dispatch since OPE-1286, because its
+    // verdict now decides whether the submit pipeline runs at all: a newsletter
+    // the lane owns (`newsletterLaneOwns`) is itemized and its unmatched items
+    // become PENDING candidates, instead of being read as one event submission.
+    // Fails OPEN to "not a newsletter": ahead of dispatch, an unguarded failure
+    // here would stop every email before the submit pipeline, which is the
+    // path it took before this step existed.
+    let newsletter: Awaited<ReturnType<typeof classifyAndRecordNewsletter>> = {
+      isNewsletter: false,
+      basis: null,
+      promoterId: null,
+    };
+    try {
+      newsletter = await step.do(
+        "newsletter/classify",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => classifyAndRecordNewsletter(getDb(this.env.DB), messageRowId, sessionId)
+      );
+    } catch (err) {
+      await logError(this.env.DB, {
+        source: SOURCE,
+        message: "newsletter/classify failed; treating as not a newsletter (OPE-1286)",
+        sessionId,
+        error: err,
+        context: { messageRowId },
+      });
+    }
+    const newsletterLane = newsletterLaneOwns(newsletter, senderTrust);
+
     if (blankQuestion) {
       routedToWorkflow = "short-circuit:blank-question";
       // OPE-985 Ask B (ruled 2026-09-20). Two conditions ride here:
@@ -756,6 +847,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // widen an enum read across the inbound sweeps for a cosmetic gain.
         result = { replyKind: "empty-message", status: "replied", suppressReply: true };
       }
+    } else if (newsletterLane && (intent === "submit" || intent === "new_event")) {
+      // OPE-1286 — the switch-over. The submit pipeline reads one event out of
+      // a newsletter (or none, and answers `no-url`); the lane below itemizes
+      // every dated mention instead. No reply: the newsletter copy is gated on
+      // John (OPE-1264), and the shadow-mode rows were already silent.
+      routedToWorkflow = "newsletter-lane";
+      result = { replyKind: null, status: "replied" };
     } else {
       try {
         if (intent === "submit" || intent === "new_event") {
@@ -765,9 +863,27 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             "dispatch",
             {
               retries: { limit: 2, delay: "10 seconds", backoff: "constant" },
-              timeout: "30 seconds",
+              // OPE-1262 — photo_intake gets room for its bounded OCR call
+              // (POSTER_CLASSIFY_BUDGET_MS = 60s, observed 26–54s). At 30s the
+              // step timed out mid-OCR, and the retry re-ran it from scratch.
+              timeout: intent === "photo_intake" ? "120 seconds" : "30 seconds",
             },
-            async () => {
+            async (stepCtx) => {
+              // OPE-1262 — a retry re-runs the whole handler, including any slow
+              // optional call inside it, and nothing recorded that it happened:
+              // three OCR calls for one photo were only reconstructable from
+              // timestamps. Name every repeat, so "more than one call" always
+              // comes with its reason.
+              const attempt = stepCtx?.attempt ?? 1;
+              if (attempt > 1) {
+                await logError(this.env.DB, {
+                  level: "warn",
+                  source: SOURCE,
+                  message: `dispatch retry: attempt ${attempt} for intent=${intent} re-runs the handler`,
+                  sessionId,
+                  context: { messageRowId, intent, attempt },
+                });
+              }
               const db = getDb(this.env.DB);
               const rows = await db
                 .select()
@@ -799,6 +915,40 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           sessionId,
           context: { messageRowId, intent, error: caughtError },
         });
+        // OPE-1262 — a photo we hold must still be answered, and must stay
+        // recoverable. The hold notice does both: the sender learns how to name
+        // the fair, and `reply_kind='photo-intake-unresolved'` makes the row a
+        // held parent for the reply→resolve path. Its own step, so a replay
+        // returns the cached params rather than re-reading the row.
+        if (intent === "photo_intake") {
+          try {
+            const fallback = await step.do(
+              "dispatch-failed/photo-hold",
+              {
+                retries: { limit: 2, delay: "5 seconds", backoff: "constant" },
+                timeout: "10 seconds",
+              },
+              async () => {
+                const [row] = await getDb(this.env.DB)
+                  .select()
+                  .from(inboundEmails)
+                  .where(eq(inboundEmails.id, messageRowId))
+                  .limit(1);
+                return row ? photoIntakeFailureReply(row) : null;
+              }
+            );
+            if (fallback) result = { ...fallback, status: "replied" };
+          } catch (fallbackErr) {
+            // Degrades to the old behaviour (no reply) — logged, never thrown.
+            await logError(this.env.DB, {
+              source: SOURCE,
+              message: "photo dispatch failed and the hold-notice fallback failed too",
+              error: fallbackErr,
+              sessionId,
+              context: { messageRowId, intent },
+            });
+          }
+        }
       }
 
       // OPE-832 — defect-candidate detection.
@@ -1030,6 +1180,164 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       };
     }
 
+    // OPE-1330 — record a promoter contact when the sender IS a promoter's
+    // contact_email, is replying to mail we sent that promoter, or writes from
+    // that promoter's own website domain. Builds the record only: nothing
+    // sends, blocks or routes on it, so a failure here is logged and never
+    // touches the email's own handling. Records its step for every email (the
+    // heartbeat's evidence). A promoter match that captured nothing for a
+    // reason that is not by design is logged as a warning (the 10-14 shape).
+    try {
+      const capture = await step.do(
+        "promoter-contacts/capture",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => capturePromoterContacts(getDb(this.env.DB), messageRowId, sessionId)
+      );
+      if (captureNeedsWarning(capture)) {
+        await logError(this.env.DB, {
+          level: "warn",
+          source: SOURCE,
+          message: "promoter-contacts/capture: matched a promoter but captured no contact",
+          sessionId,
+          context: { messageRowId, outcome: capture.outcome, notCaptured: capture.notCaptured },
+        });
+      }
+    } catch (err) {
+      await logError(this.env.DB, {
+        source: SOURCE,
+        message: "promoter-contacts/capture failed; no contact recorded",
+        sessionId,
+        error: err,
+        context: { messageRowId },
+      });
+    }
+
+    // OPE-1509 — an organizer's answer to an outreach ask moves the ask to
+    // `replied` here, without anyone calling link_promoter_reply. Same matcher
+    // as the tool; never confirms, never writes an event, never sends. Its own
+    // failure is logged and never touches the email's handling.
+    try {
+      await step.do(
+        "promoter-outreach/link-reply",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => {
+          const r = await linkOutreachReplies(getDb(this.env.DB), {
+            inboundEmailId: messageRowId,
+            apply: true,
+            actorUserId: null,
+            via: "capture",
+          });
+          return {
+            linked: r.linked,
+            verdict: (r.results[0]?.verdict as string | undefined) ?? null,
+          };
+        }
+      );
+    } catch (err) {
+      await logError(this.env.DB, {
+        source: SOURCE,
+        message: "promoter-outreach/link-reply failed; ask left as it was",
+        sessionId,
+        error: err,
+        context: { messageRowId },
+      });
+    }
+
+    // OPE-1264 — a newsletter never draws a single-event ack. Classified BEFORE
+    // dispatch now (OPE-1286, see `newsletter/classify` above); for a newsletter
+    // the lane does not own, the submit pipeline still ran, and this keeps its
+    // `no-url` / `unfetchable-url` / `ok-*` from going out. Its own reply copy
+    // is gated on John (OPE-1264 STOP), so until then: no reply rather than a
+    // wrong one.
+    if (newsletter.isNewsletter && result.replyKind !== null && !result.suppressReply) {
+      await logError(this.env.DB, {
+        level: "info",
+        source: SOURCE,
+        message: `reply suppressed: promoter newsletter (OPE-1264), was ${result.replyKind}`,
+        sessionId,
+        context: { messageRowId, replyKind: result.replyKind, basis: newsletter.basis },
+      });
+      result = { ...result, suppressReply: true };
+    }
+    // OPE-1285 — itemize the newsletter and dispose of each dated item against
+    // our events: corroborating citations, date discrepancies, and a recorded
+    // list. Additive only (no event is edited or created), so it runs beside
+    // the submit pipeline in shadow mode. Its own failure costs the itemizing,
+    // never the email — the step records it and the workflow carries on.
+    if (newsletter.isNewsletter) {
+      let itemized: "ok" | "skipped" | "failed" = "failed";
+      try {
+        const itemize = await step.do(
+          "newsletter/itemize",
+          { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "3 minutes" },
+          async () => processNewsletter(getDb(this.env.DB), this.env, messageRowId, sessionId)
+        );
+        itemized = itemize.status;
+      } catch (err) {
+        await logError(this.env.DB, {
+          source: SOURCE,
+          message: "newsletter/itemize step failed (OPE-1285)",
+          sessionId,
+          error: err,
+          context: { messageRowId },
+        });
+      }
+      // OPE-1286 — once the lane owns the email, its unmatched items become
+      // PENDING candidates. Its own step, after the item list is persisted, and
+      // idempotent per item, so a retry never creates twice. A `skipped`
+      // itemize (already itemized: a replay) still runs it, which is how a
+      // replay of a partly-processed email finishes the job.
+      // `laneDone` is the candidates step's own verdict, so an itemize that
+      // skipped for want of a body or a model reads as NOT done, not as done.
+      let laneDone = false;
+      if (newsletterLane && itemized !== "failed") {
+        try {
+          const made = await step.do(
+            "newsletter/candidates",
+            {
+              retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+              timeout: "5 minutes",
+            },
+            async () =>
+              createNewsletterCandidates(getDb(this.env.DB), this.env, messageRowId, sessionId)
+          );
+          laneDone = made.status === "ok" && !made.counts.failed;
+        } catch (err) {
+          await logError(this.env.DB, {
+            source: SOURCE,
+            message: "newsletter/candidates step failed (OPE-1286)",
+            sessionId,
+            error: err,
+            context: { messageRowId },
+          });
+        }
+      }
+      if (newsletterLane) {
+        if (!laneDone) {
+          // The submit pipeline did not run on this email, so an incomplete
+          // lane must not be a silent drop: flag it for a person. Its
+          // items_json stays NULL, or the failed items carry their outcome, so
+          // the row says what is missing.
+          await step.do(
+            "newsletter/lane-failed-flag",
+            {
+              retries: { limit: 2, delay: "5 seconds", backoff: "constant" },
+              timeout: "10 seconds",
+            },
+            async () => {
+              await getDb(this.env.DB)
+                .update(inboundEmails)
+                .set({ flaggedForReview: 1 })
+                .where(eq(inboundEmails.id, messageRowId));
+            }
+          );
+        } else if (result.status === "held") {
+          // OPE-1265 parked lists@ issues for this lane. It has run: no longer held.
+          result = { ...result, status: "replied" };
+        }
+      }
+    }
+
     // OPE-1148 item 6 — no ack for a zero-confidence `unclear`. Read from the
     // row (the routed `intent` here is the ADDRESS route, not the classifier's
     // verdict), and in a step so a replay reuses the decision.
@@ -1144,6 +1452,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 // headers, because the sender's client may thread on either.
                 inReplyTo: inboundEmails.inReplyTo,
                 emailReferences: inboundEmails.emailReferences,
+                // OPE-954 — a replayed row sends nothing (heldSendReason).
+                repliesSuppressedReason: inboundEmails.repliesSuppressedReason,
               })
               .from(inboundEmails)
               .where(eq(inboundEmails.id, messageRowId))
@@ -1403,7 +1713,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // vanished with no row is indistinguishable from one that was never
             // composed, and this whole ticket exists because a send path was
             // invisible.
-            if (!isAutoReplyEnabled(this.env)) {
+            // OPE-954 — the same gate also holds a row whose replies are
+            // suppressed (a replay); the ledger names whichever reason applies.
+            const heldReason = heldSendReason(
+              rows[0],
+              isAutoReplyEnabled(this.env),
+              AUTO_REPLY_HELD_REASON
+            );
+            if (heldReason) {
               await ledgerEmailSend(db, {
                 messageId: `reply-${messageRowId}`,
                 recipient: msg.to,
@@ -1411,13 +1728,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 subject: msg.subject,
                 status: "stubbed",
                 provider: "stub",
-                error: AUTO_REPLY_HELD_REASON,
+                error: heldReason,
                 inboundEmailId: messageRowId,
                 bodyHtml: msg.html,
                 bodyText: msg.text,
               });
               console.warn(
-                `[workflow:send-reply] auto-reply held (disabled) inbound=${messageRowId} kind=${replyKind}`
+                `[workflow:send-reply] auto-reply held (${heldReason}) inbound=${messageRowId} kind=${replyKind}`
               );
               return;
             }
@@ -1530,7 +1847,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       //
       // A real decision still produces its tailored reply, which is the entire
       // reason the pause exists.
-      if (decision !== null) {
+      const disposition = decisionDisposition(decision);
+      if (disposition === "dismissed") {
+        // OPE-1251 — the operator dismissed it: no reply, an honest status.
+        // The dismiss tool wrote the audit row before delivering the event.
+        result = { ...result, status: "dismissed" };
+      } else if (decision !== null) {
         const decisionKind = decisionToReplyKind(intent, decision);
         try {
           await step.do(
@@ -1556,6 +1878,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                   fromAddress: inboundEmails.fromAddress,
                   subject: inboundEmails.subject,
                   messageId: inboundEmails.messageId,
+                  // OPE-954 — a replayed row sends nothing (heldSendReason).
+                  repliesSuppressedReason: inboundEmails.repliesSuppressedReason,
                 })
                 .from(inboundEmails)
                 .where(eq(inboundEmails.id, messageRowId))
@@ -1588,7 +1912,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
 
               // Same gate as the ack path (OPE-626), and held mail is
               // LEDGERED rather than dropped for the same reason.
-              if (!isAutoReplyEnabled(this.env)) {
+              const decisionHeld = heldSendReason(
+                rows[0],
+                isAutoReplyEnabled(this.env),
+                AUTO_REPLY_HELD_REASON
+              );
+              if (decisionHeld) {
                 await ledgerEmailSend(db, {
                   messageId: ledgerKey,
                   recipient: msg.to,
@@ -1596,7 +1925,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                   subject: msg.subject,
                   status: "stubbed",
                   provider: "stub",
-                  error: AUTO_REPLY_HELD_REASON,
+                  error: decisionHeld,
                   inboundEmailId: messageRowId,
                   bodyHtml: msg.html,
                   bodyText: msg.text,
@@ -1661,9 +1990,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // both-paths-failed cohort. Phase 2 will replace this with actual
     // PDF text extraction.
     let inferredFetchMethod: "standard" | "browser-rendering" | "failed" | "pdf_unsupported" | null;
-    if (caughtError && caughtError.startsWith("fetch-pdf:")) {
+    const caughtToken = caughtError ? pipelineErrorMessage(caughtError) : null;
+    if (caughtToken && caughtToken.startsWith("fetch-pdf:")) {
       inferredFetchMethod = "pdf_unsupported";
-    } else if (caughtError && caughtError.startsWith("fetch-")) {
+    } else if (caughtToken && caughtToken.startsWith("fetch-")) {
       inferredFetchMethod = "failed";
     } else {
       inferredFetchMethod = result.fetchMethod ?? null;
@@ -1763,6 +2093,15 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             timeout: "10 seconds",
           },
           async () => {
+            // OPE-954 — a replay emails no one, operator included: the
+            // "a person is owed a reply" alarm would be about a message that
+            // was already handled the first time round.
+            const [flag] = await getDb(this.env.DB)
+              .select({ repliesSuppressedReason: inboundEmails.repliesSuppressedReason })
+              .from(inboundEmails)
+              .where(eq(inboundEmails.id, messageRowId))
+              .limit(1);
+            if (heldSendReason(flag, true, "")) return;
             const to = this.env.ALERT_EMAIL_TECHNICAL;
             if (!to || !this.env.EMAIL_JOBS) {
               await logError(this.env.DB, {
@@ -1849,6 +2188,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // attributing an organizer's packet to whoever passed it along.
             originalSenderAddress: inboundEmails.originalSenderAddress,
             originalSenderAuth: inboundEmails.originalSenderAuth,
+            // OPE-1505 — arrival time anchors the text match's "upcoming". Raw
+            // unix SECONDS, not a Date: a step result must survive replay
+            // serialization as the same value.
+            receivedAtSec: sql<number>`${inboundEmails.receivedAt}`,
           })
           .from(inboundEmails)
           .where(eq(inboundEmails.id, messageRowId))
@@ -2309,6 +2652,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // signature-only or bare-URL body still gets `no-url` (OPE-457/OPE-537).
     const classifierSkipped = rowSnapshot.classifiedSubIntent == null;
     if (noUrlOrFreeText) {
+      // OPE-1505 — which listed event is this email about, read from its text
+      // alone? Runs on EVERY no-URL submission, before and independent of the
+      // AI extraction, and records its candidates either way (Ask 5). On
+      // 01ad5525 the extraction timed out and no match was ever attempted.
+      const textMatch = await this.textMatchStep(step, instanceId, messageRowId, rowSnapshot);
       // Track whether we actually attempted prose extraction so the
       // fallback reply distinguishes "tried, didn't extract enough" from
       // "nothing to try." Drives `no-url-prose-failed` vs `no-url` below.
@@ -2330,46 +2678,161 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // fall back to the prose-failed reply rather than send a confusing
         // partial result. The minimum-fields gate inside the workflow
         // (name + (startDate OR venueName)) catches near-empty outputs.
-        try {
-          const extracted = await step.do(
-            "submit/free-text-extract",
-            {
-              retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-              timeout: "30 seconds",
-            },
+        //
+        // OPE-1057 rework — this branch used to swallow its failure in a bare
+        // `catch {}` and write nothing, so "ran and failed" was indistinguishable
+        // from "never ran". Inbound 01ad5525 (2026-10-14, a forwarded Grange
+        // craft fair, classifier `free_text` 0.9) DID reach this step: the
+        // extract route logged a 20000 ms Workers AI timeout for its 1,470-char
+        // prose, the deterministic salvage found no name, the route failed
+        // closed, and the reply was `no-url-prose-failed` — with no record of
+        // why. Every attempt now writes one `submit/free-text-extract` row
+        // carrying the outcome and the failure token.
+        //
+        // A Workers AI TIMEOUT gets exactly one more attempt. In prod (2026-10-
+        // 03 → 10-15) the same ~1,000-char content took 8.4 s on one call and
+        // timed out at 20 s on the call before it: the timeout is tail latency,
+        // not a content problem, so a second draw usually answers. Any other
+        // failure (zero events, 4xx, network) is not retried — a retry cannot
+        // change it. `submitFreeTextExtract` throws NonRetryableError, so the
+        // step's own `retries` never fires; the retry is a separately named,
+        // deterministic step.
+        const proseForExtract = submissionProseText(
+          rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "",
+          subject
+        );
+        const extractStepOpts = {
+          retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+          timeout: EXTRACT_STEP_TIMEOUT,
+        } as const;
+        let extracted: import("../email-handlers/submit.js").SubmitExtractResult | null = null;
+        let extractError: unknown = null;
+        let attempts = 0;
+        for (const label of FREE_TEXT_EXTRACT_STEP_LABELS) {
+          attempts++;
+          try {
             // OPE-174 #2 — full body (not the 500-char excerpt) so a forwarded
             // submission's event details below the fold are extractable.
-            () =>
-              submitFreeTextExtract(
-                this.env,
-                submissionProseText(
-                  rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "",
-                  subject
-                )
-              )
-          );
-          const hasMinFields =
-            !!extracted.event.name && (!!extracted.event.startDate || !!extracted.event.venueName);
-          if (hasMinFields) {
-            return await this.submitExtractedEvent(
-              step,
-              extracted,
-              subject,
-              rowSnapshot.fromAddress,
-              rowSnapshot.attachmentCount > 0,
-              null, // no fetch happened on free-text path
-              messageRowId,
-              true, // OPE-185 — drafted from body prose → ok-low-body-extract reply
-              // OPE-465 — the body IS the source on this path.
-              [rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""]
+            extracted = await step.do(label, extractStepOpts, () =>
+              submitFreeTextExtract(this.env, proseForExtract)
             );
+            extractError = null;
+            break;
+          } catch (e) {
+            extractError = e;
+            if (classifyExtractFailure(e) !== "ai-timeout") break;
           }
-        } catch {
-          // Workers AI extract failed on prose — fall through to the
-          // prose-failed reply (closes GH #244's wrong-template path).
-          // The inbound_emails row still exists for admin triage via
-          // /admin/inbound-emails.
         }
+        const hasMinFields =
+          !!extracted &&
+          !!extracted.event.name &&
+          (!!extracted.event.startDate || !!extracted.event.venueName);
+        await recordWorkflowStep(getDb(this.env.DB), {
+          instanceId,
+          workflowName: "inbound-email",
+          inboundEmailId: messageRowId,
+          stepName: "submit/free-text-extract",
+          status: hasMinFields ? "ok" : "failed",
+          detail: {
+            gate: isFreeText ? "classifier_free_text" : "classifier_skipped",
+            outcome: hasMinFields
+              ? "drafted"
+              : extracted
+                ? "insufficient-fields"
+                : "extract-failed",
+            attempts,
+            prose_chars: proseForExtract.length,
+            ...(extracted
+              ? {
+                  events_returned: extracted.totalEventsDetected ?? 1,
+                  has_name: !!extracted.event.name,
+                  has_start_date: !!extracted.event.startDate,
+                  has_venue: !!extracted.event.venueName,
+                }
+              : {
+                  fail_reason: classifyExtractFailure(extractError),
+                  error: pipelineErrorMessage(extractError).slice(0, 300),
+                }),
+          },
+        }).catch(() => {});
+        if (extracted && hasMinFields) {
+          return await this.submitExtractedEvent(
+            step,
+            extracted,
+            subject,
+            rowSnapshot.fromAddress,
+            rowSnapshot.attachmentCount > 0,
+            null, // no fetch happened on free-text path
+            messageRowId,
+            true, // OPE-185 — drafted from body prose → ok-low-body-extract reply
+            // OPE-465 — the body IS the source on this path.
+            [rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""]
+          );
+        }
+        // Not enough to draft — fall through to the prose-failed reply (closes
+        // GH #244's wrong-template path). The row stays for /admin triage.
+        //
+        // OPE-1505 — but if the TEXT named an event we list, the email is about
+        // that listing, and its content is not lost: hand the match to
+        // enrich-on-match (staging only, never writes `events`) and flag the row
+        // so a human sees an organizer email the extractor could not read.
+        if (textMatch?.outcome === "matched" && textMatch.matched) {
+          // OPE-1506 — the extraction failed, so the only fields this email
+          // can contribute are the organizer's own visitor sentences, read
+          // deterministically (verbatim by construction) from the body.
+          const textMatchEvent: Record<string, unknown> = {
+            ...((extracted?.event ?? {}) as unknown as Record<string, unknown>),
+          };
+          if (!textMatchEvent.visitorFacts) {
+            textMatchEvent.visitorFacts = findVisitorFacts(proseForExtract);
+          }
+          await this.stageEnrichBestEffort(step, "submit/text-match-enrich", {
+            existingEventId: textMatch.matched.id,
+            url: null,
+            event: textMatchEvent,
+            matchType: "text_match",
+            path: "text-match",
+            inboundEmailId: messageRowId,
+            fromAddress: rowSnapshot.fromAddress,
+          });
+          try {
+            await step.do(
+              "submit/text-match-flag",
+              { retries: { limit: 2, delay: "5 seconds", backoff: "constant" } },
+              async () => {
+                // SET only — never clears an operator's own flag.
+                await getDb(this.env.DB)
+                  .update(inboundEmails)
+                  .set({ flaggedForReview: 1 })
+                  .where(eq(inboundEmails.id, messageRowId));
+                return { flagged: true };
+              }
+            );
+          } catch (e) {
+            // Fail-soft, like the staging above: a flag hiccup must not cost
+            // the sender their reply.
+            await logError(getDb(this.env.DB), {
+              source: "mcp:workflow:text-match-flag",
+              message: "text-match review flag failed",
+              error: e,
+            }).catch(() => {});
+          }
+        }
+      } else {
+        // The decline is recorded too, under the same step name, so every run
+        // that enters this branch leaves exactly one row — the heartbeat probe
+        // `free-text-extract-record` counts on it (a skip is evidence, OPE-501).
+        await recordWorkflowStep(getDb(this.env.DB), {
+          instanceId,
+          workflowName: "inbound-email",
+          inboundEmailId: messageRowId,
+          stepName: "submit/free-text-extract",
+          status: "skipped",
+          detail: {
+            reason: !hasBodyText ? "no_prose_substance" : "classifier_chose_other",
+            classified_sub_intent: rowSnapshot.classifiedSubIntent,
+          },
+        }).catch(() => {});
       }
       // OPE-453 — this branch is reached when there is no URL **or** when the
       // classifier said `free_text` (the GH #244 override, which deliberately
@@ -2412,7 +2875,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
           timeout: "30 seconds",
         },
-        () => submitFetch(this.env, url)
+        () => submitFetch(this.env, url, { sender: rowSnapshot.fromAddress })
       );
     } catch (fetchErr) {
       // OPE-193 — before bouncing to body-extract, for a known share/redirect
@@ -2440,7 +2903,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 retries: { limit: 2, delay: "5 seconds", backoff: "exponential" },
                 timeout: "30 seconds",
               },
-              () => submitFetch(this.env, resolvedUrl)
+              () => submitFetch(this.env, resolvedUrl, { sender: rowSnapshot.fromAddress })
             );
           }
         } catch {
@@ -2492,7 +2955,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               "submit/fetch-fail-body-extract",
               {
                 retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-                timeout: "30 seconds",
+                timeout: EXTRACT_STEP_TIMEOUT,
               },
               () => submitFreeTextExtract(this.env, rawBody)
             );
@@ -2527,41 +2990,15 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
 
     // K7.4 (analyst, 2026-05-31): persist what we're about to send to the
-    // AI extractor BEFORE the AI call, so we can tell what the AI saw
-    // even when extraction fails. drizzle/0094 added the three columns —
-    // content_length_chars + content_sha256_first16 cluster identical
-    // pages on /admin/source-quality so the operator can see "this URL's
-    // extracted content has failed 12 times with the same hash."
-    // Wrapped in try/catch INSIDE the step body so a transient D1 hiccup
-    // on the audit write doesn't fail the whole pipeline — telemetry is
-    // not load-bearing. Per [[feedback_workflow_cosmetic_steps_failsoft]].
-    await step.do(
+    // AI extractor BEFORE the AI call, so we can tell what the AI saw even
+    // when extraction fails. OPE-1408 — shared with both fan-outs via
+    // persistExtractContextStep; this path alone owning the writer is why it
+    // went silent once OPE-537 routed bare-URL email into the fan-out.
+    await this.persistExtractContextStep(
+      step,
       "submit/persist-extract-context",
-      { retries: { limit: 1, delay: "2 seconds", backoff: "constant" }, timeout: "5 seconds" },
-      async () => {
-        try {
-          const enc = new TextEncoder().encode(fetched.content);
-          const hashBuf = await crypto.subtle.digest("SHA-256", enc);
-          const hashHex = Array.from(new Uint8Array(hashBuf))
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join("")
-            .slice(0, 16);
-          const db = getDb(this.env.DB);
-          await db
-            .update(inboundEmails)
-            .set({
-              contentLengthChars: fetched.content.length,
-              contentSha256First16: hashHex,
-            })
-            .where(eq(inboundEmails.id, messageRowId));
-        } catch (err) {
-          await logError(getDb(this.env.DB), {
-            source: "mcp:workflow:persist-extract-context",
-            message: "extract-context persist failed",
-            error: err,
-          });
-        }
-      }
+      fetched.content,
+      messageRowId
     );
 
     // K1 (analyst, 2026-05-29 PM): when AI extraction on the fetched URL
@@ -2586,7 +3023,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         "submit/ai-extract",
         // limit:1 — audit doc found Workers AI load-timeouts don't recover
         // on tight retries; submitExtract throws NonRetryableError anyway.
-        { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "30 seconds" },
+        {
+          retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+          timeout: EXTRACT_STEP_TIMEOUT,
+        },
         () => submitExtract(this.env, fetched, rowSnapshot.bodyTextExcerpt ?? "")
       );
     } catch (e) {
@@ -2617,18 +3057,27 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         }
       );
 
-      const isZeroEvents =
-        e instanceof NonRetryableError &&
-        typeof e.message === "string" &&
-        e.message.startsWith("extract-upstream: zero-events");
+      // OPE-1316 — not `instanceof NonRetryableError` + `startsWith`: neither
+      // survives the step boundary, so this fallback never fired.
+      const isZeroEvents = isZeroEventsFailure(e);
       const bodyText = rowSnapshot.bodyTextExcerpt;
       if (!isZeroEvents || !bodyText || bodyText.trim().length === 0) throw e;
       extracted = await step.do(
         "submit/free-text-fallback",
-        { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "30 seconds" },
+        {
+          retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+          timeout: EXTRACT_STEP_TIMEOUT,
+        },
         () => submitFreeTextExtract(this.env, bodyText)
       );
     }
+
+    await this.flagIfInsecureTransport(
+      step,
+      fetched,
+      messageRowId,
+      "submit/flag-insecure-transport"
+    );
 
     return await this.submitExtractedEvent(
       step,
@@ -2642,6 +3091,36 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // OPE-465 — the page we fetched AND the email body. Both are sources the
       // extractor was given, so a value stated in either is grounded.
       [fetched.content, rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""]
+    );
+  }
+
+  /**
+   * OPE-424 — a page read over plain HTTP is LOWER-CONFIDENCE (John's ruling
+   * 2026-09-30). The fetcher now tries HTTPS first and falls back to HTTP only
+   * when the origin has no working TLS — which is common on volunteer-run
+   * organizer sites. The transport is unauthenticated, so whatever was
+   * extracted from it goes to the operator review queue rather than being
+   * trusted like a TLS fetch. Only ever SETS the flag, same rule as the
+   * `thin` extraction path in mark-done.
+   */
+  private async flagIfInsecureTransport(
+    step: WorkflowStep,
+    fetched: SubmitFetchResult | null | undefined,
+    messageRowId: string,
+    label: string
+  ): Promise<void> {
+    if (fetched?.transport !== "http") return;
+    await step.do(
+      label,
+      { retries: { limit: 2, delay: "5 seconds", backoff: "constant" } },
+      async () => {
+        const db = getDb(this.env.DB);
+        await db
+          .update(inboundEmails)
+          .set({ flaggedForReview: 1 })
+          .where(eq(inboundEmails.id, messageRowId));
+        return { flagged: true, url: fetched.url };
+      }
     );
   }
 
@@ -2696,6 +3175,19 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         fetchMethod,
         messageRowId,
         sourceTexts
+      );
+    }
+    // OPE-1253 — the email lane's floor, checked BEFORE dedup: a dateless
+    // candidate cannot be deduped, and a link label is not an event.
+    const refusal = refusalForCandidate(extracted, sourceTexts);
+    if (refusal) {
+      await recordCandidateRefusal(this.env, extracted, sourceTexts, messageRowId, refusal);
+      return await this.refusedCandidatesResult(
+        subject,
+        extracted.url || null,
+        hasAttachments,
+        [{ name: extracted.event.name ?? "", reason: refusal }],
+        messageRowId
       );
     }
     // Duplicate-check before insert. Two-stage (exact source_url, then
@@ -2813,73 +3305,22 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         );
 
         // OPE-175 — enrich-on-match, STAGED FOR REVIEW (John's call 2026-07-13:
-        // fill-empty only, land PENDING). When a submission dedups to an existing
-        // event, capture the fields the email could FILL that are currently EMPTY
-        // on that event (image_url, source_url, description) and flag the inbound
-        // row for operator review — WITHOUT mutating the live (usually APPROVED)
-        // event. The operator applies the fills by hand from /admin/inbound-emails.
-        // Fill-empty-only: a populated field is never proposed, so curated data is
-        // untouchable. Distinct from the tier-audit's `dedup.would_enrich`
-        // observation above (which fires on source-tier promotion, not empty
-        // fields). Failsoft — a hiccup here must not block the already-exists reply.
+        // fill-empty only, land PENDING). Never mutates the live (usually
+        // APPROVED) event; the operator applies fills by hand from
+        // /admin/inbound-emails. Distinct from the tier-audit's
+        // `dedup.would_enrich` observation above. OPE-1152 widened the scope and
+        // made a stage-nothing match record itself (enrich-proposal.ts). Failsoft
+        // — a hiccup here must not block the already-exists reply.
         if (dedup.existingEventId) {
-          const existingEventId = dedup.existingEventId;
-          await step.do(
-            "submit/enrich-proposal",
-            {
-              retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
-              timeout: "5 seconds",
-            },
-            async () => {
-              try {
-                const db = getDb(this.env.DB);
-                const [existing] = await db
-                  .select({
-                    imageUrl: events.imageUrl,
-                    sourceUrl: events.sourceUrl,
-                    description: events.description,
-                  })
-                  .from(events)
-                  .where(eq(events.id, existingEventId))
-                  .limit(1);
-                if (!existing) return;
-                const proposals = computeFillEmptyProposals(existing, {
-                  imageUrl: extracted.event.imageUrl,
-                  sourceUrl: extracted.url,
-                  description: extracted.event.description,
-                });
-                if (Object.keys(proposals).length === 0) return;
-
-                await db.insert(adminActions).values({
-                  action: "dedup.enrich_proposed",
-                  actorUserId: null,
-                  targetType: "event",
-                  targetId: existingEventId,
-                  payloadJson: JSON.stringify({
-                    proposals,
-                    matchType: dedup.matchType ?? "exact_url",
-                    source: extracted.url || null,
-                    inboundEmailId: messageRowId,
-                    fromAddress,
-                  }),
-                  createdAt: new Date(),
-                });
-                // Surface the row in the /admin/inbound-emails review queue so an
-                // operator sees "matched + has fillable data" rather than a silent
-                // already-exists. SET only — never clears an operator's own flag.
-                await db
-                  .update(inboundEmails)
-                  .set({ flaggedForReview: 1 })
-                  .where(eq(inboundEmails.id, messageRowId));
-              } catch (err) {
-                await logError(getDb(this.env.DB), {
-                  source: "mcp:workflow:enrich-proposal",
-                  message: "dedup enrich-proposal capture failed",
-                  error: err,
-                });
-              }
-            }
-          );
+          await this.stageEnrichBestEffort(step, "submit/enrich-proposal", {
+            existingEventId: dedup.existingEventId,
+            url: extracted.url,
+            event: extracted.event as unknown as Record<string, unknown>,
+            matchType: dedup.matchType ?? "exact_url",
+            path: "single-high",
+            inboundEmailId: messageRowId,
+            fromAddress,
+          });
         }
 
         return {
@@ -3029,6 +3470,130 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
    * deferred. fetchMethod is forwarded so /admin/source-quality keeps
    * accurate path attribution across the fanned-out events.
    */
+  /**
+   * OPE-1253 — every candidate this message produced was refused by the email
+   * lane's floor (no start_date after grounding, or a platform link label as
+   * its name). No row is created; the disposition is recorded on the inbound
+   * row (`extract_fail_reason`) and logged, so it is never a silent drop. The
+   * reply is the existing no-URL-family copy — no new wording.
+   */
+  /**
+   * OPE-1505 — the deterministic text match for a no-URL submission, as one
+   * workflow step plus one `submit/text-match` step row naming the outcome,
+   * the searched words and the top three candidates with their scores. The
+   * row is written whatever the outcome, so "matched", "ambiguous" and "never
+   * ran" are three different facts in the record.
+   *
+   * Fail-soft: a matcher error is recorded and returns null — matching is an
+   * aid, and must never cost a submission its reply.
+   */
+  private async textMatchStep(
+    step: WorkflowStep,
+    instanceId: string,
+    messageRowId: string,
+    row: {
+      subject: string | null;
+      bodyText: string | null;
+      bodyTextExcerpt: string | null;
+      receivedAtSec?: number | null;
+    }
+  ): Promise<TextMatchResult | null> {
+    let result: TextMatchResult | null = null;
+    let error: string | null = null;
+    try {
+      result = await step.do(
+        "submit/text-match",
+        { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "20 seconds" },
+        async () =>
+          await matchEventFromText(getDb(this.env.DB), {
+            subject: row.subject,
+            bodyText: row.bodyText ?? row.bodyTextExcerpt ?? null,
+            receivedAt: row.receivedAtSec ?? Math.floor(Date.now() / 1000),
+          })
+      );
+    } catch (e) {
+      error = pipelineErrorMessage(e).slice(0, 300);
+    }
+    await recordWorkflowStep(getDb(this.env.DB), {
+      instanceId,
+      workflowName: "inbound-email",
+      inboundEmailId: messageRowId,
+      stepName: "submit/text-match",
+      // `ok` = the matcher RAN; whether it matched is `detail.outcome`. A no-match
+      // is a healthy run, and a probe counting runs must not read it as silence.
+      status: error ? "failed" : "ok",
+      detail: result
+        ? {
+            outcome: result.outcome,
+            matched_event_id: result.matched?.id ?? null,
+            searched: result.searched,
+            candidates: result.candidates.map((c) => ({
+              id: c.id,
+              name: c.name,
+              start: c.startDate,
+              score: c.score,
+              eligible: c.eligible,
+              reasons: c.reasons,
+            })),
+          }
+        : { outcome: "error", error },
+    }).catch(() => {});
+    return result;
+  }
+
+  /**
+   * OPE-1152 — enrich-on-match for ONE matched submission, from ANY match
+   * branch. Before this, the stager was reachable only from the single-event
+   * HIGH branch: the fan-out, multi-source and multi-URL dedup hits pushed an
+   * `already-exists` bullet and moved on, so organizer content arriving on
+   * those paths was discarded with no record. Every dedup-hit site now routes
+   * through here. Staging only — `stageEnrichOnMatch` never writes `events`.
+   * Fail-soft: a staging failure is logged and never fails the submission.
+   */
+  private async stageEnrichBestEffort(
+    step: WorkflowStep,
+    label: string,
+    input: StageEnrichInput
+  ): Promise<void> {
+    await step.do(
+      label,
+      { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+      async () => {
+        try {
+          await stageEnrichOnMatch(getDb(this.env.DB), input);
+        } catch (err) {
+          await logError(getDb(this.env.DB), {
+            source: "mcp:workflow:enrich-proposal",
+            message: "dedup enrich-proposal capture failed",
+            error: err,
+            context: { path: input.path, existingEventId: input.existingEventId },
+          });
+        }
+      }
+    );
+  }
+
+  private async refusedCandidatesResult(
+    subject: string,
+    url: string | null,
+    hasAttachments: boolean,
+    refused: Array<{ name: string; reason: EmailCandidateRefusal }>,
+    messageRowId: string
+  ): Promise<HandlerResult> {
+    await logError(getDb(this.env.DB), {
+      level: "warn",
+      source: "mcp:workflow:candidate-refused",
+      message: `email produced no event: ${refused.length} candidate(s) refused`,
+      context: { messageRowId, refused },
+    });
+    return {
+      replyKind: chooseNoUrlReplyKind({ parsedUrl: url, attemptedProse: !url || hasAttachments }),
+      replyParams: { subject, hasAttachments, ...(url ? { attemptedUrl: url } : {}) },
+      status: "replied",
+      extractFailReason: refusedReason(refused),
+    };
+  }
+
   private async runMultiEventFanOut(
     step: WorkflowStep,
     extracted: import("../email-handlers/submit.js").SubmitExtractResult,
@@ -3055,6 +3620,15 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
     const outcomes: EventOutcome[] = [];
     let firstCreatedEventId: string | null = null;
+    // OPE-1253 — candidates the floor refused; never rows.
+    const refused: Array<{ name: string; reason: EmailCandidateRefusal }> = [];
+
+    // OPE-1332 — one year-less day expression cannot be two dates. Inbound
+    // 64b2e93f ("our 2027 Lilac Festival … planning meeting on October 15th")
+    // fanned out to 2026-10-15 AND an invented 2027-10-15. Refuse the twin whose
+    // year is not the one the phrase implies, through the same refusal channel
+    // as OPE-1253 (fault + admin_actions + inbound flagged), never silently.
+    const splitLosers = new Set(yearlessDaySplitLosers(extracted.events, sourceTexts, new Date()));
 
     for (let i = 0; i < extracted.events.length; i++) {
       const childEvent = extracted.events[i];
@@ -3067,6 +3641,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         event: childEvent,
       };
       const labelPrefix = `submit/fanout[${i}]`;
+      const childRefusal: EmailCandidateRefusal | null = splitLosers.has(i)
+        ? "over-split-year"
+        : refusalForCandidate(perEvent, sourceTexts);
+      if (childRefusal) {
+        await recordCandidateRefusal(this.env, perEvent, sourceTexts, messageRowId, childRefusal);
+        refused.push({ name: childEvent.name ?? "", reason: childRefusal });
+        continue;
+      }
       try {
         const dedup = await step.do(
           `${labelPrefix}/check-duplicate`,
@@ -3081,6 +3663,18 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             eventStatus: dedup.existingEventStatus,
             eventId: dedup.existingEventId,
           });
+          // OPE-1152 — this branch used to drop the child's content silently.
+          if (dedup.existingEventId) {
+            await this.stageEnrichBestEffort(step, `${labelPrefix}/enrich-proposal`, {
+              existingEventId: dedup.existingEventId,
+              url: perEvent.url,
+              event: childEvent as unknown as Record<string, unknown>,
+              matchType: dedup.matchType ?? null,
+              path: "fanout",
+              inboundEmailId: messageRowId,
+              fromAddress,
+            });
+          }
           continue;
         }
         const submitted = await step.do(
@@ -3120,6 +3714,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           error: err,
         });
       }
+    }
+
+    if (outcomes.length === 0 && refused.length > 0) {
+      return await this.refusedCandidatesResult(
+        subject,
+        extracted.url || null,
+        hasAttachments,
+        refused,
+        messageRowId
+      );
     }
 
     // Reuse the ok-multi template's bullet shape. Each event becomes one
@@ -3454,6 +4058,40 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
    * writes extract_fail_reason when the result carries one, so it never clobbers
    * this value.
    */
+  /**
+   * K7.4 / OPE-1408 — write content_length_chars + content_sha256_first16 for
+   * the page about to go to `submitExtract`. Every URL fetch that feeds
+   * `submitExtract` in this file calls this (pinned by
+   * __tests__/extract-context-wiring-ope1408.test.ts).
+   *
+   * Wrapped in try/catch INSIDE the step body so a transient D1 hiccup on the
+   * audit write doesn't fail the pipeline — telemetry is not load-bearing.
+   * Per [[feedback_workflow_cosmetic_steps_failsoft]].
+   */
+  private async persistExtractContextStep(
+    step: WorkflowStep,
+    stepName: string,
+    content: string,
+    messageRowId: string
+  ): Promise<void> {
+    await step.do(
+      stepName,
+      { retries: { limit: 1, delay: "2 seconds", backoff: "constant" }, timeout: "5 seconds" },
+      async () => {
+        try {
+          await persistExtractContext(getDb(this.env.DB), messageRowId, content);
+        } catch (err) {
+          await logError(getDb(this.env.DB), {
+            source: "mcp:workflow:persist-extract-context",
+            message: "extract-context persist failed",
+            error: err,
+            context: { messageRowId, stepName },
+          });
+        }
+      }
+    );
+  }
+
   private async recordExtractFailReason(messageRowId: string, reason: string): Promise<void> {
     try {
       await getDb(this.env.DB)
@@ -3551,6 +4189,81 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         failure_sample: outcome.failures,
         dedup_strategy: "strict",
       },
+    }).catch(() => {
+      // Cosmetic-failsoft, like every other observability write here.
+    });
+  }
+
+  /**
+   * OPE-1139 — an exhibitor announcing ITSELF ("visit us at Booth 510"). Runs
+   * beside every roster-link call site: created, keeper and fan-out. An existing
+   * vendor matched exactly is linked live; anyone else is staged in
+   * `exhibitor_proposals` (John, option A). Never creates a vendor.
+   *
+   * Best-effort like the roster lane: the event already exists. The step record
+   * is written on every evaluation, declines included, so "the lane ran and
+   * declined" and "the lane never ran" stay distinguishable.
+   */
+  private async recordSelfAnnouncementBestEffort(
+    step: WorkflowStep,
+    labelPrefix: string,
+    instanceId: string,
+    messageRowId: string,
+    eventId: string,
+    emailBody: string | null
+  ): Promise<void> {
+    let outcome: Awaited<ReturnType<typeof recordSelfAnnouncedExhibitor>> | { kind: "error" };
+    try {
+      outcome = await step.do(
+        `${labelPrefix}/self-announcement`,
+        { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "30 seconds" },
+        async () => {
+          const [fwd] = await getDb(this.env.DB)
+            .select({
+              address: inboundEmails.originalSenderAddress,
+              auth: inboundEmails.originalSenderAuth,
+              aligned: inboundEmails.originalSenderDomainAligned,
+            })
+            .from(inboundEmails)
+            .where(eq(inboundEmails.id, messageRowId))
+            .limit(1);
+          return recordSelfAnnouncedExhibitor(
+            getDb(this.env.DB),
+            {
+              eventId,
+              inboundEmailId: messageRowId,
+              originalSenderAddress: fwd?.address ?? null,
+              originalSenderAuth: fwd?.auth ?? null,
+              originalSenderDomainAligned: fwd?.aligned ?? null,
+              body: emailBody,
+            },
+            { actorUserId: null, recomputeVendorCompleteness, logEnrichment }
+          );
+        }
+      );
+    } catch (err) {
+      outcome = { kind: "error" };
+      await logError(getDb(this.env.DB), {
+        message: "self-announced exhibitor step failed; event unaffected",
+        error: err,
+        source: SOURCE,
+        context: { eventId, messageRowId },
+      });
+    }
+    await recordWorkflowStep(getDb(this.env.DB), {
+      instanceId,
+      workflowName: "inbound-email",
+      inboundEmailId: messageRowId,
+      stepName: "self-announced-exhibitor",
+      status:
+        outcome.kind === "linked" ||
+        outcome.kind === "already_linked" ||
+        outcome.kind === "proposed"
+          ? "ok"
+          : outcome.kind === "error"
+            ? "failed"
+            : "skipped",
+      detail: { event_id: eventId, ...outcome },
     }).catch(() => {
       // Cosmetic-failsoft, like every other observability write here.
     });
@@ -3885,6 +4598,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     interface SourceFailure {
       url: string;
       kind: "fetch-failed" | "extract-failed";
+      /** OPE-1249 — extract-failed only: why, in the extract_fail_reason vocabulary. */
+      reason?: string;
     }
     const candidates: SourceCandidate[] = [];
     const sourceFailures: SourceFailure[] = [];
@@ -3893,6 +4608,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // page the submitter pointed at is the authority, and crawling every URL
     // in a multi-link email would multiply the fetch budget by the link count.
     let primaryPage: CrawlFetchResult | null = null;
+    // OPE-1408 — see the persist-extract-context call in Phase A.
+    let extractContextPersisted = false;
 
     // ── Phase A: extract candidate events from every source. ──────────
     for (let i = 0; i < sources.length; i++) {
@@ -3910,7 +4627,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             stepLabel,
             {
               retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-              timeout: "30 seconds",
+              timeout: EXTRACT_STEP_TIMEOUT,
             },
             () => submitFreeTextExtract(this.env, source.text)
           );
@@ -3944,7 +4661,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
             timeout: "30 seconds",
           },
-          () => submitFetch(this.env, source.url)
+          () => submitFetch(this.env, source.url, { sender: fromAddress })
         );
       } catch {
         // OPE-277 — parity with the single-source path (OPE-193): the multi-source
@@ -3972,7 +4689,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                   retries: { limit: 2, delay: "5 seconds", backoff: "exponential" },
                   timeout: "30 seconds",
                 },
-                () => submitFetch(this.env, resolvedUrl)
+                () => submitFetch(this.env, resolvedUrl, { sender: fromAddress })
               );
             }
           } catch {
@@ -3985,18 +4702,35 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         }
         fetched = recovered;
       }
+      // OPE-1408 — the row holds ONE extract context, so the first URL source
+      // that fetched writes it (the page the submitter pointed at first).
+      if (!extractContextPersisted) {
+        extractContextPersisted = true;
+        await this.persistExtractContextStep(
+          step,
+          `${labelPrefix}/persist-extract-context`,
+          fetched.content,
+          messageRowId
+        );
+      }
       try {
         const extracted = await step.do(
           `${labelPrefix}/ai-extract`,
           {
             retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-            timeout: "30 seconds",
+            timeout: EXTRACT_STEP_TIMEOUT,
           },
           () => submitExtract(this.env, fetched, emailBody)
         );
         // `new Date()` rather than a step-recorded timestamp: the fetch just
         // completed in this same Phase-A iteration, and Workflow step retries
         // re-run the fetch, so the wall clock here IS when the bytes arrived.
+        await this.flagIfInsecureTransport(
+          step,
+          fetched,
+          messageRowId,
+          `${labelPrefix}/flag-insecure-transport`
+        );
         const fetchedAt = new Date();
         if (!primaryPage && extracted.events.length > 0) {
           primaryPage = {
@@ -4017,8 +4751,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             snapshot: { title: fetched.title, text: fetched.content, fetchedAt },
           });
         }
-      } catch {
-        sourceFailures.push({ url: source.url, kind: "extract-failed" });
+      } catch (err) {
+        sourceFailures.push({
+          url: source.url,
+          kind: "extract-failed",
+          reason: classifyExtractFailure(err),
+        });
       }
     }
 
@@ -4049,7 +4787,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                   retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
                   timeout: "30 seconds",
                 },
-                () => submitFetch(this.env, url)
+                () => submitFetch(this.env, url, { sender: fromAddress })
               );
               return {
                 url: page.url,
@@ -4179,7 +4917,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           "submit/subject/extract",
           {
             retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-            timeout: "30 seconds",
+            timeout: EXTRACT_STEP_TIMEOUT,
           },
           () => submitFreeTextExtract(this.env, subject)
         );
@@ -4381,7 +5119,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // OPE-465 — this candidate's own captured page text, plus the email
         // body. The snapshot is page-level, which is all the grounding check
         // needs: it asks whether the text SAYS the value, not where in it.
-        [only.snapshot?.text ?? "", emailBody ?? ""]
+        candidateSourceTexts(only, emailBody)
       );
       // OPE-68 — when this lone candidate came from a poster/PDF and a NEW
       // event was created (ok / ok-medium / ok-low), set the poster as its
@@ -4456,6 +5194,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             only.crawlRosterSource.url
           );
         }
+        // OPE-1139 — the sender announcing itself as an exhibitor. Every site
+        // that links a roster also runs this (OPE-847's three-site discipline).
+        await this.recordSelfAnnouncementBestEffort(
+          step,
+          "submit/single",
+          instanceId,
+          messageRowId,
+          res.resultingEventId,
+          emailBody
+        );
       }
       if (only.mergedSiblings?.length && res.resultingEventId) {
         await this.recordMergedSiblingCitations(
@@ -4518,12 +5266,29 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // OPE-68 — how many CREATED events came from an OCR'd attachment. Threaded
     // into the reply so copy can reflect "we read your poster/PDF".
     let attachmentEventsCreated = 0;
+    // OPE-1253 — candidates the floor refused; never rows.
+    const refusedCandidates: Array<{
+      name: string;
+      reason: EmailCandidateRefusal;
+      url?: string;
+    }> = [];
 
     for (let i = 0; i < candidates.length; i++) {
       const cand = candidates[i];
       const { extracted } = cand;
       const sourceUrl = extracted.url; // "" for body-sourced events
       const labelPrefix = `submit/source-event[${i}]`;
+      const candTexts = candidateSourceTexts(cand, emailBody);
+      const candRefusal = refusalForCandidate(extracted, candTexts);
+      if (candRefusal) {
+        await recordCandidateRefusal(this.env, extracted, candTexts, messageRowId, candRefusal);
+        refusedCandidates.push({
+          name: extracted.event.name ?? "",
+          reason: candRefusal,
+          url: sourceUrl || undefined,
+        });
+        continue;
+      }
       try {
         const dedup = await step.do(
           `${labelPrefix}/check-duplicate`,
@@ -4542,6 +5307,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           // source's provenance to the keeper before dropping the candidate, so
           // "another source also cited these fields" is preserved. Best-effort.
           if (dedup.existingEventId) {
+            // OPE-1152 — stage what the candidate carried that the keeper lacks.
+            await this.stageEnrichBestEffort(step, `${labelPrefix}/enrich-proposal`, {
+              existingEventId: dedup.existingEventId,
+              url: sourceUrl,
+              event: extracted.event as unknown as Record<string, unknown>,
+              matchType: dedup.matchType ?? null,
+              path: "multi-source",
+              inboundEmailId: messageRowId,
+              fromAddress,
+            });
             await this.recordCitationsBestEffort(
               step,
               `${labelPrefix}/cite-keeper`,
@@ -4577,6 +5352,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 cand.crawlRosterSource.url
               );
             }
+            await this.recordSelfAnnouncementBestEffort(
+              step,
+              `${labelPrefix}/keeper`,
+              instanceId,
+              messageRowId,
+              dedup.existingEventId,
+              emailBody
+            );
             if (cand.mergedSiblings?.length) {
               await this.recordMergedSiblingCitations(
                 step,
@@ -4602,8 +5385,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             submitEvent(this.env, extracted, fromAddress, {
               inboundEmailId: messageRowId,
               dedupWasBlind: dedup.dedupWasBlind === true,
-              // OPE-465 — this candidate's own page text, plus the email body.
-              sourceTexts: [cand.snapshot?.text ?? "", emailBody ?? ""],
+              // OPE-465 — this candidate's own text (its page, or its poster's
+              // OCR text — OPE-1253), plus the email body.
+              sourceTexts: candidateSourceTexts(cand, emailBody),
             })
         );
         outcomes.push({
@@ -4649,6 +5433,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             cand.crawlRosterSource.url
           );
         }
+        await this.recordSelfAnnouncementBestEffort(
+          step,
+          labelPrefix,
+          instanceId,
+          messageRowId,
+          submitted.id,
+          emailBody
+        );
         if (cand.mergedSiblings?.length) {
           await this.recordMergedSiblingCitations(
             step,
@@ -4678,7 +5470,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // Per-candidate failure degrades gracefully — the others still run.
         const msg = err instanceof Error ? err.message : String(err);
         outcomes.push({
-          kind: msg.startsWith("submit-") ? "submit-failed" : "extract-failed",
+          kind: pipelineErrorMessage(err).startsWith("submit-")
+            ? "submit-failed"
+            : "extract-failed",
           eventName: extracted.event.name || `Event ${i + 1}`,
           url: sourceUrl || undefined,
         });
@@ -4697,20 +5491,42 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // prevents a nonsensical "Thanks for submitting 0 events" reply — fall back
     // to the soft prose/no-url ask instead.
     if (outcomes.length === 0) {
+      // OPE-1249 — this guard is ALSO reached when URL sources were tried and
+      // every one failed (their failures are folded into `outcomes` only below).
+      // It used to answer as if no URL existed: `no-url` (downgraded at send by
+      // the OPE-453 invariant, log ce709c3e) and `no-fetchable-url`, even when
+      // the page fetched fine and only the AI extraction timed out
+      // (c8f9d623, Harvest on the Harbor). Now:
+      //   - a URL was tried → `unfetchable-url`, chosen here rather than by the
+      //     downgrade (same copy, same attemptedUrl line);
+      //   - it fetched and extraction failed → that failure's own reason
+      //     (`ai-timeout`, `zero-events`, …), never `no-fetchable-url`;
+      //   - it never fetched → `no-fetchable-url`, as before.
+      // OPE-1253 — a refused URL candidate was tried too (46d46ee0's tracker).
+      const triedUrl = sourceFailures[0]?.url ?? refusedCandidates.find((r) => r.url)?.url ?? null;
+      const extractFailure = sourceFailures.find((f) => f.kind === "extract-failed");
       return {
-        // OPE-453 — no URL reached this path at all (every candidate failed
-        // cleanUrl or none existed), so the no-URL family is honest here. Routed
-        // through the shared chooser anyway so there is ONE place that decides.
         replyKind: chooseNoUrlReplyKind({
-          parsedUrl: null,
+          parsedUrl: triedUrl,
           attemptedProse: hasAttachments,
         }),
-        replyParams: { subject, hasAttachments },
+        replyParams: { subject, hasAttachments, ...(triedUrl ? { attemptedUrl: triedUrl } : {}) },
         status: "replied",
         // OPE-174 — same telemetry gap as the single-source no-URL branch: record
         // the bounce reason. `prose-extract-failed` covers the attachments-OCR'd-
         // to-noise case (the reply_kind already folds attachments into that bucket).
-        extractFailReason: hasAttachments ? "prose-extract-failed" : "no-fetchable-url",
+        // OPE-1253 first: a refused candidate is the most specific account —
+        // its source fetched and extracted, and the floor declined the result.
+        extractFailReason:
+          refusedCandidates.length > 0
+            ? refusedReason(refusedCandidates)
+            : extractFailure
+              ? (extractFailure.reason ?? "other")
+              : triedUrl
+                ? "no-fetchable-url"
+                : hasAttachments
+                  ? "prose-extract-failed"
+                  : "no-fetchable-url",
       };
     }
 
@@ -4820,6 +5636,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
     const outcomes: UrlOutcome[] = [];
     let firstCreatedEventId: string | null = null;
+    // OPE-1408 — see the persist-extract-context call in the loop.
+    let extractContextPersisted = false;
 
     for (let i = 0; i < urls.length; i++) {
       const url = urls[i];
@@ -4833,19 +5651,55 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
             timeout: "30 seconds",
           },
-          () => submitFetch(this.env, url)
+          () => submitFetch(this.env, url, { sender: fromAddress })
         );
+        await this.flagIfInsecureTransport(
+          step,
+          fetched,
+          messageRowId,
+          `${labelPrefix}/flag-insecure-transport`
+        );
+        // OPE-1408 — first URL that fetched writes the row's extract context.
+        if (!extractContextPersisted) {
+          extractContextPersisted = true;
+          await this.persistExtractContextStep(
+            step,
+            `${labelPrefix}/persist-extract-context`,
+            fetched.content,
+            messageRowId
+          );
+        }
         const extracted = await step.do(
           `${labelPrefix}/ai-extract`,
           {
             retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-            timeout: "30 seconds",
+            timeout: EXTRACT_STEP_TIMEOUT,
           },
           // D1 (analyst, 2026-05-29 PM): same body-priority pass-through
           // as the single-URL path. Email body is plumbed through as
           // the function arg.
           () => submitExtract(this.env, fetched, emailBody)
         );
+        // OPE-1253 — a refused candidate is reported like an extraction that
+        // yielded nothing usable (existing bullet copy), never written.
+        const urlRefusal = refusalForCandidate(extracted, [fetched.content]);
+        if (urlRefusal) {
+          await recordCandidateRefusal(
+            this.env,
+            extracted,
+            [fetched.content],
+            messageRowId,
+            urlRefusal
+          );
+          outcomes.push({ url, kind: "extract-failed" });
+          await logError(getDb(this.env.DB), {
+            level: "warn",
+            source: "mcp:workflow:candidate-refused",
+            message: `multi-url candidate refused: ${urlRefusal}`,
+            context: { messageRowId, url, name: extracted.event.name ?? null },
+          });
+          continue;
+        }
         const dedup = await step.do(
           `${labelPrefix}/check-duplicate`,
           { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
@@ -4860,6 +5714,18 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             eventStatus: dedup.existingEventStatus,
             eventId: dedup.existingEventId,
           });
+          // OPE-1152 — this branch used to drop the page's content silently.
+          if (dedup.existingEventId) {
+            await this.stageEnrichBestEffort(step, `${labelPrefix}/enrich-proposal`, {
+              existingEventId: dedup.existingEventId,
+              url: extracted.url,
+              event: extracted.event as unknown as Record<string, unknown>,
+              matchType: dedup.matchType ?? null,
+              path: "multi-url",
+              inboundEmailId: messageRowId,
+              fromAddress,
+            });
+          }
           continue;
         }
         const submitted = await step.do(
@@ -4888,7 +5754,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // Per-URL failures degrade gracefully — the other URLs still run.
         // Map common prefixes to outcome kinds; everything else is a
         // generic extract-failed for the sender-facing list.
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = pipelineErrorMessage(err);
         const kind = msg.startsWith("fetch-")
           ? "fetch-failed"
           : msg.startsWith("submit-")

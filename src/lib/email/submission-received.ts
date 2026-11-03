@@ -40,10 +40,11 @@
  * touched here — flagged to John on the issue instead.)
  */
 
-import { and, eq, gte } from "drizzle-orm";
+import { and, eq, gte, lt, or, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
-import { emailSendLedger, emailSuppressionList } from "@/lib/db/schema";
+import { emailSendLedger, emailSuppressionList, events } from "@/lib/db/schema";
+import { sanitizeEmailSubject } from "@takemetothefair/utils";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -154,7 +155,42 @@ Thanks for helping us keep Maine and New England's fairs and festivals listed.
 
 — The Meet Me at the Fair team`;
 
-  return { subject: `We received your event — ${input.eventName}`, text };
+  // OPE-1392 (TPL-2) — the event name is submitter-supplied.
+  return { subject: sanitizeEmailSubject(`We received your event — ${input.eventName}`), text };
+}
+
+/**
+ * OPE-412 — is there an event from this address, created inside the window,
+ * that sorts BEFORE this one? Reads committed rows, so it is race-free where
+ * the ledger is not. Exported for tests.
+ */
+export async function hasEarlierSubmissionInWindow(
+  db: Db,
+  email: string,
+  eventId: string,
+  since: Date
+): Promise<boolean> {
+  const [self] = await db
+    .select({ createdAt: events.createdAt })
+    .from(events)
+    .where(eq(events.id, eventId))
+    .limit(1);
+  if (!self?.createdAt) return false;
+  const [earlier] = await db
+    .select({ id: events.id })
+    .from(events)
+    .where(
+      and(
+        sql`lower(${events.suggesterEmail}) = ${email}`,
+        gte(events.createdAt, since),
+        or(
+          lt(events.createdAt, self.createdAt),
+          and(eq(events.createdAt, self.createdAt), lt(events.id, eventId))
+        )
+      )
+    )
+    .limit(1);
+  return earlier !== undefined;
 }
 
 /**
@@ -201,6 +237,17 @@ export async function sendSubmissionReceivedAck(
       )
       .limit(MAX_ACKS_PER_WINDOW + 1);
     if (recent.length >= MAX_ACKS_PER_WINDOW) return "skipped:rate-limited";
+
+    // OPE-412 (rework 2026-10-04) — the ledger alone cannot see a BURST. The
+    // ack is only enqueued here; its ledger row is written by the queue
+    // consumer seconds later, so N submissions inside that gap all read zero
+    // and all send (09-21: three acks to one address in 5s). The submissions'
+    // own EVENT rows are committed before this runs, so they can: only the
+    // earliest submission from this address in the window acks. Ties on the
+    // second-resolution timestamp break on id, so exactly one wins.
+    if (await hasEarlierSubmissionInWindow(db, email, input.eventId, since)) {
+      return "skipped:rate-limited";
+    }
 
     if (!env.EMAIL_JOBS) return "error:queue-missing";
 

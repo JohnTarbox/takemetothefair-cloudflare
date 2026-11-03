@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { isPastUnconfirmed, PAST_UNCONFIRMED_LABEL } from "@/lib/events/past-unconfirmed";
 import Link from "next/link";
+import { safeHref } from "@takemetothefair/utils";
 import { MonthCalendar, type CalendarDay } from "@johntarbox/calendar-grid";
 import { useSearchParams } from "next/navigation";
 import {
@@ -32,11 +33,13 @@ import { formatDateRange } from "@/lib/utils";
 import { haversineDistance } from "@/lib/geo";
 import { trackFilterApplied } from "@/lib/analytics";
 import { parseJsonArray } from "@/types";
-import type { events, venues, promoters } from "@/lib/db/schema";
+import type { venues, promoters } from "@/lib/db/schema";
+import type { PublicEvent } from "@/lib/db/event-join-projection";
 
 type CalendarViewType = "day" | "week" | "month" | "year" | "schedule";
 
-type Event = typeof events.$inferSelect;
+// OPE-1387 — public allow-listed shape; never the full events row.
+type Event = PublicEvent;
 type Venue = typeof venues.$inferSelect;
 type Promoter = typeof promoters.$inferSelect;
 
@@ -1600,9 +1603,9 @@ export function EventsView({
                         >
                           View
                         </Link>
-                        {event.ticketUrl && (
+                        {safeHref(event.ticketUrl) && (
                           <a
-                            href={event.ticketUrl}
+                            href={safeHref(event.ticketUrl)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-muted-foreground hover:text-muted-foreground"

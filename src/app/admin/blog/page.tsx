@@ -19,6 +19,7 @@
  * the sort query param).
  */
 
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,8 +33,6 @@ import {
   type PostRow,
   type ClusterRollupRow,
 } from "@/lib/admin/blog-coverage";
-
-export const revalidate = 300;
 
 type SortKey =
   | "title"
@@ -265,6 +264,7 @@ export default async function BlogCoveragePage({
 }: {
   searchParams: Promise<{ sort?: string; csort?: string }>;
 }) {
+  await requireAdmin();
   const sp = await searchParams;
   const sort: SortKey = SORT_VALUES.includes(sp.sort as SortKey)
     ? (sp.sort as SortKey)

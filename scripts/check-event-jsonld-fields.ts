@@ -77,6 +77,7 @@ require_("Place(null,'ME').name is the state name", asObj(placeFallback).name ==
 const series = buildEventSeriesJsonLd(
   {
     canonicalSlug: "skowhegan-state-fair",
+    editionMode: null,
     name: "Skowhegan State Fair",
     venue: VENUE,
     startDateIso: "2026-08-13",
@@ -135,6 +136,7 @@ function warn_(label: string, cond: unknown) {
 const richSeries = buildEventSeriesJsonLd(
   {
     canonicalSlug: "skowhegan-state-fair",
+    editionMode: null,
     name: "Skowhegan State Fair",
     venue: VENUE,
     startDateIso: "2026-08-13",
@@ -183,13 +185,19 @@ richSubs.forEach((sub, i) => {
 // NOTHING rather than an invalid Event/EventSeries node. A dated series still
 // emits, dropping only its dateless subEvents.
 const datelessSeries = buildEventSeriesJsonLd(
-  { canonicalSlug: "tbd-fair", name: "TBD Fair", venue: VENUE },
+  { canonicalSlug: "tbd-fair", editionMode: null, name: "TBD Fair", venue: VENUE },
   [{ slug: "tbd-fair", year: null, name: "TBD Fair", venue: VENUE }]
 );
 require_("EventSeries suppressed when no startDate (OPE-32)", datelessSeries === null);
 
 const mixedSeries = buildEventSeriesJsonLd(
-  { canonicalSlug: "mixed-fair", name: "Mixed Fair", venue: VENUE, startDateIso: "2026-08-13" },
+  {
+    canonicalSlug: "mixed-fair",
+    editionMode: null,
+    name: "Mixed Fair",
+    venue: VENUE,
+    startDateIso: "2026-08-13",
+  },
   [
     {
       slug: "mixed-2026",

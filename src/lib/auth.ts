@@ -15,6 +15,7 @@ import { logError } from "./logger";
 import { authorizeCredentials } from "@/lib/auth/credentials-authorize";
 import { signInThrottle, type SignInThrottleResult } from "@/lib/auth/signin-throttle";
 import { getBurstLimiter } from "@/lib/burst-limiter";
+import { refreshSessionToken, type CurrentUserState } from "@/lib/auth/session-refresh";
 
 type UserRole = "ADMIN" | "PROMOTER" | "VENDOR" | "USER";
 
@@ -50,7 +51,30 @@ declare module "next-auth/jwt" {
     id: string;
     role: UserRole;
     roles: UserRole[];
+    /** OPE-1366 — users.session_version at sign-in; absent on pre-OPE-1366 tokens (= 0). */
+    sessionVersion?: number;
+    /** OPE-1366 — epoch ms of the last D1 re-check of role / session_version. */
+    checkedAt?: number;
   }
+}
+
+/** OPE-1366 — the jwt callback's periodic re-read (role, roles, session_version). */
+async function loadCurrentUserState(userId: string): Promise<CurrentUserState | null> {
+  const db = getCloudflareDb();
+  const row = await db.query.users.findFirst({
+    where: eq(schema.users.id, userId),
+    columns: { role: true, sessionVersion: true },
+  });
+  if (!row) return null;
+  const grants = await db
+    .select({ role: schema.userRoles.role })
+    .from(schema.userRoles)
+    .where(eq(schema.userRoles.userId, userId));
+  return {
+    role: row.role as UserRole,
+    roles: grants.map((g) => g.role as UserRole),
+    sessionVersion: row.sessionVersion,
+  };
 }
 
 /**
@@ -281,16 +305,35 @@ function createAuthConfig(): NextAuthConfig {
         return true;
       },
       async jwt({ token, user }: { token: JWT; user?: User }) {
+        if (!(user && user.id)) {
+          // OPE-1366 — every later request: re-read role + session_version at
+          // most every 5 min; null ends the session (see session-refresh.ts).
+          return refreshSessionToken(token, {
+            now: Date.now,
+            loadUser: loadCurrentUserState,
+            logFailure: (error, userId) =>
+              logError(getCloudflareDb(), {
+                level: "warn",
+                source: "lib/auth.ts:jwt-refresh",
+                message: "session re-check failed; keeping the existing token (fail-open)",
+                error,
+                context: { userId },
+              }),
+          });
+        }
         if (user && user.id) {
           token.id = user.id;
+          // OPE-1366 — stamp the session generation this token belongs to.
+          const db = getCloudflareDb();
+          const dbUser = await db.query.users.findFirst({
+            where: eq(schema.users.id, user.id),
+            columns: { role: true, sessionVersion: true },
+          });
+          token.sessionVersion = dbUser?.sessionVersion ?? 0;
+          token.checkedAt = Date.now();
           if (user.role) {
             token.role = user.role;
           } else {
-            const db = getCloudflareDb();
-            const dbUser = await db.query.users.findFirst({
-              where: eq(schema.users.id, user.id),
-              columns: { role: true },
-            });
             token.role = (dbUser?.role as UserRole) || "USER";
           }
           // Load granted roles from user_roles. Always includes at least

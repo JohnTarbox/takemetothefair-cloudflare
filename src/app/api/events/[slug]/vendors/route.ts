@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventVendors, vendors } from "@/lib/db/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, isNull } from "drizzle-orm";
 import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { logError } from "@/lib/logger";
@@ -50,7 +50,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
       })
       .from(eventVendors)
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-      .where(and(eq(eventVendors.eventId, event.id), isPubliclyVisibleVendorLink()));
+      .where(
+        and(
+          eq(eventVendors.eventId, event.id),
+          isPubliclyVisibleVendorLink(),
+          // OPE-1396 (API6) — same filter the event page applies
+          // (event-detail-data.ts); a deleted vendor's page is 301/410.
+          isNull(vendors.deletedAt)
+        )
+      );
 
     const liveVendors = vendorResults.filter((v): v is typeof v & { id: string } => v.id !== null);
 

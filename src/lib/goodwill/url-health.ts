@@ -58,9 +58,20 @@ export type UrlHealthVerdict =
   | "ok"
   /** 2xx, real HTML, and NOTHING on it says "event". The repurposed-domain case. */
   | "no_event_signal"
+  /**
+   * OPE-1294 — a 200 that is a parked or dead shell: a tiny body with almost no
+   * visible text (a `/lander` JS bounce, "Website Disabled"). See PARKED_*.
+   * OPE-1353 — a JS-app shell or a frame wrapper is NOT parked; see
+   * parkedMarkers() / liveShellKind().
+   */
+  | "parked_page"
   /** Reached the origin, got a non-2xx. */
   | "http_error"
-  /** Never reached the origin: DNS failure, TLS failure, timeout, abort. */
+  /**
+   * Could not SEE the page: DNS failure, TLS failure, timeout, abort — or
+   * (OPE-1350) a 2xx whose body came back empty or failed to read. A transport
+   * failure, never evidence about what the site serves.
+   */
   | "unreachable"
   /**
    * OPE-979 — the page ANNOUNCES the organization is gone: closing its doors,
@@ -76,6 +87,17 @@ export interface UrlHealthInput {
   status: number | null;
   /** Response body. May be null when unreachable. */
   html: string | null;
+  /**
+   * OPE-1350 — set when the response arrived but reading its body threw (the
+   * per-URL abort firing mid-stream, a reset connection). The probe used to
+   * swallow this into `""`, which then read as a 0-byte parked page.
+   */
+  bodyReadError?: string | null;
+  /**
+   * OPE-1353 — where redirects left us (the probe's `res.url`). Optional: only
+   * read for a known parking host, never required.
+   */
+  finalUrl?: string | null;
 }
 
 export interface UrlHealthResult {
@@ -195,7 +217,80 @@ export function visibleText(html: string): string {
  * Parked domains frequently serve a near-empty 200. Treating that as `ok`
  * because it "loaded fine" is the status-code mistake one level up.
  */
-const MIN_MEANINGFUL_TEXT = 200;
+export const MIN_MEANINGFUL_TEXT = 200;
+
+/** OPE-1294 — a parked shell is a 200 under BOTH bounds (see classifyUrlHealth). */
+export const PARKED_MAX_BODY_BYTES = 2048;
+export const PARKED_MAX_VISIBLE_CHARS = 50;
+
+/**
+ * OPE-1353 — POSITIVE evidence that a small 200 is a parking, for-sale or
+ * disabled page. Checked before the shell/frame exemption, so a parking lander
+ * that happens to be built as a JS app or a frame still reads parked.
+ *
+ * Specimens (fixtures/ope1350, as served to our UA on 2026-10-15):
+ *   - norfieldgrange.com, vacationlandent.org — `window.location.href="/lander"`
+ *     (the registrar parking bounce), 114 bytes.
+ *   - capitalquiltersguild.com — a Homestead "Website Disabled" page.
+ * The parking hosts and for-sale phrasing are the common registrar/parking
+ * templates; they are only ever read inside the small-body bound.
+ */
+const LANDER_REDIRECT_RE =
+  /location(?:\.href)?\s*(?:=|\.(?:replace|assign)\s*\()\s*["'](?:https?:\/\/[^"'/]+)?\/lander\b/i;
+const PARKING_HOST_RE =
+  /\b(?:sedoparking\.com|sedo\.com|parkingcrew\.net|bodis\.com|above\.com|dan\.com|afternic\.com|hugedomains\.com|parklogic\.com|domainmarket\.com|undeveloped\.com|parkingpage\.namecheap\.com)\b/i;
+const FOR_SALE_RE =
+  /\b(?:(?:this|the)\s+domain(?:\s+name)?\s+(?:is|may\s+be)\s+for\s+sale|buy\s+this\s+domain|domain\s+is\s+parked|parked\s+free|this\s+domain\s+has\s+(?:been\s+)?expired)\b/i;
+const DISABLED_RE =
+  /\b(?:website\s+disabled|(?:site|website|account)\s+(?:you\s+requested\s+)?(?:has\s+been|is)\s+(?:disabled|suspended)|account\s+suspended)\b/i;
+
+export function parkedMarkers(html: string, finalUrl?: string | null): string[] {
+  const out: string[] = [];
+  if (LANDER_REDIRECT_RE.test(html)) out.push("lander-redirect");
+  if (PARKING_HOST_RE.test(html) || (finalUrl != null && PARKING_HOST_RE.test(finalUrl))) {
+    out.push("parking-host");
+  }
+  const text = `${titleOf(html)} ${visibleText(html)}`;
+  if (FOR_SALE_RE.test(text)) out.push("domain-for-sale");
+  if (DISABLED_RE.test(text)) out.push("site-disabled");
+  return out;
+}
+
+/**
+ * OPE-1353 — a small body that is a LIVE site's wrapper, not a parked one.
+ *
+ *   - `js-app-shell`: an external `<script src>` bundle plus an empty mount
+ *     node (`<div id="root">`, `#app`, `#__next`, `<app-root>` …). madisonct.com
+ *     and wethersfieldchamber.com serve the same 1,018-byte Vite shell
+ *     (`/assets/index-*.js` + `<div id="root">`) and render client-side. It is
+ *     the Clinton shape (OPE-1294) without the inline JS that made Clinton big.
+ *   - `frame-wrapper`: a `<frameset>`/`<frame>` or `<iframe src>` page whose
+ *     content lives at the frame's src — cheshiregrange.org (518 B, frames
+ *     `harvest/grangehome.asp`) and grandesfestas.org (642 B, frames
+ *     santamariacenter.com).
+ *
+ * The frame is NOT followed: the classifier is pure and shared by four sweeps,
+ * and following it would mean a second fetch inside the same 10 s probe budget
+ * plus relative-URL resolution in every caller. The frame src goes into the
+ * detail instead, so an operator can see where the content lives.
+ */
+const SCRIPT_SRC_RE = /<script\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]+/i;
+const MOUNT_NODE_RE =
+  /<(div|main|section)\b[^>]*\bid\s*=\s*["']?(?:root|app|__next|__nuxt|q-app|svelte|main-app)["'\s>][^>]*>\s*<\/\1>|<app-root\b/i;
+const FRAME_SRC_RE = /<i?frame\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)/i;
+
+export function liveShellKind(
+  html: string
+): { kind: "js-app-shell" | "frame-wrapper"; frameSrc: string | null } | null {
+  const frame = FRAME_SRC_RE.exec(html);
+  if (/<frameset\b/i.test(html) || frame) {
+    return { kind: "frame-wrapper", frameSrc: frame ? frame[1].slice(0, 200) : null };
+  }
+  if (SCRIPT_SRC_RE.test(html) && MOUNT_NODE_RE.test(html)) {
+    return { kind: "js-app-shell", frameSrc: null };
+  }
+  return null;
+}
 
 export function classifyUrlHealth(input: UrlHealthInput): UrlHealthResult {
   if (!input.reachedOrigin) {
@@ -221,6 +316,23 @@ export function classifyUrlHealth(input: UrlHealthInput): UrlHealthResult {
     return { verdict: "http_error", signals: [], detail: `HTTP ${status}` };
   }
 
+  // OPE-1350 — a 2xx with NO body is a transport failure, not a parked site.
+  // Specimens (source-agreement sweep, 2026-10-13): thesandwichfair.com and
+  // lebanoncraftfair.com read "200 with a 0-byte body" → `parked_page`, while
+  // serving ~1.5 MB and ~126 KB to curl with our UA, and reading `ok` on every
+  // other sweep that day (lebanoncraftfair: `ok` 13 s later). Every genuinely
+  // parked promoter site serves 114–1,294 bytes of markup; none serves zero.
+  // So this sits BEFORE the parked check, on every path that reaches it.
+  if (input.bodyReadError || (input.html ?? "").trim().length === 0) {
+    return {
+      verdict: "unreachable",
+      signals: [input.bodyReadError ? "body-read-failed" : "empty-body"],
+      detail: input.bodyReadError
+        ? `HTTP ${status} but reading the body failed: ${input.bodyReadError}`.slice(0, 300)
+        : `HTTP ${status} with an empty body (0 visible bytes) — could not see the page`,
+    };
+  }
+
   const html = input.html ?? "";
   const signals: string[] = [];
 
@@ -233,6 +345,61 @@ export function classifyUrlHealth(input: UrlHealthInput): UrlHealthResult {
   if (MONTH_RE.test(text)) signals.push("month-name");
   if (YEAR_RE.test(text)) signals.push("year");
   if (EVENT_LANGUAGE_RE.test(text)) signals.push("event-language");
+
+  // OPE-1294 — a parked or dead shell, told apart from a bot wall by the
+  // RAW BODY SIZE and an exact 200. Measured 2026-10-06 against what each site
+  // serves a normal browser: every genuinely parked or disabled promoter site
+  // answered 200 with 114–1,294 bytes (a `/lander` JS bounce ×2, a 518 B and a
+  // 642 B empty page, two 1,018 B parking templates, "Website Disabled"); the
+  // ~38 LIVE sites that also read "0 chars" from the Worker were a SiteGround
+  // challenge — HTTP **202**, 174 bytes — or a 45–232 KB JS-rendered page.
+  // Visible-text length alone (the rule first scoped) would have flagged all 47
+  // live sites; status 200 + size is what separates them.
+  //
+  // OPE-1353 — size alone over-matched: 4 of the 7 sites it called parked were
+  // live (two JS-app shells, two frame pages; fixtures/ope1350). Inside the
+  // small-body bound, in this order:
+  //   1. a POSITIVE parked marker (lander bounce, parking host, for-sale,
+  //      "Website Disabled") → parked_page, even past the visible-text bound
+  //      (a disabled page's apology can run past 50 chars);
+  //   2. a JS-app shell or frame wrapper → no_event_signal: we saw a live
+  //      site's wrapper, not its content. Not `ok` (no event evidence was
+  //      read), not `unreachable` (that projects as "did not respond", which
+  //      is false). no_event_signal is NOT projected to the queue — where a
+  //      45–232 KB JS-rendered page already lands;
+  //   3. any other tiny near-textless body → parked_page, as before.
+  const bodyBytes = bodyBytesOf(html) ?? Infinity;
+  if (input.status === 200 && bodyBytes < PARKED_MAX_BODY_BYTES) {
+    const markers = parkedMarkers(html, input.finalUrl);
+    if (markers.length > 0) {
+      return {
+        verdict: "parked_page",
+        signals: markers,
+        detail: `200 with a ${bodyBytes}-byte body and ${text.length} chars of visible text; parked/disabled marker: ${markers.join(", ")}`,
+      };
+    }
+    if (signals.length === 0 && text.length < PARKED_MAX_VISIBLE_CHARS) {
+      const shell = liveShellKind(html);
+      if (shell) {
+        return {
+          verdict: "no_event_signal",
+          signals: [shell.kind],
+          detail:
+            shell.kind === "frame-wrapper"
+              ? `200 with a ${bodyBytes}-byte frame page; content lives in the frame${shell.frameSrc ? ` (${shell.frameSrc})` : ""}, not followed`.slice(
+                  0,
+                  300
+                )
+              : `200 with a ${bodyBytes}-byte JS-app shell (script bundle + mount node); content renders client-side`,
+        };
+      }
+      return {
+        verdict: "parked_page",
+        signals: ["parked-shell"],
+        detail: `200 with a ${bodyBytes}-byte body and ${text.length} chars of visible text (parked or disabled site)`,
+      };
+    }
+  }
 
   if (text.length < MIN_MEANINGFUL_TEXT && signals.length === 0) {
     return {
@@ -271,7 +438,12 @@ export function classifyUrlHealth(input: UrlHealthInput): UrlHealthResult {
  * history, not of one look.
  */
 export function isActionable(verdict: UrlHealthVerdict): boolean {
-  return verdict === "no_event_signal" || verdict === "http_error" || verdict === "closure_notice";
+  return (
+    verdict === "no_event_signal" ||
+    verdict === "parked_page" ||
+    verdict === "http_error" ||
+    verdict === "closure_notice"
+  );
 }
 
 /**
@@ -299,4 +471,12 @@ export function samePageOnEveryPath(pages: Array<{ url: string; html: string | n
   if (byPath.size < 2) return false;
   const texts = [...byPath.values()];
   return texts[0].length >= 50 && texts.every((t) => t === texts[0]);
+}
+
+/**
+ * OPE-1294 — UTF-8 byte length of a probe body; null when there was none.
+ * Stored on every url_health_checks row by the promoter and vendor sweeps.
+ */
+export function bodyBytesOf(html: string | null | undefined): number | null {
+  return html == null ? null : new TextEncoder().encode(html).length;
 }

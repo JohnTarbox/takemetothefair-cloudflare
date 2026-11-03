@@ -54,6 +54,7 @@
  *     PROCESSING_STALE_THRESHOLD_SEC) is the proxy.
  */
 
+import { heldSendReason } from "./inbound/replies-suppressed.js";
 import { and, eq, gt, isNull, lt, or, isNotNull, sql } from "drizzle-orm";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
@@ -172,6 +173,7 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
     subject: string | null;
     messageId: string | null;
     parsedUrl: string | null;
+    repliesSuppressedReason: string | null;
   }>;
   try {
     const rawStale = await db
@@ -184,6 +186,8 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
         subject: inboundEmails.subject,
         messageId: inboundEmails.messageId,
         parsedUrl: inboundEmails.parsedUrl,
+        // OPE-954 — a replayed row's give-up notice is held like any reply.
+        repliesSuppressedReason: inboundEmails.repliesSuppressedReason,
       })
       .from(inboundEmails)
       .where(
@@ -213,6 +217,7 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
       subject: r.subject,
       messageId: r.messageId,
       parsedUrl: r.parsedUrl,
+      repliesSuppressedReason: r.repliesSuppressedReason ?? null,
     }));
   } catch (err) {
     await logError(env.DB, {
@@ -378,6 +383,7 @@ async function terminallyFailRow(
     subject: string | null;
     messageId: string | null;
     parsedUrl: string | null;
+    repliesSuppressedReason: string | null;
   }
 ): Promise<void> {
   const errorMsg = `sweep retry cap exceeded (${row.recoveryAttemptN} attempts)`;
@@ -432,7 +438,10 @@ async function terminallyFailRow(
     // 30d at time of writing) but live code — a fix aimed only at
     // `inbound-email.ts` would have left a second bypass behind, which is how
     // this class of defect survives its own fix.
-    if (!isAutoReplyEnabled(env)) {
+    // OPE-954 — and the same gate holds a row whose replies are suppressed
+    // (a replay), so a stuck replay cannot end in a "we couldn't process" email.
+    const heldReason = heldSendReason(row, isAutoReplyEnabled(env), AUTO_REPLY_HELD_REASON);
+    if (heldReason) {
       await ledgerEmailSend(db, {
         messageId: `sweep-exceeded-${row.id}`,
         recipient: msg.to,
@@ -440,7 +449,7 @@ async function terminallyFailRow(
         subject: msg.subject,
         status: "stubbed",
         provider: "stub",
-        error: AUTO_REPLY_HELD_REASON,
+        error: heldReason,
         inboundEmailId: row.id,
         bodyHtml: msg.html,
         bodyText: msg.text,

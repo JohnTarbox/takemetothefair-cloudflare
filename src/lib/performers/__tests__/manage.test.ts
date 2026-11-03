@@ -31,6 +31,8 @@ const SCHEMA_SQL = `
     event_day_id TEXT, performance_start INTEGER, performance_end INTEGER, stage TEXT,
     billing TEXT, status TEXT NOT NULL DEFAULT 'PENDING', source_url TEXT, notes TEXT,
     last_verified_at INTEGER, last_verified_source TEXT,
+    source_title TEXT, source_excerpt TEXT, source_content_hash TEXT, source_fetched_at INTEGER,
+    recheck_state TEXT, recheck_at INTEGER, recheck_note TEXT,
     created_at INTEGER, updated_at INTEGER
   );
   CREATE TABLE performer_slug_history (

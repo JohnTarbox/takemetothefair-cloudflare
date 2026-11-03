@@ -8,6 +8,28 @@ import {
 import { approvePendingDomainMatchClaims } from "@/lib/claims/resolve-claim-in-wizard";
 import { rescoreEvidenceAfterVerification } from "@/lib/claims/claim-evidence";
 import type { Database } from "@/lib/db";
+import { logError } from "@/lib/logger";
+
+/** error_logs `source` for every failure this module swallows (OPE-1374). */
+export const VERIFY_TOKEN_LOG_SOURCE = "email-verify-token";
+
+/**
+ * A claim auto-approval pass failed after the token was consumed. The claim
+ * stays PENDING with no retry, so this row is the only trace (OPE-1374).
+ */
+async function logClaimApprovalFailure(
+  db: ReturnType<typeof getCloudflareDb>,
+  stage: "user-lookup" | "email-match" | "domain-match",
+  userId: string | undefined,
+  error: unknown
+): Promise<void> {
+  await logError(db as unknown as Parameters<typeof logError>[0], {
+    message: `Claim auto-approval (${stage}) failed after email verification; claim stays PENDING`,
+    error,
+    source: VERIFY_TOKEN_LOG_SOURCE,
+    context: { stage, userId: userId ?? null },
+  });
+}
 
 /**
  * Validate a verification token and, if valid, mark the user's email as
@@ -64,35 +86,52 @@ export async function validateAndConsumeVerificationToken(
   // proof rung-1 email-match requires. Auto-approve any PENDING email-match
   // claims this user made at signup (resolveClaimAtSignup deferred them here).
   // Best-effort: a failure must NOT block email verification itself — the claim
-  // simply stays PENDING (recoverable via the evidence flow / re-verify).
-  let approvedClaims: Array<{ entityType: ClaimEntityType; entitySlug: string }> = [];
+  // stays PENDING. NOTHING retries it (the token is consumed above), so each
+  // failure is logged to error_logs with the user id and the pass that threw
+  // (OPE-1374) — it surfaces through the fault ledger instead of vanishing.
+  //
+  // The two passes are independent: a throw in email-match must not skip
+  // domain-match, so each has its own try/catch.
+  const approvedClaims: Array<{ entityType: ClaimEntityType; entitySlug: string }> = [];
+  let userId: string | undefined;
   try {
     const [u] = await db
       .select({ id: users.id })
       .from(users)
       .where(eq(users.email, record.identifier))
       .limit(1);
-    if (u) {
+    userId = u?.id;
+  } catch (error) {
+    await logClaimApprovalFailure(db, "user-lookup", undefined, error);
+  }
+
+  if (userId) {
+    try {
       const res = await approvePendingEmailMatchClaims(
         db as unknown as Database,
-        u.id,
+        userId,
         record.identifier
       );
-      approvedClaims = res.approvedClaims;
-      // OPE-64 — the domain-match analog. Verifying the email PROVES inbox
-      // control at the matched registrable domain, the proof rung-2 requires.
-      // approvePendingDomainMatchClaims RE-VALIDATES the domain match against
-      // the entity's CURRENT website before transferring ownership (the website
-      // could have changed since the wizard recorded PENDING). Best-effort.
+      approvedClaims.push(...res.approvedClaims);
+    } catch (error) {
+      await logClaimApprovalFailure(db, "email-match", userId, error);
+    }
+
+    // OPE-64 — the domain-match analog. Verifying the email PROVES inbox
+    // control at the matched registrable domain, the proof rung-2 requires.
+    // approvePendingDomainMatchClaims RE-VALIDATES the domain match against
+    // the entity's CURRENT website before transferring ownership (the website
+    // could have changed since the wizard recorded PENDING). Best-effort.
+    try {
       const domainRes = await approvePendingDomainMatchClaims(
         db as unknown as Database,
-        u.id,
+        userId,
         record.identifier
       );
-      approvedClaims = [...approvedClaims, ...domainRes.approvedClaims];
+      approvedClaims.push(...domainRes.approvedClaims);
+    } catch (error) {
+      await logClaimApprovalFailure(db, "domain-match", userId, error);
     }
-  } catch {
-    // swallow — verification succeeded; claim approval is retryable out-of-band.
   }
 
   // OPE-237 — re-score the realness evidence now that inbox control is proven.
@@ -109,9 +148,17 @@ export async function validateAndConsumeVerificationToken(
   // fail a verification.
   try {
     await rescoreEvidenceAfterVerification(db, record.identifier);
-  } catch {
-    // swallow — the evidence row keeps its pessimistic score; the reviewer
-    // still sees the (unverified) reason line, which is safe-by-default.
+  } catch (error) {
+    // The evidence row keeps its pessimistic score; the reviewer still sees
+    // the (unverified) reason line, which is safe-by-default. Logged so a
+    // persistent failure is visible (OPE-1374).
+    await logError(db as unknown as Parameters<typeof logError>[0], {
+      message: "Evidence re-score after email verification failed",
+      error,
+      source: VERIFY_TOKEN_LOG_SOURCE,
+      level: "warn",
+      context: { stage: "rescore-evidence", userId: userId ?? null },
+    });
   }
 
   return { ok: true, email: record.identifier, approvedClaims };

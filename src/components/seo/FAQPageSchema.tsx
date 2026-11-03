@@ -1,4 +1,5 @@
 import type { FaqItem } from "@/lib/event-faq";
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 
 /**
  * Emits a Schema.org FAQPage JSON-LD `<script>` block. Renders `null` when
@@ -48,7 +49,7 @@ export function FAQPageSchema({ items }: FAQPageSchemaProps) {
 
   // Strip undefined fields, matching the EventSchema pattern.
   const cleanSchema = JSON.parse(JSON.stringify(schema));
-  const html = JSON.stringify(cleanSchema);
+  const html = safeJsonLd(cleanSchema);
 
   return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: html }} />;
 }

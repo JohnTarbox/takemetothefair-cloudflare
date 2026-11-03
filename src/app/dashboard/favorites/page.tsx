@@ -1,14 +1,14 @@
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Calendar, MapPin, Store, Heart } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { auth } from "@/lib/auth";
+import { requireSession } from "@/lib/require-role";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { userFavorites, events, venues, vendors } from "@/lib/db/schema";
 import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { eq, inArray, desc } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { withPublicStreetAddress } from "@takemetothefair/utils";
 import { PrintButton } from "@/components/print/PrintButton";
 import { PrintEventSheetFooter } from "@/components/print/PrintEventSheetFooter";
 
@@ -71,7 +71,9 @@ async function getFavorites(userId: string) {
       for (let i = 0; i < ids.length; i += BATCH_SIZE) {
         const batch = ids.slice(i, i + BATCH_SIZE);
         const batchResults = await db.select().from(vendors).where(inArray(vendors.id, batch));
-        results.push(...batchResults);
+        // OPE-1398 — any user can favorite any vendor; never carry a hidden
+        // street address into this page.
+        results.push(...batchResults.map((v) => withPublicStreetAddress(v)));
       }
       return results;
     }
@@ -107,11 +109,7 @@ async function getFavorites(userId: string) {
 export const dynamic = "force-dynamic";
 
 export default async function FavoritesPage() {
-  const session = await auth();
-
-  if (!session) {
-    redirect("/login?callbackUrl=/dashboard/favorites");
-  }
+  const session = await requireSession("/dashboard/favorites");
 
   const {
     events: eventsList,

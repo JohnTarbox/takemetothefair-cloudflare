@@ -138,6 +138,12 @@ If you have a moment, could you confirm:
   • Opening and closing times each day
   • Whether you're accepting vendor or crafter applications, and where to apply
 
+And, if you know them — these are the questions visitors ask us most:
+
+  • Where should visitors park?
+  • Is the event wheelchair accessible?
+  • Are pets allowed?
+
 Just reply to this email — whatever you can tell us, we'll put straight onto the listing. There's no cost and nothing to sign up for.${link}
 
 Thank you,
@@ -163,9 +169,12 @@ export function registerSendPromoterEmailTool(
       "Distinct from send_vendor_email: no vendor_id, and NO marketing/unsubscribe",
       "footer. Still honours the suppression list.",
       "",
-      "Gated by PROMOTER_OUTREACH_ENABLED, which ships false — a refused send is",
-      "still RECORDED as a queued attempt so the prose survives and can be drained",
-      "when the flag flips. Refuses a second open ask for the same event.",
+      "Gated by PROMOTER_OUTREACH_ENABLED — ON since 2026-09-23 (#1395, John's GO), so",
+      "sends go out. A weekly research-first lane works the queue (OPE-1345); it records",
+      "each run with record_promoter_outreach_run, and the promoter-outreach-attempts",
+      "heartbeat reads 9 days with neither a run nor an attempt as red. If the flag is",
+      "off, a refused send is still RECORDED as",
+      "a queued attempt so the prose survives. Refuses a second open ask for the same event.",
       "",
       "attempt_id: send an existing QUEUED attempt verbatim — its stored subject,",
       "body and recipient, nothing recomposed — and move it to 'sent'. This is how a",

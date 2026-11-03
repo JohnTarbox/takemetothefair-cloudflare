@@ -42,10 +42,12 @@ const SCHEMA_SQL = `
     completeness_score INTEGER DEFAULT 80,
     start_date INTEGER DEFAULT 1790000000,
     end_date INTEGER,
-    series_id TEXT
+    series_id TEXT,
+    edition_key TEXT
   );
   CREATE TABLE event_series (
     id TEXT PRIMARY KEY,
+    edition_mode TEXT NOT NULL DEFAULT \'annual\',
     canonical_slug TEXT NOT NULL
   );
   -- OPE-1181 — the venue indexability predicate reads these.
@@ -231,6 +233,37 @@ describe("REL5 — pickUrls surfaces unresolved time_to_index_log URLs", () => {
     }
     const urls = await pickUrls(db as never, 4);
     expect(urls.length).toBeLessThanOrEqual(4);
+  });
+});
+
+describe("OPE-1283 — batch size 0 inspects nothing", () => {
+  function seedEveryType() {
+    raw
+      .prepare(
+        `INSERT INTO events (id, slug, status, lifecycle_status) VALUES (?, ?, 'APPROVED', 'SCHEDULED')`
+      )
+      .run("e1", "an-event");
+    raw
+      .prepare(
+        `INSERT INTO venues (id, slug, status, city, state) VALUES (?, ?, 'ACTIVE', 'Skowhegan', 'ME')`
+      )
+      .run("v1", "a-venue");
+    raw.prepare(`INSERT INTO promoters (id, slug) VALUES (?, ?)`).run("p1", "a-promoter");
+    raw
+      .prepare(`INSERT INTO blog_posts (id, slug, status) VALUES (?, ?, 'PUBLISHED')`)
+      .run("b1", "a-post");
+  }
+
+  it("landmark: with entities seeded, a batch of 1 still ships the guaranteed per-type tier", async () => {
+    // The by-design behaviour the 0 case has to opt out of — if this ever
+    // returned [], the test below would pass for the wrong reason.
+    seedEveryType();
+    expect((await pickUrls(db as never, 1)).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("ACCEPTANCE: batchSize 0 returns no URLs even with every type seeded", async () => {
+    seedEveryType();
+    expect(await pickUrls(db as never, 0)).toEqual([]);
   });
 });
 

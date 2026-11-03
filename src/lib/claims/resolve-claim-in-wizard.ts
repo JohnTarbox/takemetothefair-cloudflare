@@ -24,6 +24,7 @@
  * the account email. The website URL is NEVER fetched.
  */
 import { and, eq, isNull } from "drizzle-orm";
+import { recordClaimantAsPromoterContact } from "@/lib/claims/promoter-contact";
 import type { Database } from "@/lib/db";
 import { vendors, promoters, userRoles, entityClaims, adminActions } from "@/lib/db/schema";
 import { unsafeSlug } from "@/lib/utils";
@@ -139,6 +140,13 @@ async function approveNow(
       .update(promoters)
       .set({ userId, claimed: true, claimedAt: now, claimedBy: userId })
       .where(and(eq(promoters.id, entity.id), eq(promoters.claimed, false)));
+    // OPE-1330 — the claimant becomes a validated promoter contact (best-effort).
+    await recordClaimantAsPromoterContact(db, {
+      promoterId: entity.id,
+      userId,
+      via: "wizard",
+      now,
+    });
   }
 
   await db
@@ -429,6 +437,13 @@ export async function approvePendingDomainMatchClaims(
         .update(promoters)
         .set({ userId, claimed: true, claimedAt: now, claimedBy: userId })
         .where(and(eq(promoters.id, claim.entityId), eq(promoters.claimed, false)));
+      // OPE-1330 — the claimant becomes a validated promoter contact (best-effort).
+      await recordClaimantAsPromoterContact(db, {
+        promoterId: claim.entityId,
+        userId,
+        via: "wizard",
+        now,
+      });
     }
     await db
       .insert(userRoles)

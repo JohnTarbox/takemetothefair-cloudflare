@@ -18,6 +18,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { inboundEmails, adminActions, events } from "@/lib/db/schema";
 import { eq, and, asc } from "drizzle-orm";
+import { loadEnrichOnMatch, type EnrichOnMatchEntry } from "@/lib/inbound-enrich-on-match";
 
 /** Must match mcp-server/src/photo/booth-pipeline.ts:BOOTH_PROPOSED_ACTION. */
 const BOOTH_PROPOSED_ACTION = "vendor.photo_proposed";
@@ -162,10 +163,20 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     proposalEvent = e ?? null;
   }
 
+  // OPE-1152 — what enrich-on-match staged (or recorded as dropped) for this
+  // email. Fail-soft: the email is what the operator came for.
+  let enrichOnMatch: EnrichOnMatchEntry[] = [];
+  try {
+    enrichOnMatch = await loadEnrichOnMatch(db, id);
+  } catch {
+    enrichOnMatch = [];
+  }
+
   return NextResponse.json({
     ...row,
     receivedAt: row.receivedAt instanceof Date ? row.receivedAt.toISOString() : row.receivedAt,
     boothProposals,
     proposalEvent,
+    enrichOnMatch,
   });
 }

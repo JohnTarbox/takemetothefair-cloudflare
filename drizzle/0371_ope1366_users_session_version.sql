@@ -1,0 +1,17 @@
+-- OPE-1366 — a per-user session generation counter.
+--
+-- Bumped (session_version = session_version + 1) when a user's credentials or
+-- privileges change in a way that must end the sessions they already hold:
+-- an admin role change (PATCH /api/admin/users/[id]) and a password reset.
+--
+-- Readers:
+--   * web (src/lib/auth.ts jwt callback): the version is stamped into the JWT at
+--     sign-in and re-read from D1 at most every 5 minutes; a mismatch (or a
+--     deleted user) ends the session.
+--   * MCP OAuth (mcp-server/src/oauth/token-exchange.ts): stamped into grant
+--     props at login, re-checked on every refresh; a mismatch revokes the grant.
+--
+-- Additive and backfill-free: every existing row starts at 0, which is also
+-- what a JWT / grant minted before this column existed is treated as carrying,
+-- so no live session is ended by the deploy itself. No-op on an empty DB.
+ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0;

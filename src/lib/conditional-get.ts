@@ -26,6 +26,8 @@
  * behaviour and never see a validator.
  */
 
+import { parseOccurrenceSegment } from "@takemetothefair/utils";
+
 /** Bump when the page template changes in a way that alters HTML for unchanged
  *  data. Without this, a layout-wide edit would ship behind stale validators —
  *  the entity row didn't change, so nothing else would signal the difference. */
@@ -39,7 +41,9 @@ export type ConditionalEntityType =
   | "venue"
   | "promoter"
   | "performer"
-  | "blog";
+  | "blog"
+  /** OPE-1291 — /events/<series-canonical-slug>/<year>; `slug` is the series. */
+  | "event-occurrence";
 
 /**
  * `/events/<slug>` → `{ type: "event", slug }`. Returns null for anything with
@@ -51,8 +55,21 @@ export type ConditionalEntityType =
  */
 export function matchConditionalRoute(
   pathname: string
-): { type: ConditionalEntityType; slug: string } | null {
+): { type: ConditionalEntityType; slug: string; segment?: string } | null {
   const segments = pathname.split("/").filter(Boolean);
+  // OPE-1291 — the series/year occurrence page, /events/<series>/<year>. 406 of
+  // 469 upcoming APPROVED events (87%) are served here, and the two-segment-only
+  // matcher gave none of them a validator. Only a canonical 4-digit year
+  // matches, so /events/<slug>/vendors and /events/maine/<facet> never do.
+  const occ =
+    segments.length === 3 && segments[0] === "events" ? parseOccurrenceSegment(segments[2]) : null;
+  if (occ) {
+    const series = segments[1];
+    if (series.includes(".")) return null;
+    // OPE-1326 — the raw segment (a year OR an edition key), never a year read
+    // out of it: the ETag lookup resolves it with the same rule as the page.
+    return { type: "event-occurrence", slug: series, segment: segments[2] };
+  }
   if (segments.length !== 2) return null;
   const [prefix, slug] = segments;
   const map: Record<string, ConditionalEntityType> = {
@@ -82,10 +99,13 @@ export function matchConditionalRoute(
 export function buildEntityEtag(
   type: ConditionalEntityType,
   slug: string,
-  updatedAt: Date | null
+  updatedAt: Date | null,
+  segment?: string
 ): string {
   const stamp = updatedAt ? Math.floor(updatedAt.getTime() / 1000) : 0;
-  return `W/"${type}-${slug}-${stamp}-v${TEMPLATE_VERSION}"`;
+  // An annual segment is the year's own digits, so "-2026" is byte-identical to
+  // what the numeric year produced before OPE-1326.
+  return `W/"${type}-${slug}${segment === undefined ? "" : `-${segment}`}-${stamp}-v${TEMPLATE_VERSION}"`;
 }
 
 /**

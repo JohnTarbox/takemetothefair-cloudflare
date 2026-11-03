@@ -157,9 +157,10 @@ describe("dispatchKpiAlert — no-op cases", () => {
 });
 
 describe("dispatchKpiAlert — RED transitions", () => {
-  it("always fires for RED regardless of debounce", async () => {
-    MOCK_ENV.SLACK_WEBHOOK_URL_BUSINESS = "https://hooks.slack.com/x";
-    // Even with a recent prior YELLOW in the window, RED must send.
+  it("always fires for a TECHNICAL RED regardless of debounce", async () => {
+    MOCK_ENV.SLACK_WEBHOOK_URL_TECHNICAL = "https://hooks.slack.com/x";
+    // Even with many prior rows in the window, a technical RED must send —
+    // OPE-1394 left the live technical channel's behaviour unchanged.
     const db = makeMockDb({ yellowCountByKpi: { __current: 5 } });
     const fetchSpy = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
       async () => new Response("ok", { status: 200 })
@@ -167,15 +168,55 @@ describe("dispatchKpiAlert — RED transitions", () => {
     vi.stubGlobal("fetch", fetchSpy);
 
     const result = await dispatchKpiAlert(db, {
-      kpiName: "site_ctr",
+      kpiName: "sitemap_quality",
       fromState: "YELLOW",
       toState: "RED",
-      value: 0.005,
+      value: 0.4,
       detectedAt: new Date(),
     });
     expect(result.dispatched).toBe(true);
     expect(result.channel).toBe("slack");
     expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  // OPE-1394 — conversion_rate flapped RED<->YELLOW up to 3x/day at the old 5%
+  // line; every RED would have been a fresh email once business delivery is on.
+  it("debounces a BUSINESS RED when a prior RED row exists in the 72h window", async () => {
+    MOCK_ENV.SLACK_WEBHOOK_URL_BUSINESS = "https://hooks.slack.com/x";
+    MOCK_ENV.ALERT_EMAIL_BUSINESS = "ops@example.com";
+    const db = makeMockDb({ yellowCountByKpi: { __current: 2 } });
+    const fetchSpy = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () => new Response("ok", { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await dispatchKpiAlert(db, {
+      kpiName: "conversion_rate",
+      fromState: "YELLOW",
+      toState: "RED",
+      value: 0.0299,
+      detectedAt: new Date(),
+    });
+    expect(result.dispatched).toBe(false);
+    expect(result.reason).toBe("red-debounced");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(sendEmailSpy).not.toHaveBeenCalled();
+  });
+
+  it("sends a BUSINESS RED when it is the only RED row in the window", async () => {
+    MOCK_ENV.ALERT_EMAIL_BUSINESS = "ops@example.com";
+    const db = makeMockDb({ yellowCountByKpi: { __current: 1 } });
+
+    const result = await dispatchKpiAlert(db, {
+      kpiName: "conversion_rate",
+      fromState: "YELLOW",
+      toState: "RED",
+      value: 0.0299,
+      detectedAt: new Date(),
+    });
+    expect(result.dispatched).toBe(true);
+    expect(result.channel).toBe("email");
+    expect(sendEmailSpy).toHaveBeenCalledOnce();
   });
 
   it("routes business KPI to BUSINESS Slack channel", async () => {
@@ -320,6 +361,9 @@ describe("YELLOW_DEBOUNCE_HOURS", () => {
   it("is 72h per spec", () => {
     expect(YELLOW_DEBOUNCE_HOURS).toBe(72);
   });
+  it("business RED debounce is 72h (OPE-1394)", () => {
+    expect(__test.BUSINESS_RED_DEBOUNCE_HOURS).toBe(72);
+  });
 });
 
 describe("dispatchKpiAlert — E (ALERT1) STALE-flap suppression", () => {
@@ -460,5 +504,113 @@ describe("dispatchKpiAlert — E (ALERT1) STALE-flap suppression", () => {
       detectedAt: new Date(),
     });
     expect(result.dispatched).toBe(true);
+  });
+});
+
+// OPE-1409 — business KPI alerts were dark: ALERT_EMAIL_BUSINESS has never
+// been set in prod. Business email now falls back to ALERT_EMAIL_TECHNICAL;
+// Slack deliberately has no fallback.
+describe("dispatchKpiAlert — OPE-1409 business email fallback", () => {
+  it("routes a BUSINESS RED to the technical recipients when ALERT_EMAIL_BUSINESS is unset", async () => {
+    MOCK_ENV.ALERT_EMAIL_TECHNICAL = "tech-ops@example.com";
+    const db = makeMockDb({ yellowCountByKpi: { __current: 1 } });
+
+    const result = await dispatchKpiAlert(db, {
+      kpiName: "conversion_rate",
+      fromState: "YELLOW",
+      toState: "RED",
+      value: 0.0299,
+      detectedAt: new Date(),
+    });
+    expect(result.dispatched).toBe(true);
+    expect(result.channel).toBe("email");
+    expect(sendEmailSpy).toHaveBeenCalledOnce();
+    expect(sendEmailSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "tech-ops@example.com", source: "kpi-alert:conversion_rate" })
+    );
+  });
+
+  it("treats an empty ALERT_EMAIL_BUSINESS as unset and still falls back", async () => {
+    MOCK_ENV.ALERT_EMAIL_BUSINESS = "";
+    MOCK_ENV.ALERT_EMAIL_TECHNICAL = "tech-ops@example.com";
+    const db = makeMockDb({ yellowCountByKpi: { __current: 1 } });
+
+    await dispatchKpiAlert(db, {
+      kpiName: "site_ctr",
+      fromState: "GREEN",
+      toState: "YELLOW",
+      value: 0.015,
+      detectedAt: new Date(),
+    });
+    expect(sendEmailSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "tech-ops@example.com" })
+    );
+  });
+
+  it("an explicit ALERT_EMAIL_BUSINESS wins over the technical fallback", async () => {
+    MOCK_ENV.ALERT_EMAIL_BUSINESS = "biz@example.com";
+    MOCK_ENV.ALERT_EMAIL_TECHNICAL = "tech-ops@example.com";
+    const db = makeMockDb({ yellowCountByKpi: { __current: 1 } });
+
+    await dispatchKpiAlert(db, {
+      kpiName: "brand_share",
+      fromState: "GREEN",
+      toState: "RED",
+      value: 0.05,
+      detectedAt: new Date(),
+    });
+    expect(sendEmailSpy).toHaveBeenCalledOnce();
+    expect(sendEmailSpy).toHaveBeenCalledWith(expect.objectContaining({ to: "biz@example.com" }));
+  });
+
+  it("does NOT fall back to the technical Slack webhook for a business KPI", async () => {
+    MOCK_ENV.SLACK_WEBHOOK_URL_TECHNICAL = "https://hooks.slack.com/tech";
+    MOCK_ENV.ALERT_EMAIL_TECHNICAL = "tech-ops@example.com";
+    const db = makeMockDb({ yellowCountByKpi: { __current: 1 } });
+    const fetchSpy = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () => new Response("ok", { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await dispatchKpiAlert(db, {
+      kpiName: "site_ctr",
+      fromState: "GREEN",
+      toState: "RED",
+      value: 0.005,
+      detectedAt: new Date(),
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.channel).toBe("email");
+  });
+
+  it("keeps the 72h business RED debounce when delivery comes via the fallback", async () => {
+    MOCK_ENV.ALERT_EMAIL_TECHNICAL = "tech-ops@example.com";
+    const db = makeMockDb({ yellowCountByKpi: { __current: 2 } });
+
+    const result = await dispatchKpiAlert(db, {
+      kpiName: "conversion_rate",
+      fromState: "YELLOW",
+      toState: "RED",
+      value: 0.0299,
+      detectedAt: new Date(),
+    });
+    expect(result.dispatched).toBe(false);
+    expect(result.reason).toBe("red-debounced");
+    expect(sendEmailSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps the 72h business YELLOW debounce when delivery comes via the fallback", async () => {
+    MOCK_ENV.ALERT_EMAIL_TECHNICAL = "tech-ops@example.com";
+    const db = makeMockDb({ yellowCountByKpi: { __current: 2 } });
+
+    const result = await dispatchKpiAlert(db, {
+      kpiName: "site_ctr",
+      fromState: "GREEN",
+      toState: "YELLOW",
+      value: 0.015,
+      detectedAt: new Date(),
+    });
+    expect(result.reason).toBe("yellow-debounced");
+    expect(sendEmailSpy).not.toHaveBeenCalled();
   });
 });

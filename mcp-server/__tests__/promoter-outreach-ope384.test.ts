@@ -163,6 +163,26 @@ describe("the confirmation ask asks, and does not assert", () => {
     expect(body).toMatch(/vendor or crafter applications/);
   });
 
+  it("OPE-1481 (b) — asks the three visitor questions, optional, after the core three, exactly as John approved", () => {
+    const { body } = buildConfirmationAsk({ eventName: "X" });
+    const block = [
+      "And, if you know them — these are the questions visitors ask us most:",
+      "",
+      "  • Where should visitors park?",
+      "  • Is the event wheelchair accessible?",
+      "  • Are pets allowed?",
+      "",
+      "Just reply to this email",
+    ].join("\n");
+    expect(body).toContain(block);
+    // After the core asks, so the dates ask still leads.
+    expect(body.indexOf("Where should visitors park?")).toBeGreaterThan(
+      body.indexOf("where to apply")
+    );
+    // Plain text: the proposal's markdown emphasis must not leak into the mail.
+    expect(body).not.toContain("**");
+  });
+
   it("includes our listing when we have a URL, and omits it cleanly when not", () => {
     expect(
       buildConfirmationAsk({ eventName: "X", eventUrl: "https://meetmeatthefair.com/events/x" })

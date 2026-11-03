@@ -57,6 +57,13 @@ export const users = sqliteTable("users", {
   oauthProvider: text("oauth_provider"),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  /**
+   * OPE-1366 — session generation (drizzle/0371). Bumped on an admin role
+   * change and on a password reset; web JWTs and MCP OAuth grants carry the
+   * value they were minted with and are ended when it no longer matches.
+   * Bump with `bumpSessionVersion()` (`session_version + 1`), never an absolute.
+   */
+  sessionVersion: integer("session_version").notNull().default(0),
 });
 
 /**
@@ -154,15 +161,25 @@ export const venues = sqliteTable(
     locationMatchKm: real("location_match_km"),
     latitude: real("latitude"),
     longitude: real("longitude"),
+    // OPE-408 (drizzle/0353) — the nightly geocode sweep re-asked the same 45
+    // refused venues every night, wrote nothing, and paid for each lookup. The
+    // gate's answer is deterministic for an unchanged record, so after
+    // GEOCODE_PARK_AFTER refusals the sweep parks a venue until its record is
+    // edited (updated_at > geocode_last_refused_at). Written with RAW SQL only:
+    // through Drizzle, `$onUpdateFn` would stamp updated_at — moving the ETag
+    // and sitemap lastmod nightly (the #819 class) and un-parking it at once.
+    geocodeRefusals: integer("geocode_refusals").notNull().default(0),
+    geocodeLastRefusedAt: integer("geocode_last_refused_at", { mode: "timestamp" }),
     capacity: integer("capacity"),
     amenities: text("amenities").default("[]"),
     contactEmail: text("contact_email"),
     contactPhone: text("contact_phone"),
     website: text("website"),
     description: text("description"),
-    // OPE-1061 (drizzle/0296) — the VENUE's own pet policy. Rendered on the
-    // venue page only, labelled as the venue's; never displayed as, merged
-    // into, or defaulted onto an event's answer.
+    // OPE-1061 (drizzle/0296) — the VENUE's own pet policy. Never displayed
+    // as, merged into, or defaulted onto an event's answer. One labelled
+    // exception (OPE-1479): the event page's Visiting box shows it as
+    // "At this venue: …" when the event's own value is UNSET.
     petFriendly: text("pet_friendly", { enum: ["UNSET", "YES", "NO", "NOT_PUBLISHED"] })
       .notNull()
       .default("UNSET"),
@@ -313,10 +330,17 @@ export const promoters = sqliteTable(
     }),
     // JSON snapshot of which target fields are filled: {hero,logo,description,socials,contact}.
     enrichmentCoverage: text("enrichment_coverage"),
-    // OPE-962 (drizzle/0283) — consecutive successful fetches that staged ZERO
-    // candidates. Reset to 0 by any attempt that stages one, and by a website
-    // change. At PROMOTER_ENRICHMENT_EXHAUST_AFTER the promoter becomes EXHAUSTED.
+    // OPE-962 (drizzle/0283) — consecutive successful fetches (dry-run or live)
+    // that staged ZERO candidates. TELEMETRY ONLY since OPE-1279: it never
+    // exhausted a row in prod, because a site re-proposing the same logo/phone
+    // every run reset it. EXHAUSTED is decided by enrichmentEmptyAttempts.
     enrichmentZeroYieldStreak: integer("enrichment_zero_yield_streak").notNull().default(0),
+    // OPE-1279 (drizzle/0365) — consecutive LIVE (dry_run=false) attempts that
+    // applied no field AND staged no NEW candidate (a (field, value) this
+    // promoter never had a candidate row for). Reset to 0 by any applied field
+    // or new candidate, by a website change, and by update_promoter
+    // requeue_enrichment. At PROMOTER_ENRICHMENT_EXHAUST_AFTER → EXHAUSTED.
+    enrichmentEmptyAttempts: integer("enrichment_empty_attempts").notNull().default(0),
     /**
      * When a render last WROTE a field to this row. NOT "when did we last look".
      *
@@ -415,8 +439,21 @@ export const eventSeries = sqliteTable(
     publicAccess: text("public_access", { enum: ["OPEN", "CLOSED"] })
       .notNull()
       .default("OPEN"),
+    // OPE-1325 (drizzle/0356) — multi-edition series step 2/5. 'annual' keeps
+    // today's /events/<series>/<YYYY> URLs byte-for-byte; 'multi' addresses each
+    // occurrence by its stored `events.edition_key`. Set only by the
+    // set_series_edition_mode tool (OPE-1327). Nothing reads it before OPE-1326.
+    editionMode: text("edition_mode", { enum: ["annual", "multi"] })
+      .notNull()
+      .default("annual"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    // OPE-1291 — maintained on every drizzle update, like the entity tables
+    // (OPE-332's audit). A series/year page's ETag includes this; without it a
+    // series rename would leave the validator unchanged and a 304 would keep a
+    // crawler on the old name.
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
   },
   (table) => [
     index("idx_event_series_venue_id").on(table.venueId),
@@ -563,6 +600,13 @@ export const events = sqliteTable(
     petFriendly: text("pet_friendly", { enum: ["UNSET", "YES", "NO", "NOT_PUBLISHED"] })
       .notNull()
       .default("UNSET"),
+    // OPE-1481 (drizzle/0378) — what the ORGANIZER publishes about parking /
+    // accessibility at THIS event, as public visitor copy (≤300 chars). NULL =
+    // not published. Every value carries an event_data_citations row
+    // (field_name 'parking_notes' / 'accessibility_notes') with a verbatim
+    // excerpt; never inferred, never copied from the venue or Google.
+    parkingNotes: text("parking_notes"),
+    accessibilityNotes: text("accessibility_notes"),
     estimatedAttendance: integer("estimated_attendance"),
     eventScale: text("event_scale"), // SMALL, MEDIUM, LARGE, MAJOR
     applicationDeadline: integer("application_deadline", { mode: "timestamp" }),
@@ -646,6 +690,12 @@ export const events = sqliteTable(
     // standalone one-off (every existing row at deploy). Set by P1 backfill.
     // ON DELETE SET NULL at the SQL level (mirrors rolledFromEventId).
     seriesId: text("series_id").references(() => eventSeries.id, { onDelete: "set null" }),
+    // OPE-1325 (drizzle/0356) — the edition's URL key on a multi-edition series:
+    // YYYY-MM of the start date in the venue's time zone, plus an operator suffix
+    // on a same-month clash ("2027-05-xli"). Stored and FROZEN at creation, so a
+    // date edit (or the UTC-vs-Eastern year split) never moves the URL. NULL on
+    // every annual-series occurrence. Unique per series (partial index below).
+    editionKey: text("edition_key"),
     // §10.2 cached 0-100 completeness score (drizzle/0055). Same gate as vendors:
     // entries with completenessScore < 40 are excluded from /sitemap.xml.
     completenessScore: integer("completeness_score").notNull().default(0),
@@ -720,6 +770,9 @@ export const events = sqliteTable(
     // Free-text nuance the enum pair can't hold (e.g. "members + public
     // for Saturday plant sale 9am–1pm"). NULL = the audience/access pair
     // is fully self-describing for this event.
+    // OPE-1151 — PUBLIC visitor copy: rendered verbatim on every event page
+    // that has it (admission detail, accessibility, who may attend). Analyst
+    // prose / provenance goes in `event_internal_notes`, never here.
     accessNotes: text("access_notes"),
     // Logistics axis — separate from audience/access. Defaults false.
     // Drives a future "Registration required — see ticket URL" badge
@@ -816,12 +869,26 @@ export const events = sqliteTable(
     index("idx_events_state_code").on(table.stateCode),
     index("idx_events_completeness_score").on(table.completenessScore),
     index("idx_events_lifecycle_status").on(table.lifecycleStatus),
+    // OPE-1395 (drizzle/0374) — find-duplicate.ts stage 1 looks up source_url.
+    index("idx_events_source_url").on(table.sourceUrl),
+    // OPE-1395 (drizzle/0374) also creates the EXPRESSION index
+    //   idx_events_status_effective_end ON events(status, COALESCE(end_date, start_date))
+    // for upcomingEndPredicate/pastEndPredicate (event-end-predicates.ts).
+    // It is deliberately NOT declared here: several test fixtures build DDL
+    // from getTableConfig(...).indexes by column NAME, and an SQL expression
+    // has none (they emit `ON events (status, )` and every suite fails).
     // K3 (drizzle/0095) — partial index for "show me events merged into X"
     // queries + the admin_actions reverse lookup. Most events have NULL
     // mergedInto so the partial keeps the index small.
     index("idx_events_merged_into")
       .on(table.mergedInto)
       .where(sql`${table.mergedInto} IS NOT NULL`),
+    // OPE-1325 (drizzle/0356) — one edition per key per series. NULLs are
+    // distinct in a SQLite UNIQUE index anyway; the partial keeps the NULL key
+    // on every annual-series row out of the index.
+    uniqueIndex("idx_events_series_edition_key")
+      .on(table.seriesId, table.editionKey)
+      .where(sql`${table.editionKey} IS NOT NULL`),
     // K2 part 5 (drizzle/0096) — partial index supports the
     // /admin/possible-duplicates queue + the Part 6 sweep's
     // cross-check ("don't surface clusters that are already flagged").
@@ -943,6 +1010,12 @@ export const urlHealthChecks = sqliteTable(
     signals: text("signals"),
     /** Short human-readable reason. Never the whole page. */
     detail: text("detail"),
+    /**
+     * OPE-1294 — UTF-8 size of the response body the sweep received; NULL when
+     * there was no body. Separates a parked shell (~1 KB) from a bot wall or a
+     * JS-rendered site, which "visible chars" alone cannot.
+     */
+    bodyBytes: integer("body_bytes"),
     checkedAt: integer("checked_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
@@ -996,6 +1069,13 @@ export const vendors = sqliteTable(
     city: text("city"),
     state: text("state"),
     zip: text("zip"),
+    // OPE-1398 (drizzle/0376) — street-address privacy. `selfSignup` marks a
+    // vendor minted by self-registration (/api/auth/register); its street
+    // address is hidden on every public surface unless the vendor opts back in
+    // via `showStreetAddress`. The rule lives in ONE place:
+    // isStreetAddressHidden() in @takemetothefair/utils (vendor-public-address).
+    selfSignup: integer("self_signup", { mode: "boolean" }).notNull().default(false),
+    showStreetAddress: integer("show_street_address", { mode: "boolean" }).notNull().default(false),
     // Geolocation (auto-populated from Google Places)
     latitude: real("latitude"),
     longitude: real("longitude"),
@@ -1158,6 +1238,12 @@ export const vendors = sqliteTable(
     vendorsClaimedByIdx: index("idx_vendors_claimed_by").on(t.claimedBy),
     vendorsRedirectToIdx: index("idx_vendors_redirect_to").on(t.redirectToVendorId),
     vendorsVerifiedProByIdx: index("idx_vendors_verified_pro_by").on(t.verifiedProBy),
+    // OPE-1395 (drizzle/0374) — /vendors: `deleted_at IS NULL ORDER BY business_name`
+    // without a temp B-tree sort.
+    vendorsDeletedBusinessNameIdx: index("idx_vendors_deleted_business_name").on(
+      t.deletedAt,
+      t.businessName
+    ),
   })
 );
 
@@ -1587,6 +1673,21 @@ export const eventPerformers = sqliteTable(
     // set_event_performer_status / _slot); lastVerifiedSource = the URL used.
     lastVerifiedAt: integer("last_verified_at", { mode: "timestamp" }),
     lastVerifiedSource: text("last_verified_source"),
+    // OPE-958 — the OPE-692 snapshot + recheck model on appearances (drizzle/
+    // 0340). `source_url` stays the ACQUISITION record and is never rewritten;
+    // `last_verified_source` is the re-verification target and is where a
+    // corrected source SUPERSEDES (John, 2026-09-30). These describe
+    // `last_verified_source` as read at the last verification, so a pass that
+    // cannot re-fetch can still compare. NULL on every pre-0340 row.
+    sourceTitle: text("source_title"),
+    sourceExcerpt: text("source_excerpt"),
+    sourceContentHash: text("source_content_hash"),
+    sourceFetchedAt: integer("source_fetched_at", { mode: "timestamp" }),
+    recheckState: text("recheck_state", {
+      enum: ["unchecked", "confirmed", "changed", "unreachable"],
+    }),
+    recheckAt: integer("recheck_at", { mode: "timestamp" }),
+    recheckNote: text("recheck_note"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
@@ -1655,7 +1756,9 @@ export const seriesSlugHistory = sqliteTable(
     changedBy: text("changed_by"),
   },
   (t) => [
-    index("idx_series_slug_history_old_slug").on(t.oldSlug),
+    // OPE-1395 (drizzle/0374) — the non-unique twin was dropped; this UNIQUE
+    // one (drizzle/0209) is the index that exists in D1.
+    uniqueIndex("idx_series_slug_history_old_slug_unique").on(t.oldSlug),
     index("idx_series_slug_history_series_id").on(t.seriesId),
   ]
 );
@@ -2150,6 +2253,10 @@ export const eventDays = sqliteTable("event_days", {
   // gap: a NULL close_time with this set is NOT "hours unknown" for the review
   // flag (hours-review-flag.ts), and renders as "no published closing time".
   closeTimeUnpublished: integer("close_time_unpublished").notNull().default(0),
+  // OPE-1256 (drizzle/0347) — 1 when a writer LOOKED and the organizer
+  // publishes NO hours for this day at all. Like closeTimeUnpublished, a
+  // settled finding: the day no longer counts as "hours unknown".
+  hoursUnpublished: integer("hours_unpublished").notNull().default(0),
   notes: text("notes"),
   /**
    * OPE-572 — operator/provenance notes for this day. NEVER rendered publicly.
@@ -2175,6 +2282,36 @@ export const eventDays = sqliteTable("event_days", {
   imageFocalX: real("image_focal_x").notNull().default(0.5),
   imageFocalY: real("image_focal_y").notNull().default(0.5),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+/**
+ * OPE-1151 (drizzle/0367) — PRIVATE operator/analyst notes for an event.
+ * NEVER rendered, never read by the main app.
+ *
+ * A separate table, deliberately NOT an `events.internal_notes` column: the
+ * events row was serialized whole on public surfaces (`eventJoinProjection`
+ * carried every events column until OPE-1387 made it the `publicEventColumns`
+ * allow-list; any remaining full-row select that reaches a "use client"
+ * component ships the RSC payload). A private column there would need
+ * stripping at every such site — the OPE-1084 leak class. No
+ * `select().from(events)` can reach this table.
+ *
+ * `events.access_notes` is PUBLIC visitor copy (admission, accessibility,
+ * who may attend). Sweep findings, venue checks, "verify …", source citations
+ * and ticket references belong HERE. Written by MCP `update_event`
+ * (`internal_notes`), read by `get_event_details_admin`.
+ */
+export const eventInternalNotes = sqliteTable("event_internal_notes", {
+  eventId: text("event_id")
+    .primaryKey()
+    .references(() => events.id, { onDelete: "cascade" }),
+  notes: text("notes").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });
 
 // User Favorites table
@@ -2535,7 +2672,6 @@ export const blogPosts = sqliteTable(
   },
   (table) => [
     index("idx_blogposts_status_publishdate").on(table.status, table.publishDate),
-    index("idx_blogposts_slug").on(table.slug),
     index("idx_blogposts_authorid").on(table.authorId),
     index("idx_blogposts_status_featured").on(table.status, table.featured),
   ]
@@ -2979,6 +3115,11 @@ export const HEALTH_RESOLUTION_REASON = {
   WITHDRAWN: "withdrawn",
   /** The scan stopped seeing it. Absence of evidence, not evidence of fix. */
   NO_LONGER_DETECTED: "no_longer_detected",
+  /**
+   * OPE-1280 — a fresh check of the same URL now reads a DIFFERENT non-green
+   * verdict. The old condition is provably gone; it is not "fixed".
+   */
+  SUPERSEDED: "superseded",
 } as const;
 
 export type HealthResolutionReason =
@@ -3641,6 +3782,12 @@ export const requestSamples = sqliteTable(
     country: text("country"),
     referer: text("referer"),
     ray: text("ray"),
+    // OPE-1397 (drizzle/0373) — "page" = the A9 public-page sample (5%);
+    // "admin_rsc_anon" = an /admin* request carrying RSC / Next-Router-State-Tree
+    // with no session cookie (path, timestamp, country, ASN only).
+    kind: text("kind", { enum: ["page", "admin_rsc_anon"] })
+      .notNull()
+      .default("page"),
   },
   (t) => ({
     tsIdx: index("request_samples_timestamp_idx").on(t.timestamp),
@@ -3943,6 +4090,222 @@ export const membraneCrossings = sqliteTable("membrane_crossings", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+// OPE-366 (drizzle/0342) — debounce state for the hourly E2 push over
+// unterminated membrane crossings (mcp-server/src/inbound/unterminated-crossing-notice.ts).
+// Single row. A crossing whose created_at is newer than highWaterCreatedAt is a
+// NEW dead-end and fires; the standing backlog is reported only by the Monday
+// inventory. No row = never notified, so the first run reports the backlog once.
+export const unterminatedCrossingNoticeState = sqliteTable("unterminated_crossing_notice_state", {
+  id: text("id").primaryKey(),
+  highWaterCreatedAt: integer("high_water_created_at", { mode: "timestamp" }).notNull(),
+  lastCount: integer("last_count").notNull(),
+  lastNotifiedAt: integer("last_notified_at", { mode: "timestamp" }).notNull(),
+});
+
+// OPE-1139 (drizzle/0343) — a business that announced ITSELF as an exhibitor
+// in a forwarded, DKIM-verified email ("visit us at Booth 510") but is not yet a
+// vendor. Staged, not created: a vendor row is a public page (John, option A).
+// Resolved by the MCP `review_exhibitor_proposal` tool. Unique per (email, event).
+/**
+ * OPE-328 (Demux D-3) — a gemba@ email, tagged with a project and queued for an
+ * agent session to post to that project's Linear anchor (no Linear credential on
+ * the Worker, per John's 2026-09-30 ruling). `held` = untaggable or no anchor
+ * yet: waits for a person, never guessed, never dropped.
+ */
+export const gembaObservations = sqliteTable(
+  "gemba_observations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    inboundEmailId: text("inbound_email_id").notNull().unique(),
+    project: text("project"),
+    anchorIssue: text("anchor_issue"),
+    status: text("status", { enum: ["pending", "held", "posted"] })
+      .notNull()
+      .default("pending"),
+    routingReason: text("routing_reason").notNull(),
+    postedRef: text("posted_ref"),
+    postedAt: integer("posted_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_gemba_observations_status").on(t.status, t.createdAt)]
+);
+
+/**
+ * OPE-1265 — the registry of promoter mailing lists MMATF subscribed its own
+ * address to (lists@ / lists+<promoter-slug>@). See drizzle/0350.
+ */
+export const promoterListSubscriptions = sqliteTable(
+  "promoter_list_subscriptions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    address: text("address").notNull(),
+    signupUrl: text("signup_url"),
+    esp: text("esp"),
+    status: text("status", {
+      enum: ["requested", "confirmed", "active", "unsubscribed", "bounced"],
+    })
+      .notNull()
+      .default("requested"),
+    requestedAt: integer("requested_at", { mode: "timestamp" }).notNull(),
+    confirmedAt: integer("confirmed_at", { mode: "timestamp" }),
+    lastReceivedAt: integer("last_received_at", { mode: "timestamp" }),
+    issueCount: integer("issue_count").notNull().default(0),
+    confirmUrl: text("confirm_url"),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_list_subscriptions_addr").on(t.promoterId, t.address),
+    index("idx_promoter_list_subscriptions_status").on(t.status),
+  ]
+);
+
+/**
+ * OPE-1330 — the named people (or team mailboxes) at a promoter who have
+ * actually corresponded with us, and how each was validated. drizzle/0359.
+ *
+ * ⚠️ PERSONAL CONTACT DATA — admin-only on every surface. Nothing here may reach
+ * a public page, JSON-LD, the sitemap, or a public API/MCP tool; the module
+ * allow-list in `promoter-contacts-no-public-leak-ope1330.test.ts` fails the
+ * build if a non-admin file touches this table. A contact row never overwrites
+ * `promoters.contact_email` (which IS public).
+ *
+ * `email` is stored lowercase (CHECK in the migration), so the unique index on
+ * (promoter_id, email) is unique on lower(email) while staying a plain column
+ * pair that an upsert can target. Write through `planPromoterContactWrite`
+ * (./promoter-contacts.ts) so every writer applies the same rules.
+ */
+export const PROMOTER_CONTACT_VALIDATION_METHODS = [
+  "domain_verified",
+  "replied_to_our_mail",
+  "approved_claim",
+  "phone",
+  "in_person",
+  "published_on_site",
+  "self_asserted",
+] as const;
+export const PROMOTER_CONTACT_STATUSES = ["candidate", "validated", "stale", "rejected"] as const;
+
+export const promoterContacts = sqliteTable(
+  "promoter_contacts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    name: text("name"),
+    role: text("role"),
+    email: text("email").notNull(),
+    phone: text("phone"),
+    validationMethod: text("validation_method", {
+      enum: PROMOTER_CONTACT_VALIDATION_METHODS,
+    }).notNull(),
+    validationEvidence: text("validation_evidence"),
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }),
+    /** The message's overall verdict at validation (inbound_emails.sender_auth). */
+    senderAuth: text("sender_auth", { enum: ["pass", "partial", "fail"] }),
+    /** The DMARC header.from domain (the From domain when no DMARC clause). */
+    authDomain: text("auth_domain"),
+    /** Is auth_domain the promoter's own website domain? 1 / 0 / NULL (unknown). */
+    authDomainMatchesPromoter: integer("auth_domain_matches_promoter", { mode: "boolean" }),
+    status: text("status", { enum: PROMOTER_CONTACT_STATUSES }).notNull().default("candidate"),
+    firstValidatedAt: integer("first_validated_at", { mode: "timestamp" }),
+    lastHeardAt: integer("last_heard_at", { mode: "timestamp" }),
+    notes: text("notes"),
+    createdBy: text("created_by"),
+    updatedBy: text("updated_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_contacts_promoter_email").on(t.promoterId, t.email),
+    index("idx_promoter_contacts_email").on(t.email),
+    index("idx_promoter_contacts_status").on(t.status),
+  ]
+);
+
+/** OPE-1265 — one row per inbound email to lists@ / lists+*@. drizzle/0350. */
+export const promoterListArrivals = sqliteTable(
+  "promoter_list_arrivals",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    inboundEmailId: text("inbound_email_id").notNull().unique(),
+    promoterId: text("promoter_id"),
+    matchBasis: text("match_basis", { enum: ["subscription-address", "unattributed"] }).notNull(),
+    plusTag: text("plus_tag"),
+    subscriptionId: text("subscription_id"),
+    kind: text("kind", { enum: ["confirmation", "issue"] }).notNull(),
+    confirmUrl: text("confirm_url"),
+    senderDomain: text("sender_domain"),
+    senderMismatch: integer("sender_mismatch").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_promoter_list_arrivals_promoter").on(t.promoterId, t.createdAt)]
+);
+
+/** OPE-1264 — an inbound email recognised as a promoter newsletter. drizzle/0351. */
+export const inboundNewsletters = sqliteTable(
+  "inbound_newsletters",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    inboundEmailId: text("inbound_email_id").notNull().unique(),
+    markers: text("markers").notNull(),
+    promoterId: text("promoter_id"),
+    matchBasis: text("match_basis", {
+      enum: ["subscription-address", "sender-domain", "contact-email", "footer-name", "unmatched"],
+    }).notNull(),
+    senderAddress: text("sender_address"),
+    itemsJson: text("items_json"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_inbound_newsletters_promoter").on(t.promoterId, t.createdAt)]
+);
+
+export const exhibitorProposals = sqliteTable(
+  "exhibitor_proposals",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    inboundEmailId: text("inbound_email_id").notNull(),
+    businessName: text("business_name"),
+    website: text("website"),
+    senderAddress: text("sender_address"),
+    city: text("city"),
+    state: text("state"),
+    boothInfo: text("booth_info"),
+    /** The first-person phrase that triggered the lane. */
+    evidence: text("evidence"),
+    /** pending | approved | rejected */
+    status: text("status").notNull().default("pending"),
+    resolvedVendorId: text("resolved_vendor_id"),
+    resolutionNote: text("resolution_note"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+  },
+  (t) => [
+    uniqueIndex("idx_exhibitor_proposals_email_event").on(t.inboundEmailId, t.eventId),
+    index("idx_exhibitor_proposals_status").on(t.status, t.createdAt),
+  ]
+);
 
 export const rosterResearchNoticeState = sqliteTable("roster_research_notice_state", {
   id: text("id").primaryKey(),
@@ -4453,6 +4816,36 @@ export const promoterOutreachAttempts = sqliteTable(
     index("idx_promoter_outreach_status").on(t.status, t.createdAt),
     index("idx_promoter_outreach_event").on(t.eventId),
   ]
+);
+
+/**
+ * OPE-1345 — one row per run of the weekly promoter-outreach lane.
+ *
+ * The lane is research-first (John's 2026-10-13 ruling A, amended the same
+ * day): it fixes from the organizer's own page whatever that page answers and
+ * drafts an email only for what it cannot. So a healthy week usually sends
+ * NOTHING, and `promoter_outreach_attempts` — which gets a row only when an
+ * email is drafted or sent — cannot tell a working week from a missed one.
+ * This row is the lane saying "I ran"; the heartbeat probe reads the newer of
+ * the two tables.
+ */
+export const promoterOutreachRuns = sqliteTable(
+  "promoter_outreach_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    ranAt: integer("ran_at", { mode: "timestamp" }).notNull(),
+    eventsReviewed: integer("events_reviewed").notNull().default(0),
+    /** Answered from the organizer's own page and fixed with a citation. */
+    resolvedFromWeb: integer("resolved_from_web").notNull().default(0),
+    /** Emails drafted for John's approval rather than sent. */
+    draftsForApproval: integer("drafts_for_approval").notNull().default(0),
+    emailsSent: integer("emails_sent").notNull().default(0),
+    recordedBy: text("recorded_by"),
+    note: text("note"),
+  },
+  (t) => [index("idx_promoter_outreach_runs_ran_at").on(t.ranAt)]
 );
 
 /**
@@ -5200,6 +5593,19 @@ export const inboundEmails = sqliteTable(
      *  (root-caused 2026-05-19 hamxposition.org NonRetryableError loop).
      *  Added drizzle/0082. */
     recoveryAttemptN: integer("recovery_attempt_n").notNull().default(0),
+    // OPE-954 (drizzle/0354) — when non-NULL, NO send path may email anyone
+    // about this row, and this text says why ("replay: …"). Lives on the ROW,
+    // not on one workflow run, because a run is not the only sender: the
+    // stale-inbound sweep re-dispatches a stuck row as a normal run, and its
+    // give-up path emails the submitter itself. Set by `replay_inbound_email`
+    // so a replay can never send a submitter another automated message.
+    repliesSuppressedReason: text("replies_suppressed_reason"),
+    // OPE-1341 (drizzle/0360) — set only on `routing_source='snap-app'` rows: the
+    // capture metadata a phone upload sends instead of EXIF/subject (location and
+    // which source it came from, the pinned event, the note). JSON.
+    // OPE-1504 — on EMAIL rows it is NULL, or `{"body_text_source":"html"}` when
+    // the message had no text/plain part and body_text was derived from body_html.
+    captureMeta: text("capture_meta"),
     /** Categorical failure reason for submit-intent rows whose AI extract
      *  was reached but didn't yield a usable event. Values:
      *    - `'zero-events'`  — AI returned success with empty events[]
@@ -5314,9 +5720,13 @@ export const inboundEmails = sqliteTable(
      * `originalSenderDomainAligned` is set only when a signature actually
      * VERIFIED; a `d=` on a failed signature says nothing about who sent it.
      *
-     * ⚠️ REPORT-ONLY, same contract as the block above. Nothing branches on
-     * these — not routing, not trust, not auto-publication, not a reply. That
-     * remains John's call on OPE-765 / OPE-839.
+     * ⚠️ REPORT-ONLY, same contract as the block above, with ONE authorised
+     * exception: the OPE-1139 self-announced-exhibitor lane
+     * (mcp-server/src/email-handlers/self-announcement.ts) runs only when
+     * `originalSenderAuth='verified'` AND domain-aligned (John, 2026-09-30,
+     * option A). Nothing else branches on these — not routing, not trust, not
+     * event auto-publication, not a reply. That remains John's call on
+     * OPE-765 / OPE-839.
      *
      * NULL means no verdict was recorded: the row predates capture, or the
      * analysis threw (which logs a warn, so the two stay distinguishable). It
@@ -5330,7 +5740,7 @@ export const inboundEmails = sqliteTable(
     originalSenderAddress: text("original_sender_address"),
     originalSenderAuth: text("original_sender_auth"),
     originalSenderDomainAligned: integer("original_sender_domain_aligned"),
-    /** The display name, which is where `"Jeremy Hall" <random@gmail.com>` shows. */
+    /** The display name, which is where `"Jordan Sample" <userquince@gmail.com>` shows. */
     fromDisplayName: text("from_display_name"),
     replyTo: text("reply_to"),
     returnPath: text("return_path"),
@@ -5754,6 +6164,9 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
       // that a LIVE field disagrees with the source it just cited. Our error,
       // not a promoter's: never an outreach candidate (see queue-ranking.ts).
       "citation_flag",
+      // OPE-1285 — a promoter's own newsletter states dates that disagree with
+      // the event we hold. TS-only, like the others.
+      "newsletter",
       "manual",
     ],
   }).notNull(),
@@ -6762,6 +7175,9 @@ export * from "./vendor-link-visibility";
 // OPE-1028 — "is this event in state X?", shared so list pages and the MCP
 // reader run the same SQL.
 export * from "./event-state";
+// OPE-1375 — "is this event upcoming / past?", shared so list pages and the MCP
+// tools agree on the same day boundary.
+export * from "./event-end-predicates";
 
 // OPE-391 — shared with the MCP Worker; see the file header.
 export * from "./data-health-kpis";
@@ -6773,9 +7189,15 @@ export * from "./promoter-outreach-queue";
 export * from "./promoter-outreach-metrics";
 export * from "./promoter-outreach-state";
 export * from "./promoter-reply-link";
+export * from "./contact-scorecard";
+// OPE-1279 — the shared appliable-gap SQL (queue tool + coverage route).
+export * from "./promoter-appliable-gap";
+// OPE-1330 — promoter contacts: domain verification + the one write rule.
+export * from "./promoter-contacts";
 export * from "./gallery-photos";
 // OPE-759 — the hours-review rule, shared because event_days has five writers.
 export * from "./hours-review-flag";
+export * from "./review-flags";
 
 // OPE-236 §4 — the canonical claim row, shared by the app AND the MCP Worker.
 export * from "./entity-claim-record";
@@ -6800,3 +7222,12 @@ export const eventCategoryMigrationLog = sqliteTable(
 // OPE-516 — the citation supersede rule; every writer must use it.
 export * from "./citation-supersede-scope";
 export * from "./promoter-merge-children";
+export * from "./venue-merge-children";
+export * from "./inbound-duplicate-repoint";
+// OPE-1373 — shared collision-safe rename + slug-history write.
+export * from "./slug-rename";
+// OPE-1396 (DUP7/DUP8) — `recordWorkflowOutcome` and `isEmailSuppressed` are
+// deliberately NOT re-exported here. This barrel is client-reachable (OPE-640
+// browser-floor guard), and they are server-only writers/readers. Import them
+// from the subpaths "@takemetothefair/db-schema/intent-feedback" and
+// "@takemetothefair/db-schema/email-suppression" (package.json `exports`).

@@ -50,6 +50,7 @@ import { adminActions, vendorClaimEvidence } from "@/lib/db/schema";
 import { classifyDeclaredPresence, reassessClaimEvidence } from "@/lib/claims/claim-evidence";
 import { fetchHtmlWithSsrfGuard } from "@takemetothefair/site-fetch";
 import { logError } from "@/lib/logger";
+import { logAuditWriteFailure } from "@/lib/audit/log-audit-failure";
 
 /** Per-site budget. A vendor's slow server must not stall the whole pass. */
 const FETCH_TIMEOUT_MS = 8000;
@@ -210,8 +211,15 @@ export async function POST(request: Request) {
         createdAt: new Date(),
         payloadJson: JSON.stringify({ eligible: rows.length, corroborated: results.length }),
       });
-    } catch {
+    } catch (error) {
       // A liveness row must never fail the pass it describes.
+      await logAuditWriteFailure(db, {
+        source: "admin:claims:corroborate",
+        action: "claim.corroborate.sweep",
+        targetType: "vendor",
+        targetId: "sweep",
+        error,
+      });
     }
   }
 

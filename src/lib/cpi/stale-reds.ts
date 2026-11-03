@@ -11,7 +11,7 @@
  */
 
 import type { ActionQueueEntry } from "@/lib/analytics-overview/types";
-import { resolveDigestHref } from "@takemetothefair/utils";
+import { escapeHtml, resolveDigestHref } from "@takemetothefair/utils";
 import { isParked, isTerminalStatus } from "@/lib/faults/status";
 
 export interface StaleRed {
@@ -317,8 +317,10 @@ export function formatStaleRedDigest(
   const htmlItems = grouped
     .map(
       (r) =>
-        `<li><strong>[${r.priority}]</strong> ${r.title} — red ${formatAge(r.hoursInRed)} ` +
-        `(<a href="${resolveDigestHref(base, r.href)}">open</a>)</li>`
+        // OPE-1392 (TPL-3) — `title` is derived from request paths and error
+        // classes, i.e. attacker-influenced text; escape it (and the href).
+        `<li><strong>[${r.priority}]</strong> ${escapeHtml(String(r.title))} — red ${formatAge(r.hoursInRed)} ` +
+        `(<a href="${escapeHtml(resolveDigestHref(base, r.href))}">open</a>)</li>`
     )
     .join("");
   const html = `<p>${intro}</p><ul>${htmlItems}</ul><p>${outro}</p>`;

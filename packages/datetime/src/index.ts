@@ -681,6 +681,22 @@ export function getVenueZoneYear(
 }
 
 /**
+ * OPE-1327 — calendar year AND month in the venue zone (1-based month), or null.
+ * The multi-edition key is `YYYY-MM` of the start in the venue zone, so a
+ * late-evening Eastern start on the last of a month keys to that month, not the
+ * next one UTC already reached.
+ */
+export function getVenueZoneYearMonth(
+  d: Date | string | number | null | undefined,
+  tz: string = VENUE_TZ
+): { y: number; m: number } | null {
+  const date = coerce(d);
+  if (!date) return null;
+  const { y, m } = calendarPartsIn(date, tz);
+  return { y, m };
+}
+
+/**
  * Today as "YYYY-MM-DD" in UTC. Use this instead of inlining
  * `new Date().toISOString().slice(0, 10)` so the call site is greppable.
  */

@@ -15,6 +15,7 @@ import {
   processDeliveryEvent,
   messageIdCandidates,
   shouldSuppress,
+  isFullMailbox,
   outranks,
   deliveryStatusOf,
   type EmailSendingEvent,
@@ -285,5 +286,76 @@ describe("processDeliveryEvent", () => {
     );
     const [ledger] = await db.select().from(emailSendLedger);
     expect(ledger.deliveryStatus).toBe("delivered");
+  });
+});
+
+/**
+ * OPE-1317 — a full mailbox does not suppress (John, 2026-10-05). Cloudflare
+ * labels every bounce `hard/permanent_failure`, so the label cannot decide it.
+ * Both 552 strings below are verbatim from prod `email_delivery_events`: one is
+ * a full mailbox, the other is a missing mailbox — the same SMTP code, which is
+ * why the code alone must never decide.
+ */
+const OVER_QUOTA =
+  "Permanent Unknown error: permanent error (552): 5.2.2 <someone@icloud.com>: user is over quota";
+const NOT_FOUND_552 =
+  "Permanent Unknown error: permanent error (552): 1 Requested mail action aborted, mailbox not found";
+const NO_SUCH_USER_550 =
+  "Permanent Unknown error: permanent error (550): 5.1.1 The email account that you tried to reach does not exist.";
+
+describe("OPE-1317 — a full mailbox is not a reason to suppress", () => {
+  it("isFullMailbox: the prod over-quota bounce, and the common wordings", () => {
+    expect(isFullMailbox({ response: OVER_QUOTA })).toBe(true);
+    expect(isFullMailbox({ enhancedStatusCode: "5.2.2" })).toBe(true);
+    expect(isFullMailbox({ enhancedStatusCode: "4.2.2" })).toBe(true);
+    expect(isFullMailbox({ response: "452 4.2.2 The email account is over quota" })).toBe(true);
+    expect(isFullMailbox({ reason: "Mailbox full" })).toBe(true);
+  });
+
+  it("isFullMailbox: a bare 552, a missing mailbox, or nothing at all is NOT a full mailbox", () => {
+    expect(isFullMailbox({ response: NOT_FOUND_552 })).toBe(false);
+    expect(isFullMailbox({ response: NO_SUCH_USER_550 })).toBe(false);
+    expect(isFullMailbox({ response: "552 5.3.4 Message size exceeds fixed limit" })).toBe(false);
+    expect(isFullMailbox({})).toBe(false);
+    expect(isFullMailbox()).toBe(false);
+  });
+
+  it("shouldSuppress: a 'hard' over-quota bounce does not suppress; a 'hard' missing mailbox still does", () => {
+    expect(shouldSuppress("bounced", "hard", { response: OVER_QUOTA })).toBe(false);
+    expect(shouldSuppress("bounced", "hard", { response: NOT_FOUND_552 })).toBe(true);
+    expect(shouldSuppress("bounced", "hard", { response: NO_SUCH_USER_550 })).toBe(true);
+    // A complaint is the person, not the mailbox — always suppresses.
+    expect(shouldSuppress("complained", null, { response: OVER_QUOTA })).toBe(true);
+  });
+
+  it("end to end: the over-quota bounce event writes NO suppression row; the missing-mailbox one does", async () => {
+    const bounce = (id: string, recipient: string, resp: string) => ({
+      type: "cf.email.sending.message.bounced",
+      source: { type: "email.sending", domain: "meetmeatthefair.com" },
+      payload: {
+        eventId: id,
+        messageId: `<${id}@meetmeatthefair.com>`,
+        recipient,
+        delivery: { status: "bounced", smtpStatusCode: "552", smtpResponse: resp },
+        bounce: { type: "hard", classification: "permanent_failure" },
+      },
+      metadata: { eventTimestamp: "2026-10-04T19:44:55.000Z", eventSchemaVersion: 1 },
+    });
+    await processDeliveryEvent(
+      db,
+      env,
+      bounce("evt-full", "full@example.com", OVER_QUOTA) as never,
+      "s1"
+    );
+    await processDeliveryEvent(
+      db,
+      env,
+      bounce("evt-gone", "gone@example.com", NOT_FOUND_552) as never,
+      "s1"
+    );
+    const suppressed = (await db.select().from(emailSuppressionList)).map((r) => r.email);
+    expect(suppressed).toEqual(["gone@example.com"]);
+    // The event itself is still recorded — not suppressing is not forgetting.
+    expect(await db.select().from(emailDeliveryEvents)).toHaveLength(2);
   });
 });

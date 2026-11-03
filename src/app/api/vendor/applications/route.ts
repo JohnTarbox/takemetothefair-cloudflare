@@ -6,6 +6,11 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, events, eventVendors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import {
+  checkEventAcceptsVendor,
+  checkVendorPaymentStatus,
+  defaultApplicationStatus,
+} from "@/lib/vendor-applications";
 
 export async function GET(request: NextRequest) {
   const db = getCloudflareDb();
@@ -80,6 +85,19 @@ export async function POST(request: NextRequest) {
 
     const vendor = vendorResults[0];
 
+    // OPE-1381 — payment is the organizer's to record. Refuse (never drop)
+    // a paymentStatus from a vendor that is not canSelfConfirm; same rule
+    // as the token route.
+    const payment = checkVendorPaymentStatus(vendor.canSelfConfirm, body.paymentStatus);
+    if (!payment.ok) {
+      return NextResponse.json(
+        payment.message
+          ? { error: payment.error, message: payment.message }
+          : { error: payment.error },
+        { status: payment.httpStatus }
+      );
+    }
+
     // Get the event
     const eventResults = await db
       .select()
@@ -93,24 +111,10 @@ export async function POST(request: NextRequest) {
 
     const event = eventResults[0];
 
-    // Check if event is approved and accepting vendors
-    if (event.status !== "APPROVED") {
-      return NextResponse.json(
-        { error: "This event is not currently accepting vendor applications" },
-        { status: 400 }
-      );
-    }
-
-    // COMMERCIAL VENDOR VALIDATION
-    // If the vendor is commercial and the event doesn't allow commercial vendors, reject
-    if (vendor.commercial && !event.commercialVendorsAllowed) {
-      return NextResponse.json(
-        {
-          error:
-            "This event does not allow commercial vendors. Only non-commercial vendors may apply.",
-        },
-        { status: 403 }
-      );
+    // OPE-1361 — event status + commercial rule, shared with the token route.
+    const eventGate = checkEventAcceptsVendor(vendor, event);
+    if (!eventGate.ok) {
+      return NextResponse.json({ error: eventGate.error }, { status: eventGate.httpStatus });
     }
 
     // Check if vendor has already applied to this event
@@ -129,13 +133,13 @@ export async function POST(request: NextRequest) {
 
     // Create the application — self-confirm vendors get auto-confirmed
     const applicationId = crypto.randomUUID();
-    const autoConfirm = vendor.canSelfConfirm ?? false;
     await db.insert(eventVendors).values({
       id: applicationId,
       eventId: eventId as string,
       vendorId: vendor.id,
       boothInfo: boothInfo as string | undefined,
-      status: autoConfirm ? "CONFIRMED" : "APPLIED",
+      status: defaultApplicationStatus(vendor.canSelfConfirm),
+      ...(payment.paymentStatus ? { paymentStatus: payment.paymentStatus } : {}),
     });
 
     const newApplication = await db

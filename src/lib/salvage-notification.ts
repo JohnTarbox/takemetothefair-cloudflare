@@ -26,6 +26,7 @@ import { eq, inArray } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { events, inboundEmails } from "@/lib/db/schema";
+import { isEmailSuppressed } from "@takemetothefair/db-schema/email-suppression";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -87,6 +88,7 @@ export type NotifySalvageOutcome =
   | "skipped:not-found"
   | "skipped:no-from-address"
   | "skipped:already-notified"
+  | "skipped:suppressed"
   | "skipped:no-events"
   | "error:event-not-found"
   | "error:queue-missing";
@@ -131,6 +133,10 @@ export async function notifySalvageIfNeeded(
   if (!row.fromAddress) return { outcome: "skipped:no-from-address", eventsListed: 0 };
   if (row.salvageNotifiedAt !== null) {
     return { outcome: "skipped:already-notified", eventsListed: 0 };
+  }
+  // OPE-1396 (DUP8) — the receipt ack's suppression check, applied here too.
+  if (await isEmailSuppressed(db, row.fromAddress)) {
+    return { outcome: "skipped:suppressed", eventsListed: 0 };
   }
 
   // Look up all events in one batched query so a single missing ID

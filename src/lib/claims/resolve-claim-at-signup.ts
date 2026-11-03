@@ -25,6 +25,7 @@
  * outcome to a client redirect.
  */
 import { and, eq, isNull } from "drizzle-orm";
+import { recordClaimantAsPromoterContact } from "@/lib/claims/promoter-contact";
 import type { Database } from "@/lib/db";
 import { vendors, promoters, userRoles, entityClaims } from "@/lib/db/schema";
 import { unsafeSlug } from "@/lib/utils";
@@ -279,6 +280,13 @@ export async function approvePendingEmailMatchClaims(
         .update(promoters)
         .set({ userId, claimed: true, claimedAt: now, claimedBy: userId })
         .where(and(eq(promoters.id, claim.entityId), eq(promoters.claimed, false)));
+      // OPE-1330 — the claimant becomes a validated promoter contact (best-effort).
+      await recordClaimantAsPromoterContact(db, {
+        promoterId: claim.entityId,
+        userId,
+        via: "signup-email-match",
+        now,
+      });
     }
     await db
       .insert(userRoles)

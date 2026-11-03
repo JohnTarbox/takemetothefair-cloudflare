@@ -265,12 +265,19 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
         .max(500)
         .optional()
         .describe("Max rows to return (default 15, max 500)."),
+      include_export_rows: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1255 — include queries that are rows of someone else's GSC CSV export typed into Google (e.g. 'craft fairs on cape cod this weekend,410,3051,13.44%,3.16'). Excluded by default; 0 clicks, ~7k impressions May–Sep 2026."
+        ),
       refresh: z.boolean().optional().describe("Bypass the 15-minute cache (default false)."),
     },
     async (params) => {
       try {
         const qs = buildDateQuery(params);
         qs.set("path", params.path);
+        if (params.include_export_rows) qs.set("include_export_rows", "1");
         if (params.rowLimit !== undefined) qs.set("rowLimit", String(params.rowLimit));
         const data = await fetchAnalyticsJson(
           `/api/admin/analytics/search-queries?${qs.toString()}`
@@ -319,6 +326,12 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
         .enum(["impressions", "clicks", "position", "ctr"])
         .optional()
         .describe("Sort order (default impressions desc; position sorts ascending)."),
+      include_export_rows: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1255 — include queries that are rows of someone else's GSC CSV export typed into Google (e.g. 'craft fairs on cape cod this weekend,410,3051,13.44%,3.16'). Excluded by default; 0 clicks, ~7k impressions May–Sep 2026."
+        ),
       refresh: z.boolean().optional().describe("Bypass the 15-minute cache (default false)."),
     },
     async (params) => {
@@ -329,6 +342,7 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
         if (params.minImpressions !== undefined)
           qs.set("minImpressions", String(params.minImpressions));
         if (params.orderBy) qs.set("orderBy", params.orderBy);
+        if (params.include_export_rows) qs.set("include_export_rows", "1");
         const q = qs.toString();
         const data = await fetchAnalyticsJson(
           `/api/admin/analytics/search-queries/site${q ? "?" + q : ""}`
@@ -1018,7 +1032,11 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
     "get_site_health_issues",
     [
       "Unified Bing + GSC site health issues with snooze state. Filter by source",
-      "(BING_SCAN | BING_SITEMAP | GSC_SITEMAP | GSC_URL_INSPECTION), severity, or hideSnoozed.",
+      "(BING_SCAN | BING_SITEMAP | GSC_SITEMAP | GSC_URL_INSPECTION | URL_HEALTH), severity, or hideSnoozed.",
+      "URL_HEALTH (OPE-1280) = an outbound website we store on a promoter/vendor that reads",
+      "domain_takeover / closure_notice (ERROR) or http_error / unreachable (WARNING) on its daily",
+      "re-check; the message names the field and the date it was last checked, and the row closes",
+      "itself when a re-check reads ok.",
       "Severities actually present are ERROR | WARNING | INFO — NOT 'NOTICE', which this",
       "description claimed for months and which has never existed in the table.",
       "",
@@ -1030,7 +1048,9 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
       "Admin only.",
     ].join(" "),
     {
-      source: z.enum(["BING_SCAN", "BING_SITEMAP", "GSC_SITEMAP", "GSC_URL_INSPECTION"]).optional(),
+      source: z
+        .enum(["BING_SCAN", "BING_SITEMAP", "GSC_SITEMAP", "GSC_URL_INSPECTION", "URL_HEALTH"])
+        .optional(),
       severity: z.enum(["ERROR", "WARNING", "NOTICE"]).optional(),
       hideSnoozed: z.boolean().optional(),
     },
@@ -1160,7 +1180,7 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
 
   server.tool(
     "get_first_party_events",
-    "Query first-party analytics events stored in D1. Includes server-side admin actions (event_status_change, vendor_status_change) and beacon-captured client events (outbound_application_click, outbound_ticket_click, filter_applied, internal_search_performed). Filter by category or event name; default window is the last 30 days. Admin only.",
+    "Query first-party analytics events stored in D1. Includes server-side admin actions (event_status_change, vendor_status_change) and beacon-captured client events (outbound_application_click, outbound_ticket_click, filter_applied, internal_search_performed). Filter by category or event name; default window is the last 30 days. Synthetic rows (properties.synthetic=true: the funnel canary, production-verify, self-declared crawlers) are EXCLUDED unless include_synthetic=true (OPE-1498; marker exists from 2026-10-19). Admin only.",
     {
       category: z
         .string()
@@ -1184,11 +1204,18 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
         .max(500)
         .optional()
         .describe("Max recent rows returned. Default 100, max 500."),
+      include_synthetic: z
+        .boolean()
+        .optional()
+        .describe(
+          "Include synthetic rows (funnel canary, production-verify, crawlers). Default false."
+        ),
     },
     async (params) => {
       try {
         const qs = new URLSearchParams();
         if (params.category) qs.set("category", params.category);
+        if (params.include_synthetic) qs.set("include_synthetic", "true");
         if (params.name) qs.set("name", params.name);
         if (params.days) qs.set("days", String(params.days));
         if (params.limit) qs.set("limit", String(params.limit));
@@ -1475,7 +1502,11 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
       "(auto-apply share = auto_merged / (auto_merged + approved)), `blocked`",
       "(blocked-rate grouped by enrichment_blocked_reason), `candidatesTrend`",
       "(candidates created per week), and `ruleAgreement` (per field+method agreement",
-      "% with a `promotable` flag). Use this to track how promoter enrichment is",
+      "% with a `promotable` flag). OPE-1279: `queueAppliableGap` is the NEEDS_ENRICHMENT",
+      "queue's appliable-gap distribution (gtZero/gtTwo) — a drain yielding 0 on a gtTwo-heavy",
+      "queue means the extractor is failing; on a gap-0/1 queue it means the head is",
+      "already full — plus `exhausted` and `queueEmptyAttempts` (rows one empty live run from",
+      "EXHAUSTED). Use this to track how promoter enrichment is",
       "converging and which extraction rules are safe to auto-apply. Read-only, admin only.",
     ].join(" "),
     {},
@@ -1509,8 +1540,10 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
       "(approved/rejected/auto_merged), returns agreements (approved+auto_merged),",
       "disagreements (rejected), agreementPct, sampleSize, plus the HUMAN-only figures",
       "(humanApproved, humanRejected, humanSampleSize, humanAgreementPct — auto_merged",
-      "excluded, OPE-963) and a `promotable` flag gated on the human figure",
-      "(≥95% over ≥20 human decisions). agreementPct counts a rule's own auto-applies",
+      "excluded, OPE-963; system:* closes such as system:promoter-merge excluded and reported",
+      "as systemClosed, OPE-249) and a `promotable` flag gated on the CLEAN human figure",
+      "(cleanHumanAgreementPct ≥95% over ≥20 decisions on unflagged candidates — the only rows",
+      "auto-merge ever applies, OPE-249). agreementPct counts a rule's own auto-applies",
       "as agreement, so do not use it to judge a rule. Use this to decide which extraction",
       "rules are reliable enough to raise to auto-apply. Sorted by sample size.",
       "Read-only, admin only.",

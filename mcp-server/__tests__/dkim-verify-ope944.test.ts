@@ -93,8 +93,8 @@ const stubResolver = (p: string, k = "rsa"): TxtResolver => {
 };
 
 const ORGANIZER_HEADERS: Array<[string, string]> = [
-  ["From", "Sarah Rodriguez <recdirector@newgloucester.com>"],
-  ["To", "Sarah Rodriguez <recdirector@newgloucester.com>"],
+  ["From", "Riley Sample <basildesk@newgloucester.com>"],
+  ["To", "Riley Sample <basildesk@newgloucester.com>"],
   ["Subject", "New Gloucester Community Fair - Information"],
   ["Date", "Thu, 10 Sep 2026 12:04:00 -0400"],
 ];
@@ -115,7 +115,7 @@ describe("OPE-944 — a genuine signature verifies", () => {
     expect(r.verdict).toBe("verified");
     expect(r.domain).toBe("newgloucester.com");
     expect(r.selector).toBe("sel1");
-    expect(r.fromAddress).toBe("recdirector@newgloucester.com");
+    expect(r.fromAddress).toBe("basildesk@newgloucester.com");
     expect(r.alignedWithFrom).toBe(true);
   });
 
@@ -162,7 +162,7 @@ describe("OPE-944 — tampering flips the verdict (the ticket's acceptance)", ()
     });
     // Re-point the From at an impostor. The body is untouched, so this can only
     // be caught by the signature check — which is the half that needs the key.
-    const tampered = raw.replace("recdirector@newgloucester.com>", "impostor@example.net>");
+    const tampered = raw.replace("basildesk@newgloucester.com>", "impostor@example.net>");
 
     const r = await verifyDkim(tampered, stubResolver(publicKeyB64));
     expect(r.verdict).toBe("failed");
@@ -193,14 +193,14 @@ describe("OPE-944 — tampering flips the verdict (the ticket's acceptance)", ()
 describe("OPE-944 — the verdicts that are NOT failures", () => {
   it("no DKIM-Signature at all → no_signature, not failed", async () => {
     const raw = [
-      "From: Sarah Rodriguez <recdirector@newgloucester.com>",
+      "From: Riley Sample <basildesk@newgloucester.com>",
       "Subject: unsigned",
       "",
       "body",
     ].join(CRLF);
     const r = await verifyDkim(raw, stubResolver("unused"));
     expect(r.verdict).toBe("no_signature");
-    expect(r.fromAddress).toBe("recdirector@newgloucester.com");
+    expect(r.fromAddress).toBe("basildesk@newgloucester.com");
   });
 
   it("DNS does not answer → key_unavailable, NOT failed (rotated selector)", async () => {
@@ -260,7 +260,7 @@ describe("OPE-944 — the verdicts that are NOT failures", () => {
   it("a subdomain signature IS aligned (relaxed alignment)", async () => {
     const { raw, publicKeyB64 } = await signMessage({
       headers: [
-        ["From", "Sarah <recdirector@mail.newgloucester.com>"],
+        ["From", "Sarah <cloverdesk@mail.newgloucester.com>"],
         ["Subject", "s"],
       ],
       body: "b\r\n",
@@ -315,8 +315,8 @@ describe("OPE-944 — canonicalization units (RFC 6376)", () => {
   });
 
   it("extractAddress prefers the angle-bracket form", () => {
-    expect(extractAddress(" Sarah Rodriguez <RecDirector@NewGloucester.com>")).toBe(
-      "recdirector@newgloucester.com"
+    expect(extractAddress(" Riley Sample <Basildesk@NewGloucester.com>")).toBe(
+      "basildesk@newgloucester.com"
     );
     expect(extractAddress(" bare@example.com ")).toBe("bare@example.com");
   });

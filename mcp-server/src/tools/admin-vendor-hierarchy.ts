@@ -33,6 +33,7 @@ import { vendors, eventVendors, vendorSlugHistory, adminActions } from "../schem
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { jsonContent } from "../helpers.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 
 // D1 caps bound params at 100 per statement (per [[feedback_d1_batch_param_limit]]).
 // 50 is a safe batch size for inArray delete chains.
@@ -250,8 +251,15 @@ export function registerVendorHierarchyTools(server: McpServer, db: Db, auth: Au
           }),
           createdAt: new Date(),
         });
-      } catch {
+      } catch (error) {
         // Audit failure must not fail the relationship write itself.
+        await logAuditWriteFailure(db, {
+          source: "mcp:tool:set_vendor_relationship",
+          action: "vendor.relationship",
+          targetType: "vendor",
+          targetId: params.vendor_id,
+          error,
+        });
       }
 
       return {
@@ -499,8 +507,15 @@ export function registerVendorHierarchyTools(server: McpServer, db: Db, auth: Au
           }),
           createdAt: new Date(),
         });
-      } catch {
+      } catch (error) {
         // Audit failure must not fail the policy write itself.
+        await logAuditWriteFailure(db, {
+          source: "mcp:tool:set_vendor_display_policy",
+          action: "vendor.display_policy",
+          targetType: "vendor",
+          targetId: params.parent_vendor_id,
+          error,
+        });
       }
 
       return {
@@ -689,9 +704,16 @@ export function registerVendorHierarchyTools(server: McpServer, db: Db, auth: Au
           changedAt: new Date(),
           changedBy: auth.userId ?? null,
         });
-      } catch {
+      } catch (error) {
         // History-write failure is non-fatal; the redirect will still
-        // work via redirectToVendorId set below. Logged as audit.
+        // work via redirectToVendorId set below.
+        await logAuditWriteFailure(db, {
+          source: "mcp:tool:set_vendor_alias",
+          action: "vendor_slug_history",
+          targetType: "vendor",
+          targetId: params.canonical_vendor_id,
+          error,
+        });
       }
 
       // 3. Soft-delete the alias + set redirect target + set alias_of.
@@ -727,8 +749,15 @@ export function registerVendorHierarchyTools(server: McpServer, db: Db, auth: Au
           }),
           createdAt: new Date(),
         });
-      } catch {
+      } catch (error) {
         // Audit failure must not fail the alias write itself.
+        await logAuditWriteFailure(db, {
+          source: "mcp:tool:set_vendor_alias",
+          action: "vendor.alias",
+          targetType: "vendor",
+          targetId: params.canonical_vendor_id,
+          error,
+        });
       }
 
       return {

@@ -37,11 +37,13 @@ export function VendorShowsByYear({ series }: { series: VendorShowSeries[] }) {
               <div className="mt-1.5 flex flex-wrap gap-2">
                 {s.years.map((y) => (
                   <Link
-                    key={`${s.seriesSlug}-${y.year ?? y.eventSlug}`}
-                    href={y.year ? `/events/${s.seriesSlug}/${y.year}` : `/events/${y.eventSlug}`}
+                    // OPE-1326 — keyed by event, not year: two editions of one
+                    // year are two chips (a year key collided on React).
+                    key={y.eventSlug}
+                    href={y.path}
                     className="rounded border border-secondary/20 px-2 py-0.5 text-sm font-medium text-secondary hover:border-terracotta hover:text-terracotta"
                   >
-                    {y.year ?? "—"}
+                    {y.label}
                   </Link>
                 ))}
               </div>

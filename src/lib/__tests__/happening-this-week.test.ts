@@ -7,10 +7,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { and, gte, lte } from "drizzle-orm";
+import { and, lte } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { events } from "../db/schema";
-import { hasOccurrenceInWindowOrUndated, whenWindowEnd, utcDateStr } from "../event-dates";
+import {
+  hasOccurrenceInWindowOrUndated,
+  upcomingEndPredicate,
+  whenWindowEnd,
+  utcDateStr,
+} from "../event-dates";
 
 const SCHEMA_SQL = `
   CREATE TABLE events (
@@ -65,7 +70,7 @@ describe("hasOccurrenceInWindowOrUndated (OPE-48)", () => {
       .from(events)
       .where(
         and(
-          gte(events.endDate, now),
+          upcomingEndPredicate(now),
           lte(events.startDate, horizon),
           hasOccurrenceInWindowOrUndated(now, horizon)
         )

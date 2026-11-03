@@ -1,16 +1,23 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { eq, or, like } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { venues } from "@/lib/db/schema";
+import { containsCI } from "@/lib/db/contains-ci";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
+// OPE-1376 — length caps. This route is public; with no cap a long first word
+// built a LIKE pattern past D1's 50-char ceiling (a 500), and the Levenshtein
+// below is O(n·m) in the input length. 200 is well past any real venue name.
+// The DB filter itself uses containsCI (instr), so no in-range input can trip
+// the LIKE cap either.
+const MATCH_VENUE_NAME_MAX = 200;
 const matchVenueSchema = z.object({
-  venueName: z.string().min(1),
-  venueCity: z.string().nullable().optional(),
-  venueState: z.string().nullable().optional(),
+  venueName: z.string().trim().min(1).max(MATCH_VENUE_NAME_MAX),
+  venueCity: z.string().max(100).nullable().optional(),
+  venueState: z.string().max(100).nullable().optional(),
 });
 
 // Normalize a name for comparison
@@ -94,7 +101,7 @@ export async function POST(request: NextRequest) {
         .where(
           or(
             eq(venues.state, venueState.toUpperCase()),
-            like(venues.name, `%${venueName.split(" ")[0]}%`)
+            containsCI(venues.name, venueName.split(/\s+/)[0])
           )
         )
         .limit(50);
@@ -110,7 +117,7 @@ export async function POST(request: NextRequest) {
           address: venues.address,
         })
         .from(venues)
-        .where(like(venues.name, `%${venueName.split(" ")[0]}%`))
+        .where(containsCI(venues.name, venueName.split(/\s+/)[0]))
         .limit(50);
     }
 

@@ -218,20 +218,32 @@ export function resolveOccurrence(input: ResolveInput): Resolution {
  * Prefers explicit `event_days` rows (authoritative — they encode closures and
  * vendor-only days). Falls back to walking the start→end range for events that
  * predate per-day rows. Capped at 60 days so a bad end-date can't spin.
+ *
+ * OPE-1354 — `aroundLocalDate` clips the range walk to that date ± 1 day
+ * before the cap applies. Without it, the walk always starts at the event's
+ * START, so a season-long range-only event (started 06-05, runs to 10-02)
+ * expanded to its first 60 days and could never contain a September photo.
+ * The photo matcher only ever asks "does this event contain THIS date", so
+ * the window around that date is the whole question.
  */
 export function expandEventDates(
   eventDayDates: string[],
   startDate: Date | null,
-  endDate: Date | null
+  endDate: Date | null,
+  aroundLocalDate?: string
 ): string[] {
   if (eventDayDates.length > 0) return eventDayDates;
   if (!startDate) return [];
   const out: string[] = [];
   const end = endDate ?? startDate;
-  const cursor = new Date(
-    Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate())
-  );
-  const last = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+  let first = Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate());
+  let last = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+  const around = aroundLocalDate ? Date.parse(`${aroundLocalDate}T00:00:00Z`) : NaN;
+  if (!Number.isNaN(around)) {
+    first = Math.max(first, around - 86_400_000);
+    last = Math.min(last, around + 86_400_000);
+  }
+  const cursor = new Date(first);
   let guard = 0;
   while (cursor.getTime() <= last && guard++ < 60) {
     out.push(cursor.toISOString().slice(0, 10));

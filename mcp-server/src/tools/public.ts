@@ -21,7 +21,11 @@ import {
   containsCI,
   nameOrSlugContains,
 } from "../schema.js";
-import { vendorLinkIsPublicallyVisible, rotationCdnOption } from "@takemetothefair/db-schema";
+import {
+  vendorLinkIsPublicallyVisible,
+  rotationCdnOption,
+  upcomingEndPredicate,
+} from "@takemetothefair/db-schema";
 import { PRIMARY_AUDIENCE, PUBLIC_ACCESS, EVENT_STATUS_VALUES } from "@takemetothefair/constants";
 import {
   parseJsonArray,
@@ -54,6 +58,7 @@ import {
 } from "./event-window.js";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import type { SQL } from "drizzle-orm";
+import { occurrenceYear } from "@takemetothefair/utils";
 
 /**
  * OPE-438 — walk a `*_slug_history` table to the current slug, mirroring what
@@ -1249,7 +1254,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .select({ id: events.id })
         .from(events)
         .where(
-          and(eq(events.venueId, venue.id), publicEventWhere(), gte(events.endDate, new Date()))
+          and(eq(events.venueId, venue.id), publicEventWhere(), upcomingEndPredicate(new Date()))
         );
 
       return {
@@ -1458,7 +1463,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
             eq(eventVendors.vendorId, vendor.id),
             inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES]),
             publicEventWhere(),
-            gte(events.endDate, new Date())
+            upcomingEndPredicate(new Date())
           )
         );
 
@@ -1622,7 +1627,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
           and(
             eq(events.promoterId, promoter.id),
             publicEventWhere(),
-            gte(events.endDate, new Date())
+            upcomingEndPredicate(new Date())
           )
         );
 
@@ -1783,6 +1788,8 @@ export function registerPublicTools(server: McpServer, db: Db) {
           // EH3 P3.4 — series tagging (null until the backfill links events).
           seriesId: events.seriesId,
           seriesSlug: eventSeries.canonicalSlug,
+          seriesEditionMode: eventSeries.editionMode,
+          editionKey: events.editionKey,
           seriesName: eventSeries.name,
         })
         .from(eventVendors)
@@ -1816,7 +1823,10 @@ export function registerPublicTools(server: McpServer, db: Db) {
         series_id: r.seriesId ?? null,
         series_slug: r.seriesSlug ?? null,
         series_name: r.seriesName ?? null,
-        year: r.startDate ? new Date(r.startDate).getUTCFullYear() : null,
+        year: occurrenceYear(r.startDate),
+        // OPE-1326 — on a multi-edition series two shows can share a year;
+        // group by this instead. Null on every annual series.
+        edition_key: r.seriesEditionMode === "multi" ? (r.editionKey ?? null) : null,
       }));
 
       return {

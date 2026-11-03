@@ -3,7 +3,11 @@
  * The acceptance fixture: an aggregator import with no citation lands false.
  */
 import { describe, expect, it } from "vitest";
-import { gateDatesConfirmed } from "../dates-confirmed-gate";
+import {
+  gateDatesConfirmed,
+  isQualifyingDateCitation,
+  organizerHostsFrom,
+} from "../dates-confirmed-gate";
 
 const organizer = {
   fieldName: "start_date",
@@ -59,5 +63,64 @@ describe("which existing citations qualify", () => {
 
   it("accepts an active organizer start_date citation", () => {
     expect(gateDatesConfirmed({ requested: true, citations: [organizer] }).value).toBe(true);
+  });
+});
+
+// OPE-1231 — Freeport Fall Festival: the organizer (Visit Freeport) publishes on
+// visitfreeport.com, which is ALSO on the aggregator list. The organizer's own
+// page must qualify; any other aggregator page must not.
+describe("OPE-1231 — the promoter's own site is the organizer, even on an aggregator host", () => {
+  const freeport = {
+    fieldName: "start_date",
+    state: "active",
+    sourceType: "official_website",
+    sourceUrl: "https://www.visitfreeport.com/freeport-fall-festival/",
+  };
+  const hosts = organizerHostsFrom(["https://www.visitfreeport.com"]);
+
+  it("normalizes the promoter's website to a bare host", () => {
+    expect(hosts).toEqual(["visitfreeport.com"]);
+    expect(organizerHostsFrom([null, undefined, "", "not a url"])).toEqual([]);
+  });
+
+  it("the promoter's own page confirms the dates", () => {
+    expect(
+      gateDatesConfirmed({ requested: true, citations: [freeport], organizerHosts: hosts })
+    ).toEqual({
+      value: true,
+      downgraded: false,
+    });
+  });
+
+  it("DRIVEN TO FAILURE: without the promoter host it still downgrades — and now says why", () => {
+    const g = gateDatesConfirmed({ requested: true, citations: [freeport] });
+    expect(g.value).toBe(false);
+    expect(g.warning).toContain("visitfreeport.com, an aggregator site");
+    expect(g.warning).not.toContain("there is no active start_date citation");
+  });
+
+  it("an aggregator that is NOT this event's promoter still does not qualify", () => {
+    const lakes = { ...freeport, sourceUrl: "https://www.lakesregion.org/events/some-fair" };
+    expect(
+      gateDatesConfirmed({ requested: true, citations: [lakes], organizerHosts: hosts }).value
+    ).toBe(false);
+  });
+
+  it("a community submission on the promoter's host still does not qualify", () => {
+    const sub = { ...freeport, sourceType: "user_submitted" };
+    expect(
+      gateDatesConfirmed({ requested: true, citations: [sub], organizerHosts: hosts }).value
+    ).toBe(false);
+  });
+
+  it("with no citation at all it still downgrades with the original message", () => {
+    const g = gateDatesConfirmed({ requested: true, citations: [], organizerHosts: hosts });
+    expect(g.value).toBe(false);
+    expect(g.warning).toContain("there is no active start_date citation");
+  });
+
+  it("isQualifyingDateCitation takes the same hosts (the sync-stale sweep's path)", () => {
+    expect(isQualifyingDateCitation(freeport)).toBe(false);
+    expect(isQualifyingDateCitation(freeport, hosts)).toBe(true);
   });
 });

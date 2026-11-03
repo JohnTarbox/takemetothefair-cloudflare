@@ -48,8 +48,8 @@ Date: Mon, Aug 17, 2026, 10:53
 Subject: [JohnTarbox/takemetothefair-cloudflare] Run failed: CI - main
 (475a81a)
 To: JohnTarbox/takemetothefair-cloudflare <
-takemetothefair-cloudflare@noreply.github.com>
-Cc: Ci activity <ci_activity@noreply.github.com>
+iris1desk@noreply.github.com>
+Cc: Ci activity <jasmine1desk@noreply.github.com>
 
 
 

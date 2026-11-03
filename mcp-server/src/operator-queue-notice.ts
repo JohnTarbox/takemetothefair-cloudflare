@@ -3,7 +3,7 @@
  * waiting in it.
  *
  * ── The specimen ────────────────────────────────────────────────────────────
- * Kenneth Soares claimed `gooseberry-leather-company` on 2026-07-22 and offered
+ * Kendall Sample claimed `gooseberry-leather-company` on 2026-07-22 and offered
  * to verify from his business domain. Nobody ever asked. The claim sat PENDING
  * for 36 days and was found only because an unrelated sweep happened to read
  * the table — which at the time held TWO ROWS IN ITS ENTIRE HISTORY. It was not
@@ -57,6 +57,27 @@ import {
 } from "./events/tentative-queue.js";
 
 const SOURCE = "mcp:schedule:operator-queue-notice";
+
+/** OPE-1290 — how far ahead an unpinned venue becomes an operator task. */
+export const UNPINNED_IMMINENT_DAYS = 7;
+
+/** The latest `venue.geocode.refused` payload (OPE-408 / #1513), if any. */
+export function parseRefusal(
+  json: string | null
+): { status: string; reason: string | null; candidate: string | null } | null {
+  if (!json) return null;
+  try {
+    const p = JSON.parse(json) as { status?: unknown; reason?: unknown; candidate?: unknown };
+    if (typeof p.status !== "string") return null;
+    return {
+      status: p.status,
+      reason: typeof p.reason === "string" ? p.reason : null,
+      candidate: typeof p.candidate === "string" ? p.candidate : null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /** `email_send_ledger.source` for this notice — also its once-per-day key. */
 export const NOTICE_EMAIL_SOURCE = "operator-queue-notice";
@@ -143,6 +164,13 @@ export interface OperatorQueueCounts {
    */
   droppedRealAttachments: number;
   /**
+   * OPE-1550 — inbound images in the last 7 days refused because of their
+   * FORMAT (JPEG XL, AVIF, TIFF, BMP — `attachment_skips[].detectedFormat`).
+   * Nothing tells the sender, so this line is the only place a refused photo
+   * reaches a person. Expected steady state is zero.
+   */
+  refusedFormatAttachments: number;
+  /**
    * OPE-1011 — upcoming public events whose `start_date` or `public_start_date`
    * renders a DIFFERENT calendar date in America/New_York than in UTC.
    *
@@ -163,6 +191,16 @@ export interface OperatorQueueCounts {
    * one day's notice.
    */
   authEmailProblems: number;
+  /**
+   * OPE-1290 — APPROVED/TENTATIVE events starting within UNPINNED_IMMINENT_DAYS
+   * whose venue has no map pin (`latitude IS NULL`). Nothing else connects an
+   * unpinned venue to an imminent event: on 10-01 a Freeport hotel ran an
+   * APPROVED event with no pin and seven on-site GPS photos matched nothing.
+   * FORMER venues and venues the gate calls `not-a-point` are excluded.
+   */
+  unpinnedVenueImminent: number;
+  /** OPE-1290 landmark: upcoming events the unpinned-venue check examined. */
+  unpinnedVenueExamined?: number;
   /** Oldest waiting row in either queue, in days. */
   oldestDays: number;
   /** Human-readable lines for the alert body. */
@@ -185,8 +223,10 @@ export function decideOperatorQueueNotice(
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
     | "droppedRealAttachments"
+    | "refusedFormatAttachments"
     | "venueDateShifts"
     | "authEmailProblems"
+    | "unpinnedVenueImminent"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -213,8 +253,10 @@ export function totalWaiting(
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
     | "droppedRealAttachments"
+    | "refusedFormatAttachments"
     | "venueDateShifts"
     | "authEmailProblems"
+    | "unpinnedVenueImminent"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -239,8 +281,12 @@ export function totalWaiting(
     // on a completely empty queue.
     (counts.agedAwaitingDecision ?? 0) +
     (counts.droppedRealAttachments ?? 0) +
+    // OPE-1550 — `?? 0` for the NaN reason above.
+    (counts.refusedFormatAttachments ?? 0) +
     (counts.venueDateShifts ?? 0) +
-    (counts.authEmailProblems ?? 0)
+    (counts.authEmailProblems ?? 0) +
+    // OPE-1290 — `?? 0` for the reason the comment above gives.
+    (counts.unpinnedVenueImminent ?? 0)
   );
 }
 
@@ -492,6 +538,7 @@ export async function readOperatorQueues(
   // specimen — against 94 rows carrying attachments. So the expected steady
   // state is zero, which is what makes a non-zero worth an email.
   let droppedRealAttachments = 0;
+  let refusedFormatAttachments = 0;
   try {
     const recent = await db
       .select({ id: inboundEmails.id, skips: inboundEmails.attachmentSkips })
@@ -503,8 +550,13 @@ export async function readOperatorQueues(
         )
       );
     for (const r of recent) {
-      let parsed: Array<{ name?: string; reason?: string; furniture?: boolean; size?: number }> =
-        [];
+      let parsed: Array<{
+        name?: string;
+        reason?: string;
+        furniture?: boolean;
+        size?: number;
+        detectedFormat?: string;
+      }> = [];
       try {
         parsed = JSON.parse(r.skips ?? "[]");
       } catch {
@@ -519,6 +571,20 @@ export async function readOperatorQueues(
         lines.push(
           `⚠️ ${real.length} real attachment(s) dropped by the count cap on inbound ${r.id} — ` +
             `${real.map((k) => k.name ?? "(unnamed)").join(", ")} (OPE-760)`
+        );
+      }
+      // OPE-1550 — an image we refused because of its FORMAT (JPEG XL, AVIF,
+      // TIFF…). Nothing replies to the sender about it, so without this line the
+      // only record is `attachment_skips` on the row, which nobody reads unprompted.
+      const refusedFormat = parsed.filter(
+        (k) => k.reason === "unrecognized-content" && k.detectedFormat && k.furniture !== true
+      );
+      if (refusedFormat.length > 0) {
+        refusedFormatAttachments += refusedFormat.length;
+        lines.push(
+          `⚠️ ${refusedFormat.length} image(s) refused for format on inbound ${r.id} — ` +
+            `${refusedFormat.map((k) => `${k.name ?? "(unnamed)"} [${k.detectedFormat}]`).join(", ")} ` +
+            `(OPE-1550: convert and attach by hand, or reply asking for a JPEG)`
         );
       }
     }
@@ -572,6 +638,70 @@ export async function readOperatorQueues(
   } catch {
     // Observability must not take the notice down with it.
   }
+
+  // OPE-1290 — an imminent public event on a venue with no map pin.
+  //
+  // The nightly geocode sweep re-asks the gate and gets the same refusal (39 of
+  // 47 `low-confidence` on 10-01), so an unpinned venue stays unpinned; what
+  // changes is the calendar moving an event toward it. That is when a person
+  // can still pin it by hand. Measured 10-04: 5 of 64 events starting in the
+  // next 7 days sat on an unpinned venue.
+  let unpinnedVenueImminent = 0;
+  let unpinnedVenueExamined = 0;
+  try {
+    const nowSec = Math.floor(now.getTime() / 1000);
+    const fromSec = nowSec - 86400;
+    const toSec = nowSec + UNPINNED_IMMINENT_DAYS * 86400;
+    const [examined] = await db.all<{ n: number }>(sql`
+      SELECT COUNT(*) AS n FROM events
+      WHERE status IN ('APPROVED', 'TENTATIVE') AND merged_into IS NULL
+        AND start_date >= ${fromSec} AND start_date < ${toSec}
+    `);
+    unpinnedVenueExamined = Number(examined?.n ?? 0);
+    const rows = await db.all<{
+      slug: string;
+      start_date: number;
+      venue_name: string;
+      city: string | null;
+      state: string | null;
+      refusals: number | null;
+      last_refusal: string | null;
+    }>(sql`
+      SELECT e.slug, e.start_date, v.name AS venue_name, v.city, v.state,
+             v.geocode_refusals AS refusals,
+             (SELECT a.payload_json FROM admin_actions a
+               WHERE a.action = 'venue.geocode.refused' AND a.target_id = v.id
+               ORDER BY a.created_at DESC LIMIT 1) AS last_refusal
+      FROM events e JOIN venues v ON v.id = e.venue_id
+      WHERE e.status IN ('APPROVED', 'TENTATIVE') AND e.merged_into IS NULL
+        AND e.start_date >= ${fromSec} AND e.start_date < ${toSec}
+        AND v.latitude IS NULL
+        AND v.status <> 'FORMER'
+      ORDER BY e.start_date
+    `);
+    for (const r of rows) {
+      const verdict = parseRefusal(r.last_refusal);
+      // A venue the gate says is not a single point (a statewide trail, a
+      // multi-site event) is correctly unpinned — not an operator task.
+      if (verdict?.status === "not-a-point") continue;
+      unpinnedVenueImminent++;
+      lines.push(
+        `📍 ${r.slug} starts ${new Date(Number(r.start_date) * 1000).toISOString().slice(0, 10)} at ` +
+          `"${r.venue_name}"${r.city ? ` (${r.city}${r.state ? `, ${r.state}` : ""})` : ""} — venue has no map pin` +
+          (verdict
+            ? `; gate: ${verdict.status}${verdict.reason ? ` (${verdict.reason})` : ""}` +
+              (verdict.candidate ? `, Google's candidate: ${verdict.candidate}` : "")
+            : "") +
+          (r.refusals ? `; sweep refusals: ${r.refusals}` : "") +
+          ` (OPE-1290)`
+      );
+    }
+  } catch {
+    // Observability must not take the notice down with it.
+  }
+  console.log(
+    `[operator-queue] OPE-1290 unpinned-venue check examined ${unpinnedVenueExamined} upcoming event(s), flagged ${unpinnedVenueImminent}`
+  );
 
   // OPE-599 rework — auth email that failed to land, and registrations that
   // just crossed the verification window unconfirmed. Arrival-based, so each
@@ -638,8 +768,11 @@ export async function readOperatorQueues(
     pendingOperatorDrafts,
     agedAwaitingDecision,
     droppedRealAttachments,
+    refusedFormatAttachments,
     venueDateShifts,
     authEmailProblems,
+    unpinnedVenueImminent,
+    unpinnedVenueExamined,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
   };

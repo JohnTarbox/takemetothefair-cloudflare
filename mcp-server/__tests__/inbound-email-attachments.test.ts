@@ -193,6 +193,9 @@ function futureDate(days: number): string {
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+// OPE-1253 — poster/body text states its events' (relative) dates: grounding
+// drops a date the source never names, and the email lane refuses a dateless
+// create. (A poster's OCR text now counts as its source — it did not before.)
 describe("OPE-68 attachment OCR → pipeline", () => {
   it("creates a PENDING event from an OCR'd poster and sets the hero + signal", async () => {
     const row: RowSnapshot = {
@@ -208,7 +211,7 @@ describe("OPE-68 attachment OCR → pipeline", () => {
       bodyEvents: [{ name: "Flyer Fest", startDate: futureDate(45), venueName: "City Park" }],
     });
     const { wf, toMarkdownCalls } = makeWorkflow({
-      markdown: "Flyer Fest happening July 4 2026 at City Park — vendors welcome!",
+      markdown: `Flyer Fest happening ${futureDate(45)} at City Park — vendors welcome!`,
     });
     const { step, labels } = makeStep(row);
 
@@ -237,14 +240,13 @@ describe("OPE-68 attachment OCR → pipeline", () => {
       attachmentRefs: ref("image/png"),
       classifiedSubIntent: "new_event",
       // > 20 chars with a real event → body pseudo-source is created too.
-      bodyTextExcerpt:
-        "Spring Fair is May 5 2026 at the Town Green. Details on the attached poster!",
+      bodyTextExcerpt: `Spring Fair is ${futureDate(30)} at the Town Green. Details on the attached poster!`,
     };
     // Both the body source and the attachment source extract the SAME event.
     const { created, submitBodies } = installFetch({
       bodyEvents: [{ name: "Spring Fair", startDate: futureDate(30), venueName: "Town Green" }],
     });
-    const { wf } = makeWorkflow({ markdown: "Spring Fair May 5 2026 Town Green" });
+    const { wf } = makeWorkflow({ markdown: `Spring Fair ${futureDate(30)} Town Green` });
     const { step } = makeStep(row);
 
     const result = await wf.runSubmitPipeline(step, "row-1");
@@ -363,7 +365,9 @@ describe("OPE-954 — OCR results that sum past 1 MiB", () => {
       bodyEvents: [{ name: "Poster Fair", startDate: futureDate(40), venueName: "Grange Hall" }],
     });
     // ~400 KB of OCR text per image: 4 × 400 KB ≫ 1 MiB unbounded.
-    const { wf } = makeWorkflow({ markdown: `Poster Fair at Grange Hall. ${"x".repeat(400_000)}` });
+    const { wf } = makeWorkflow({
+      markdown: `Poster Fair ${futureDate(40)} at Grange Hall. ${"x".repeat(400_000)}`,
+    });
     const { step, resultBytes } = makeCappedStep(row);
 
     const result = await wf.runSubmitPipeline(step, "row-1");
@@ -383,8 +387,7 @@ describe("OPE-954 — OCR results that sum past 1 MiB", () => {
       attachmentRefs: refs4,
       // Prose-only routing (no URL), so the body alone must carry the event.
       classifiedSubIntent: "free_text",
-      bodyTextExcerpt:
-        "Harvest Fair is on the Town Green this fall, vendors welcome, details attached below.",
+      bodyTextExcerpt: `Harvest Fair is on the Town Green ${futureDate(50)}, vendors welcome, details attached below.`,
     };
     const { created } = installFetch({
       bodyEvents: [{ name: "Harvest Fair", startDate: futureDate(50), venueName: "Town Green" }],

@@ -18,6 +18,11 @@ const promoterNav = [
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
+// OPE-1380 — a nonce-CSP route (src/lib/csp.ts): it must render per request,
+// or the HTML carries no nonce and every script on it is blocked. Guarded by
+// scripts/check-nonce-csp-routes.ts.
+export const dynamic = "force-dynamic";
+
 export default async function PromoterLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
 

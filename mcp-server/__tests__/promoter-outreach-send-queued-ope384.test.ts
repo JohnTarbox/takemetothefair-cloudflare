@@ -59,7 +59,7 @@ beforeEach(() => {
       id: "p-pratt",
       companyName: "Pratt Street Historic District",
       slug: "pratt-street-historic-district",
-      contactEmail: "rory@hartfordprints.com",
+      contactEmail: "tamarack1desk@hartfordprints.com",
     } as never)
     .run();
   db.insert(events)
@@ -77,7 +77,7 @@ beforeEach(() => {
       promoterId: "p-pratt",
       eventId: "e-pratt",
       channel: "email",
-      toAddress: "rory@hartfordprints.com",
+      toAddress: "tamarack1desk@hartfordprints.com",
       subject: "Pratt Street Winter Village 2026 dates?",
       bodyText: APPROVED_BODY,
       status: "queued",
@@ -100,7 +100,7 @@ describe("send_promoter_email(attempt_id)", () => {
     expect(r).toMatchObject({ success: true, delivered_from_queue: true });
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({
-      to: "rory@hartfordprints.com",
+      to: "tamarack1desk@hartfordprints.com",
       subject: "Pratt Street Winter Village 2026 dates?",
       text: APPROVED_BODY,
       source: "email:promoter-outreach",
@@ -147,7 +147,11 @@ describe("send_promoter_email(attempt_id)", () => {
 
   it("a suppressed recipient is not sent to, and the attempt stays queued", async () => {
     db.insert(emailSuppressionList)
-      .values({ email: "rory@hartfordprints.com", reason: "test", createdAt: new Date() } as never)
+      .values({
+        email: "tamarack1desk@hartfordprints.com",
+        reason: "test",
+        createdAt: new Date(),
+      } as never)
       .run();
     const r = await tool(true)({ attempt_id: "ce49dd9d" });
     expect(r.blocked).toBe("suppressed");

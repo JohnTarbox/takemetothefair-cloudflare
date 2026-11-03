@@ -10,7 +10,7 @@ import {
 // heading followed by 29 `   - *Vendor Name*` bullets, with wrapped-prose lines
 // that merely mention "vendor" (which must NOT be mistaken for the roster).
 const ART_IN_THE_PARK = `---------- Forwarded message ---------
-From: Pyle, Tiernan <Tiernan.Pyle@maine.gov>
+From: Sample, Taylor <Pat.yarrow1@maine.gov>
 
 Hello,
 

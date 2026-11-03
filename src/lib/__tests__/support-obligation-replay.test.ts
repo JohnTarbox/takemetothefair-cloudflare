@@ -8,10 +8,10 @@
  * Every row below is real production data, read from D1 on 2026-08-11:
  *
  *   id                                    from                     intent  conf  flagged
- *   1b65e94a-7f66-4aca-9482-c22850bb4cbb  ktkellycrafts@gmail.com  support 0.90  0
- *   1ae45c3f-9c9d-464c-bfab-d94cc2826a11  wayne@plushcargo.com     support 0.82  1
- *   62dcd389-34c4-4d1b-8cde-13a39442e5ab  james@dowebnseo.com      support 0.82  1
- *   47d77f37-2e72-475f-b948-bcc48285ed14  holly@plushcargo.com     support 0.82  1
+ *   1b65e94a-7f66-4aca-9482-c22850bb4cbb  usersage1@gmail.com  support 0.90  0
+ *   1ae45c3f-9c9d-464c-bfab-d94cc2826a11  cedardesk@plushcargo.com     support 0.82  1
+ *   62dcd389-34c4-4d1b-8cde-13a39442e5ab  dogwooddesk@dowebnseo.com      support 0.82  1
+ *   47d77f37-2e72-475f-b948-bcc48285ed14  elmdesk@plushcargo.com     support 0.82  1
  *
  * Note what that table shows: the old signal caught all three pieces of SEO
  * cold-outreach and missed the one real customer. Not by accident — by
@@ -28,7 +28,7 @@ import {
 /** The real production rows, verbatim. */
 const KATIE = {
   id: "1b65e94a-7f66-4aca-9482-c22850bb4cbb",
-  fromAddress: "ktkellycrafts@gmail.com",
+  fromAddress: "usersage1@gmail.com",
   toAddress: "hello@meetmeatthefair.com",
   classifiedIntent: "support",
   classifiedConfidence: 0.9,
@@ -36,9 +36,9 @@ const KATIE = {
 };
 
 const OUTREACH = [
-  { fromAddress: "wayne@plushcargo.com", classifiedConfidence: 0.82, flaggedForReview: 1 },
-  { fromAddress: "james@dowebnseo.com", classifiedConfidence: 0.82, flaggedForReview: 1 },
-  { fromAddress: "holly@plushcargo.com", classifiedConfidence: 0.82, flaggedForReview: 1 },
+  { fromAddress: "cedardesk@plushcargo.com", classifiedConfidence: 0.82, flaggedForReview: 1 },
+  { fromAddress: "dogwooddesk@dowebnseo.com", classifiedConfidence: 0.82, flaggedForReview: 1 },
+  { fromAddress: "elmdesk@plushcargo.com", classifiedConfidence: 0.82, flaggedForReview: 1 },
 ];
 
 describe("OPE-365 replay — Katie's actual message", () => {
@@ -75,7 +75,7 @@ describe("OPE-365 replay — Katie's actual message", () => {
 describe("OPE-365 replay — the low-confidence outreach specimens", () => {
   it("also opens obligations for them, and that is the honest answer", () => {
     // Deliberately NOT auto-suppressed. Nothing in the classified row separates
-    // wayne@plushcargo.com from ktkellycrafts@gmail.com: same intent, same
+    // cedardesk@plushcargo.com from usersage1@gmail.com: same intent, same
     // reply_kind, null sub_intent, confidences 0.82 vs 0.90. Inventing a
     // heuristic here is exactly how the original bug was built — the system
     // guessed importance and guessed backwards.
@@ -167,9 +167,54 @@ describe("OPE-365 exclusion rule", () => {
 
 describe("extractEmailAddress", () => {
   it("unwraps a display-name address", () => {
-    expect(extractEmailAddress("Katie <ktkellycrafts@gmail.com>")).toBe("ktkellycrafts@gmail.com");
+    expect(extractEmailAddress("Katie <usersage1@gmail.com>")).toBe("usersage1@gmail.com");
   });
   it("passes a bare address through", () => {
-    expect(extractEmailAddress("ktkellycrafts@gmail.com")).toBe("ktkellycrafts@gmail.com");
+    expect(extractEmailAddress("usersage1@gmail.com")).toBe("usersage1@gmail.com");
+  });
+});
+
+/**
+ * OPE-985 B, condition 2 (John, 2026-09-20): a blank ask-about-event body must
+ * open an obligation whatever the classifier said. The workflow test
+ * (`blank-question-ope985.test.ts`) only asserts that the call site PASSES
+ * `forceOwed: true` — a source-level check that stays green if the decision
+ * ignores the flag. These pin what the decision DOES with it, from both sides.
+ * Fixture intent: `submit`. NOT the real specimen's `correction` (Nancy
+ * Lasson's blank mailto, 0.9) — `correction` is itself ack-terminating, so
+ * that row was obligated with or without force. The override only changes the
+ * outcome when the subject classifies as an ACTION intent, and `submit` is the
+ * plausible one for an "about this event" mailto.
+ */
+describe("OPE-985 — forceOwed overrides the classifier, and nothing else", () => {
+  const blank = {
+    fromAddress: "reader@example.com",
+    classifiedIntent: "submit",
+    classifiedConfidence: 0.9,
+  };
+
+  it("control: the same row WITHOUT force is not obligated (the classifier decides)", () => {
+    expect(ACK_TERMINATING_INTENTS as readonly string[]).not.toContain("submit");
+    expect(decideObligation(blank)).toEqual({ obligated: false, reason: "not_ack_terminating" });
+  });
+
+  it("forceOwed opens the obligation for a non-ack-terminating intent", () => {
+    expect(decideObligation({ ...blank, forceOwed: true })).toEqual({ obligated: true });
+  });
+
+  it("forceOwed opens it when the classifier never ran (null intent)", () => {
+    expect(decideObligation({ ...blank, classifiedIntent: null, forceOwed: true }).obligated).toBe(
+      true
+    );
+  });
+
+  it("forceOwed does NOT override may-we-write refusals: system sender, suppressed", () => {
+    expect(
+      decideObligation({ ...blank, fromAddress: "mailer-daemon@example.com", forceOwed: true })
+    ).toEqual({ obligated: false, reason: "system_sender" });
+    expect(decideObligation({ ...blank, suppressed: true, forceOwed: true })).toEqual({
+      obligated: false,
+      reason: "suppressed",
+    });
   });
 });

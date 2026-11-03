@@ -27,7 +27,9 @@ const SCHEMA_SQL = `
     image TEXT,
     oauth_provider TEXT,
     created_at INTEGER,
-    updated_at INTEGER
+    updated_at INTEGER,
+    -- OPE-1366 — session generation (drizzle/0371).
+    session_version INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE venues (
@@ -45,6 +47,8 @@ const SCHEMA_SQL = `
     location_match_km REAL,
     latitude REAL,
     longitude REAL,
+    geocode_refusals INTEGER NOT NULL DEFAULT 0,
+    geocode_last_refused_at INTEGER,
     capacity INTEGER,
     amenities TEXT DEFAULT '[]',
     contact_email TEXT,
@@ -158,6 +162,8 @@ const SCHEMA_SQL = `
     enrichment_attempted_at INTEGER,
     -- OPE-962 (drizzle/0283) — consecutive zero-candidate attempts.
     enrichment_zero_yield_streak INTEGER NOT NULL DEFAULT 0,
+    -- OPE-1279 (drizzle/0365) — consecutive EMPTY live attempts.
+    enrichment_empty_attempts INTEGER NOT NULL DEFAULT 0,
     -- OPE-63 (drizzle/0144) — promoter claim state (parity with vendors.claimed
     -- trio). approvePromoterClaim writes claimed/claimed_at/claimed_by, and the
     -- WS2b schema-sync guard covers promoters, so these are required here.
@@ -250,6 +256,8 @@ const SCHEMA_SQL = `
     primary_audience TEXT NOT NULL DEFAULT 'PUBLIC',
     public_access TEXT NOT NULL DEFAULT 'OPEN',
     access_notes TEXT,
+    parking_notes TEXT,
+    accessibility_notes TEXT,
     registration_required INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER,
     updated_at INTEGER,
@@ -270,8 +278,12 @@ const SCHEMA_SQL = `
     vendor_roster_offset INTEGER,
     performer_roster_status TEXT,
     performer_roster_checked_at INTEGER,
-    performer_roster_source_url TEXT
+    performer_roster_source_url TEXT,
+    -- OPE-1325 (drizzle/0356) — multi-edition series key; NULL on annual rows.
+    edition_key TEXT
   );
+  CREATE UNIQUE INDEX idx_events_series_edition_key
+    ON events (series_id, edition_key) WHERE edition_key IS NOT NULL;
 
   -- EH3 P0 (drizzle/0127) — series parent. Needed here once tools join it
   -- (P3.4 get_vendor_events leftJoins event_series).
@@ -288,6 +300,8 @@ const SCHEMA_SQL = `
     tags TEXT DEFAULT '[]',
     primary_audience TEXT NOT NULL DEFAULT 'PUBLIC',
     public_access TEXT NOT NULL DEFAULT 'OPEN',
+    -- OPE-1325 (drizzle/0356) — 'annual' | 'multi'.
+    edition_mode TEXT NOT NULL DEFAULT 'annual' CHECK (edition_mode IN ('annual', 'multi')),
     created_at INTEGER,
     updated_at INTEGER
   );
@@ -443,6 +457,7 @@ const SCHEMA_SQL = `
     http_status INTEGER,
     signals TEXT,
     detail TEXT,
+    body_bytes INTEGER,
     checked_at INTEGER NOT NULL
   );
 
@@ -512,6 +527,8 @@ const SCHEMA_SQL = `
     city TEXT,
     state TEXT,
     zip TEXT,
+    self_signup INTEGER NOT NULL DEFAULT 0,
+    show_street_address INTEGER NOT NULL DEFAULT 0,
     latitude REAL,
     longitude REAL,
     year_established INTEGER,
@@ -586,6 +603,15 @@ const SCHEMA_SQL = `
     new_slug TEXT NOT NULL,
     changed_at INTEGER NOT NULL,
     changed_by TEXT
+  );
+
+  -- OPE-1151 (drizzle/0367) — private per-event notes. Separate table so no
+  -- full-row events select can carry it onto a public surface.
+  CREATE TABLE event_internal_notes (
+    event_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+    notes TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
   );
 
   CREATE TABLE event_slug_history (
@@ -761,6 +787,13 @@ const SCHEMA_SQL = `
     updated_at INTEGER
   );
 
+  CREATE TABLE event_review_flags (
+    id TEXT PRIMARY KEY, event_id TEXT NOT NULL, reason TEXT NOT NULL,
+    raised_at INTEGER NOT NULL, raised_by TEXT, cleared_at INTEGER, cleared_by TEXT, note TEXT
+  );
+  CREATE UNIQUE INDEX idx_event_review_flags_active
+    ON event_review_flags (event_id, reason) WHERE cleared_at IS NULL;
+
   CREATE TABLE event_performers (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
@@ -775,6 +808,8 @@ const SCHEMA_SQL = `
     notes TEXT,
     last_verified_at INTEGER,
     last_verified_source TEXT,
+    source_title TEXT, source_excerpt TEXT, source_content_hash TEXT, source_fetched_at INTEGER,
+    recheck_state TEXT, recheck_at INTEGER, recheck_note TEXT,
     created_at INTEGER,
     updated_at INTEGER
   );
@@ -856,6 +891,8 @@ const SCHEMA_SQL = `
     open_time TEXT,
     close_time TEXT,
     close_time_unpublished INTEGER NOT NULL DEFAULT 0,
+    -- OPE-1256 (drizzle/0347) — organizer publishes no hours for the day.
+    hours_unpublished INTEGER NOT NULL DEFAULT 0,
     notes TEXT,
     internal_notes TEXT,
     closed INTEGER DEFAULT 0,
@@ -910,6 +947,17 @@ const SCHEMA_SQL = `
   CREATE UNIQUE INDEX idx_promoter_outreach_one_open_per_event
     ON promoter_outreach_attempts(event_id)
     WHERE event_id IS NOT NULL AND status IN ('queued', 'sent');
+
+  CREATE TABLE promoter_outreach_runs (
+    id TEXT PRIMARY KEY,
+    ran_at INTEGER NOT NULL,
+    events_reviewed INTEGER NOT NULL DEFAULT 0,
+    resolved_from_web INTEGER NOT NULL DEFAULT 0,
+    drafts_for_approval INTEGER NOT NULL DEFAULT 0,
+    emails_sent INTEGER NOT NULL DEFAULT 0,
+    recorded_by TEXT,
+    note TEXT
+  );
 
   CREATE TABLE enrichment_log (
     id TEXT PRIMARY KEY,
@@ -1158,12 +1206,29 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL
   );
 
+  -- drizzle/0080 — classifier ground-truth feedback. OPE-1396 (DUP7): the MCP
+  -- approval-notification twin now writes workflow_outcome rows here.
+  CREATE TABLE inbound_email_intent_feedback (
+    id TEXT PRIMARY KEY,
+    inbound_email_id TEXT NOT NULL,
+    feedback_source TEXT NOT NULL,
+    original_intent TEXT,
+    corrected_intent TEXT NOT NULL,
+    classifier_version TEXT,
+    admin_note TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE TABLE blog_posts (
     id TEXT PRIMARY KEY,
     slug TEXT NOT NULL UNIQUE,
     title TEXT NOT NULL DEFAULT '',
     body TEXT,
-    status TEXT NOT NULL DEFAULT 'PUBLISHED'
+    status TEXT NOT NULL DEFAULT 'PUBLISHED',
+    -- OPE-1188 — read by the visitor-guide lookup (src/lib/blog/event-guides.ts).
+    excerpt TEXT,
+    publish_date INTEGER
   );
 
   CREATE TABLE content_links (
@@ -1198,6 +1263,10 @@ const SCHEMA_SQL = `
     changed_at INTEGER NOT NULL,
     changed_by TEXT
   );
+  -- Mirrors drizzle/0209. Without it this test schema let a duplicate redirect
+  -- row through that prod refuses, so a migration's idempotency could not be
+  -- rehearsed here (found by OPE-1233's 0344 rehearsal).
+  CREATE UNIQUE INDEX idx_series_slug_history_old_slug_unique ON series_slug_history(old_slug);
 
   CREATE TABLE entity_data_citations (
     id TEXT PRIMARY KEY,
@@ -1298,6 +1367,8 @@ const SCHEMA_SQL = `
     flagged_for_review INTEGER NOT NULL DEFAULT 0,
     parent_email_id TEXT,
     recovery_attempt_n INTEGER NOT NULL DEFAULT 0,
+    replies_suppressed_reason TEXT,
+    capture_meta TEXT,
     salvage_notified_at INTEGER,
     -- K7.4 (analyst, 2026-05-31) — drizzle/0094 extract telemetry. See
     -- packages/db-schema/src/index.ts inboundEmails for column doc comments.
@@ -1439,6 +1510,123 @@ const SCHEMA_SQL = `
     ON syndication_subscriptions (subscriber_id, event_id);
   CREATE INDEX idx_syndication_subscriptions_event
     ON syndication_subscriptions (event_id);
+
+  -- OPE-366 (drizzle/0342) — unterminated-crossing E2 notice debounce state.
+  CREATE TABLE unterminated_crossing_notice_state (
+    id TEXT PRIMARY KEY,
+    high_water_created_at INTEGER NOT NULL,
+    last_count INTEGER NOT NULL,
+    last_notified_at INTEGER NOT NULL
+  );
+
+  -- OPE-1139 (drizzle/0343) — staged self-announced exhibitors.
+  -- OPE-328 (drizzle/0348) — gemba@ observations queued for an agent to post.
+  CREATE TABLE gemba_observations (
+    id TEXT PRIMARY KEY,
+    inbound_email_id TEXT NOT NULL UNIQUE,
+    project TEXT,
+    anchor_issue TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'held', 'posted')),
+    routing_reason TEXT NOT NULL,
+    posted_ref TEXT,
+    posted_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE promoter_list_subscriptions (
+    id TEXT PRIMARY KEY,
+    promoter_id TEXT NOT NULL REFERENCES promoters(id) ON DELETE CASCADE,
+    address TEXT NOT NULL,
+    signup_url TEXT,
+    esp TEXT,
+    status TEXT NOT NULL DEFAULT 'requested'
+      CHECK (status IN ('requested', 'confirmed', 'active', 'unsubscribed', 'bounced')),
+    requested_at INTEGER NOT NULL,
+    confirmed_at INTEGER,
+    last_received_at INTEGER,
+    issue_count INTEGER NOT NULL DEFAULT 0,
+    confirm_url TEXT,
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX uq_promoter_list_subscriptions_addr
+    ON promoter_list_subscriptions (promoter_id, address);
+  -- OPE-1506 — copied from drizzle/0075 (no later ALTERs).
+  CREATE TABLE inbound_email_senders (
+    email TEXT PRIMARY KEY,
+    trust_status TEXT NOT NULL DEFAULT 'unknown',
+    notes TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch('now')),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch('now'))
+  );
+  CREATE TABLE promoter_contacts (
+    id TEXT PRIMARY KEY,
+    promoter_id TEXT NOT NULL REFERENCES promoters(id) ON DELETE CASCADE,
+    name TEXT,
+    role TEXT,
+    email TEXT NOT NULL CHECK (email = lower(email) AND email LIKE '%_@_%'),
+    phone TEXT,
+    validation_method TEXT NOT NULL CHECK (validation_method IN
+      ('domain_verified', 'replied_to_our_mail', 'approved_claim', 'phone',
+       'in_person', 'published_on_site', 'self_asserted')),
+    validation_evidence TEXT,
+    inbound_email_id TEXT REFERENCES inbound_emails(id) ON DELETE SET NULL,
+    sender_auth TEXT CHECK (sender_auth IS NULL OR sender_auth IN ('pass', 'partial', 'fail')),
+    auth_domain TEXT,
+    auth_domain_matches_promoter INTEGER CHECK (auth_domain_matches_promoter IS NULL OR auth_domain_matches_promoter IN (0, 1)),
+    status TEXT NOT NULL DEFAULT 'candidate' CHECK (status IN ('candidate', 'validated', 'stale', 'rejected')),
+    first_validated_at INTEGER,
+    last_heard_at INTEGER,
+    notes TEXT,
+    created_by TEXT,
+    updated_by TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX uq_promoter_contacts_promoter_email ON promoter_contacts (promoter_id, email);
+  CREATE TABLE promoter_list_arrivals (
+    id TEXT PRIMARY KEY,
+    inbound_email_id TEXT NOT NULL UNIQUE,
+    promoter_id TEXT,
+    match_basis TEXT NOT NULL CHECK (match_basis IN ('subscription-address', 'unattributed')),
+    plus_tag TEXT,
+    subscription_id TEXT,
+    kind TEXT NOT NULL CHECK (kind IN ('confirmation', 'issue')),
+    confirm_url TEXT,
+    sender_domain TEXT,
+    sender_mismatch INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE inbound_newsletters (
+    id TEXT PRIMARY KEY,
+    inbound_email_id TEXT NOT NULL UNIQUE,
+    markers TEXT NOT NULL,
+    promoter_id TEXT,
+    match_basis TEXT NOT NULL CHECK (match_basis IN
+      ('subscription-address', 'sender-domain', 'contact-email', 'footer-name', 'unmatched')),
+    sender_address TEXT,
+    items_json TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE exhibitor_proposals (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    inbound_email_id TEXT NOT NULL,
+    business_name TEXT,
+    website TEXT,
+    sender_address TEXT,
+    city TEXT,
+    state TEXT,
+    booth_info TEXT,
+    evidence TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    resolved_vendor_id TEXT,
+    resolution_note TEXT,
+    created_at INTEGER NOT NULL,
+    resolved_at INTEGER
+  );
+  CREATE UNIQUE INDEX idx_exhibitor_proposals_email_event
+    ON exhibitor_proposals (inbound_email_id, event_id);
 
   -- OPE-37 (drizzle/0142) — promoter-enrichment notice debounce state. The
   -- notice module reads/upserts this single-row table, so the test schema needs it.

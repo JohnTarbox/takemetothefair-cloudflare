@@ -520,3 +520,36 @@ export async function resolveGoogleMapsUrl(url: string, apiKey: string): Promise
     return { place: null };
   }
 }
+
+/**
+ * OPE-1480 — just the two Google fields the event page's "Visiting" box shows
+ * (OPE-1479), by Place id, with a NARROW field mask so the call bills only what
+ * it reads. `{}` means Google answered and holds none ("Google has none"); null
+ * means the call failed and nothing may be written from it.
+ */
+export async function fetchPlaceAccessParking(
+  placeId: string,
+  apiKey: string
+): Promise<{ accessibility: string; parking: string } | null> {
+  try {
+    const res = await fetchWithTimeout(
+      `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`,
+      {
+        headers: {
+          "X-Goog-Api-Key": apiKey,
+          "X-Goog-FieldMask": "id,accessibilityOptions,parkingOptions",
+        },
+        timeoutMs: 8000,
+      }
+    );
+    if (!res.ok) return null;
+    const place = (await res.json()) as PlaceObject;
+    if (!place.id) return null;
+    return {
+      accessibility: JSON.stringify(place.accessibilityOptions ?? {}),
+      parking: JSON.stringify(place.parkingOptions ?? {}),
+    };
+  } catch {
+    return null;
+  }
+}

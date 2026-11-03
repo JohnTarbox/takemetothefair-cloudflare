@@ -5,6 +5,12 @@
  * guard → standard fetch → Browser-Rendering escalation on 401/403/429/
  * timeout. The vendor `website` is operator-curated (lower risk than arbitrary
  * user input), but the guard is cheap defense-in-depth.
+ *
+ * OPE-1370 (SSRF5) — the check below covers the first hop; since then the
+ * standard path inside `fetchWithEscalation` re-checks EVERY redirect hop and
+ * caps the body (site-fetch `guardedFetch`), and a refused hop is not
+ * escalated. Browser Rendering's own navigation cannot be re-checked per hop
+ * (it happens inside Cloudflare's managed Chrome) — only its first hop is.
  */
 import {
   fetchWithEscalation,

@@ -1,8 +1,7 @@
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Calendar, ArrowLeft, Plus } from "lucide-react";
 import { gte, inArray } from "drizzle-orm";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/require-admin";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters } from "@/lib/db/schema";
 import { EventsView } from "@/components/events/events-view";
@@ -73,12 +72,7 @@ async function getAllEvents() {
 }
 
 export default async function AdminEventCalendarPage() {
-  const session = await auth();
-  // The admin layout already gates, but check explicitly so a non-admin gets a
-  // clean redirect rather than relying solely on the layout.
-  if (session?.user?.role !== "ADMIN") {
-    redirect("/login");
-  }
+  await requireAdmin({ allowReadonlyBearer: false });
 
   const eventsList = await getAllEvents();
 

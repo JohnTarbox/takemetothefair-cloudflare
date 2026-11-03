@@ -14,61 +14,13 @@
  * produce a match on either side.
  */
 import { getDomain } from "tldts";
+import { isNonOwnableDomain } from "@takemetothefair/utils";
 
-// Registrable domains that must NEVER count as a domain match — freemail + free
-// site-builders / social / marketplaces where sharing the domain does NOT prove
-// ownership of the listing. (Curated; John can extend in review.)
-const NON_MATCHABLE_DOMAINS = new Set<string>([
-  "gmail.com",
-  "googlemail.com",
-  "yahoo.com",
-  "ymail.com",
-  "hotmail.com",
-  "outlook.com",
-  "live.com",
-  "msn.com",
-  "aol.com",
-  "icloud.com",
-  "me.com",
-  "mac.com",
-  "comcast.net",
-  "verizon.net",
-  "att.net",
-  "sbcglobal.net",
-  "cox.net",
-  "protonmail.com",
-  "proton.me",
-  "gmx.com",
-  "mail.com",
-  "zoho.com",
-  "yandex.com",
-  "fastmail.com",
-  "hey.com",
-  "facebook.com",
-  "instagram.com",
-  "twitter.com",
-  "x.com",
-  "linkedin.com",
-  "youtube.com",
-  "tiktok.com",
-  "pinterest.com",
-  "linktr.ee",
-  "bit.ly",
-  "wordpress.com",
-  "wix.com",
-  "wixsite.com",
-  "squarespace.com",
-  "weebly.com",
-  "blogspot.com",
-  "godaddysites.com",
-  "webflow.io",
-  "square.site",
-  "myshopify.com",
-  "etsy.com",
-  "eventbrite.com",
-  "googlebusiness.com",
-  "business.site",
-]);
+// Registrable domains that must NEVER count as a domain match live in ONE
+// place, shared with promoter-contact domain verification (OPE-1330):
+// `NON_OWNABLE_DOMAINS` in @takemetothefair/utils — freemail (OPE-856) +
+// free site-builders / social / marketplaces. Every entry this file used to
+// hold privately is in it (pinned by domain-match-shared-list-ope1330.test.ts).
 
 export type DomainMatchResult =
   | { match: true; registrableDomain: string }
@@ -114,8 +66,8 @@ export function decideDomainMatch(
   if (!e) return { match: false, reason: "unparseable_email" };
   const w = registrableDomainFromWebsite(website);
   if (!w) return { match: false, reason: "unparseable_website" };
-  if (NON_MATCHABLE_DOMAINS.has(e)) return { match: false, reason: "non_matchable_email" };
-  if (NON_MATCHABLE_DOMAINS.has(w)) return { match: false, reason: "non_matchable_website" };
+  if (isNonOwnableDomain(e)) return { match: false, reason: "non_matchable_email" };
+  if (isNonOwnableDomain(w)) return { match: false, reason: "non_matchable_website" };
   if (e !== w) return { match: false, reason: "different_domain" };
   return { match: true, registrableDomain: e };
 }

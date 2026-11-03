@@ -6,10 +6,17 @@ import { cn } from "@/lib/utils";
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   error?: string;
+  /**
+   * Optional control drawn inside the right edge of the field (e.g. the
+   * PasswordInput show/hide toggle). When set, the <input> is wrapped in a
+   * `relative` box so the control anchors to the field itself — not to the
+   * label-and-error wrapper — and the caller pads the input (`pr-12`).
+   */
+  trailing?: React.ReactNode;
 }
 
 const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type, label, error, id, ...props }, ref) => {
+  ({ className, type, label, error, id, trailing, ...props }, ref) => {
     const inputId = id || props.name;
 
     // Design System keystone PR 2 (2026-06-07) — token migration.
@@ -17,6 +24,22 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
     // semantic tokens. Error state uses --destructive. Matches Textarea's
     // already-token-backed pattern (placeholder:text-muted-foreground etc.)
     // so input + textarea now look identical at the chrome level.
+    const field = (
+      <input
+        type={type}
+        id={inputId}
+        className={cn(
+          "block w-full rounded-lg border border-input bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground",
+          "focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring",
+          "disabled:bg-muted disabled:text-muted-foreground",
+          error && "border-destructive focus:border-destructive focus:ring-destructive",
+          className
+        )}
+        ref={ref}
+        {...props}
+      />
+    );
+
     return (
       <div className="w-full">
         {label && (
@@ -24,19 +47,14 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             {label}
           </label>
         )}
-        <input
-          type={type}
-          id={inputId}
-          className={cn(
-            "block w-full rounded-lg border border-input bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground",
-            "focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring",
-            "disabled:bg-muted disabled:text-muted-foreground",
-            error && "border-destructive focus:border-destructive focus:ring-destructive",
-            className
-          )}
-          ref={ref}
-          {...props}
-        />
+        {trailing ? (
+          <div className="relative">
+            {field}
+            {trailing}
+          </div>
+        ) : (
+          field
+        )}
         {error && <p className="mt-1 text-sm text-destructive">{error}</p>}
       </div>
     );

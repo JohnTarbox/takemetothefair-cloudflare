@@ -77,6 +77,24 @@ describe("normalizeName — trailing year stripping", () => {
   });
 });
 
+describe("normalizeName — word separators become spaces (OPE-1410)", () => {
+  it("'Arts-and-Crafts Fair' matches 'Arts and Crafts Fair'", () => {
+    expect(normalizeName("Arts-and-Crafts Fair")).toBe("arts and crafts fair");
+    expect(normalizeName("Arts-and-Crafts Fair")).toBe(normalizeName("Arts and Crafts Fair"));
+  });
+
+  it.each([
+    ["Craft/Vendor Show", "craft vendor show"],
+    ["Snake_Case Fair", "snake case fair"],
+    ["Fair – Day One", "fair day one"],
+    ["Fair—Day One", "fair day one"],
+    ["Fair - Day One", "fair day one"],
+    ["Arts-and-Crafts Fair 2026", "arts and crafts fair"],
+  ])("'%s' → '%s'", (input, expected) => {
+    expect(normalizeName(input)).toBe(expected);
+  });
+});
+
 describe("normalizeName — existing behaviors preserved", () => {
   it("strips punctuation and collapses the resulting whitespace", () => {
     // "&" between spaces leaves a double space after stripping, which the
@@ -87,6 +105,11 @@ describe("normalizeName — existing behaviors preserved", () => {
 
   it("collapses whitespace", () => {
     expect(normalizeName("Foo    Fair   ")).toBe("foo fair");
+  });
+
+  it("still deletes apostrophes without leaving a gap", () => {
+    expect(normalizeName("Farmers' Market")).toBe("farmers market");
+    expect(normalizeName("St. Mary’s Fair")).toBe("st marys fair");
   });
 
   it("returns empty string for empty/whitespace input", () => {

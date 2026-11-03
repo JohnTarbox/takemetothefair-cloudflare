@@ -20,8 +20,14 @@
  * that finds nothing still proves it ran.
  */
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
-import { isQualifyingDateCitation } from "@takemetothefair/utils";
-import { adminActions, eventDataCitations, events, tunableThresholds } from "./schema.js";
+import { isQualifyingDateCitation, organizerHostsFrom } from "@takemetothefair/utils";
+import {
+  adminActions,
+  eventDataCitations,
+  events,
+  promoters,
+  tunableThresholds,
+} from "./schema.js";
 import { getDb, type Db } from "./db.js";
 import type { Env } from "./index.js";
 import { logError } from "./logger.js";
@@ -58,8 +64,14 @@ export async function runSyncStaleSweep(db: Db, now: Date = new Date()): Promise
   const cutoffSec = nowSec - Math.round(thresholdDays * 86400);
 
   const candidates = await db
-    .select({ id: events.id, slug: events.slug, lastSyncedAt: events.lastSyncedAt })
+    .select({
+      id: events.id,
+      slug: events.slug,
+      lastSyncedAt: events.lastSyncedAt,
+      promoterWebsite: promoters.website,
+    })
     .from(events)
+    .leftJoin(promoters, eq(promoters.id, events.promoterId))
     .where(
       and(
         eq(events.syncEnabled, true),
@@ -85,7 +97,9 @@ export async function runSyncStaleSweep(db: Db, now: Date = new Date()): Promise
       .where(
         and(eq(eventDataCitations.eventId, c.id), eq(eventDataCitations.fieldName, "start_date"))
       );
-    if (cites.some((c) => isQualifyingDateCitation(c))) {
+    // OPE-1231 — the promoter's own site is the organizer, even on an aggregator host.
+    const hosts = organizerHostsFrom([c.promoterWebsite]);
+    if (cites.some((x) => isQualifyingDateCitation(x, hosts))) {
       exemptCited++;
       continue;
     }

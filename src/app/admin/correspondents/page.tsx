@@ -18,8 +18,7 @@
  *    channel. Nothing here sends, and nothing here is on a cron.
  */
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/require-admin";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -110,8 +109,7 @@ export default async function AdminCorrespondentsPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  const session = await auth();
-  if (session?.user?.role !== "ADMIN") redirect("/");
+  await requireAdmin({ allowReadonlyBearer: false });
 
   const params = await searchParams;
   const windowDays = Math.min(Math.max(Number(params.days) || 7, 1), 90);

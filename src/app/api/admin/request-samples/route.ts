@@ -11,11 +11,11 @@ export const dynamic = "force-dynamic";
  * Auth: admin session OR X-Internal-Key. Default window = last 7 days.
  */
 import { NextResponse } from "next/server";
-import { and, gte, lte, sql, desc } from "drizzle-orm";
+import { and, eq, gte, lte, sql, desc } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { requestSamples } from "@/lib/db/schema";
-import { REQUEST_SAMPLE_RATE } from "@/lib/request-sampling";
+import { ADMIN_RSC_ANON_KIND, REQUEST_SAMPLE_RATE } from "@/lib/request-sampling";
 
 export async function GET(request: Request) {
   if (!(await isAuthorized(request))) {
@@ -33,7 +33,10 @@ export async function GET(request: Request) {
   }
 
   const db = getCloudflareDb();
-  const where = and(gte(requestSamples.timestamp, since), lte(requestSamples.timestamp, until));
+  const inWindow = and(gte(requestSamples.timestamp, since), lte(requestSamples.timestamp, until));
+  // OPE-1397 — the A9 bot fingerprint reads the 5% page sample only; the
+  // anonymous-admin-RSC rows (100%, no UA) are reported separately below.
+  const where = and(inWindow, eq(requestSamples.kind, "page"));
 
   const [{ total }] = await db
     .select({ total: sql<number>`COUNT(*)` })
@@ -66,6 +69,23 @@ export async function GET(request: Request) {
     .orderBy(desc(sql`COUNT(*)`))
     .limit(25);
 
+  // OPE-1397 — /admin* requests carrying RSC / Next-Router-State-Tree with no
+  // session cookie (every one is recorded, not sampled). Expected empty.
+  const adminRscAnon = await db
+    .select({
+      path: requestSamples.path,
+      country: requestSamples.country,
+      asn: requestSamples.asn,
+      count: sql<number>`COUNT(*)`,
+      firstSeen: sql<number>`MIN(${requestSamples.timestamp})`,
+      lastSeen: sql<number>`MAX(${requestSamples.timestamp})`,
+    })
+    .from(requestSamples)
+    .where(and(inWindow, eq(requestSamples.kind, ADMIN_RSC_ANON_KIND)))
+    .groupBy(requestSamples.path, requestSamples.country, requestSamples.asn)
+    .orderBy(desc(sql`COUNT(*)`))
+    .limit(50);
+
   return NextResponse.json({
     success: true,
     since: since.toISOString(),
@@ -74,5 +94,6 @@ export async function GET(request: Request) {
     total,
     fingerprints,
     top_paths: topPaths,
+    admin_rsc_anonymous: adminRscAnon,
   });
 }

@@ -42,6 +42,20 @@ const nextConfig = {
   // .com returns access-control-allow-origin:*); GA4/CF-beacon are raw <script>
   // tags the config doesn't touch.
   crossOrigin: "anonymous",
+  // OPE-1565 — keep Apache ECharts OUT of the Worker server bundle. It is only
+  // ever loaded in the browser (a dynamic import inside a useEffect in
+  // src/components/admin/charts/EChart.tsx), but webpack still compiles a
+  // dynamic-import target into the server build: measured +508 KB raw in
+  // .open-next/server-functions before this alias. Aliasing the packages to
+  // `false` on the server compiles them to an empty module; the import is
+  // never executed there, so nothing observable changes. The alias key is a
+  // prefix match, so it covers echarts/core, echarts/charts, etc.
+  webpack(config, { isServer }) {
+    if (isServer) {
+      config.resolve.alias = { ...(config.resolve.alias ?? {}), echarts: false, zrender: false };
+    }
+    return config;
+  },
   images: {
     // IMG1 (2026-06-07) — wired Cloudflare URL-based Image Resizing as
     // a custom Next/Image loader. Drops `unoptimized: true` (which
@@ -84,25 +98,36 @@ const nextConfig = {
     ];
   },
   async headers() {
+    // OPE-1380 — the policy below is the PUBLIC (cached/ISR) policy. Routes
+    // under NONCE_CSP_PREFIXES (src/lib/csp.ts) get a per-request nonce policy
+    // from middleware instead, so this one must NOT also be emitted there: two
+    // CSP headers are both enforced, and the merge is the caller's problem.
+    // Keep this list equal to NONCE_CSP_PREFIXES — scripts/check-nonce-csp-
+    // routes.ts compiles this source and fails CI on any drift.
+    const NONCE_CSP_EXCLUDED_SOURCE =
+      "/((?!(?:admin|login|register|forgot-password|reset-password|verify-email|vendor|promoter|suggest-event|dashboard)(?:/|$)).*)";
+
+    const publicCsp = {
+      key: "Content-Security-Policy",
+      value:
+        "default-src 'self'; script-src 'self' 'unsafe-inline'" +
+        (process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "") +
+        " https://challenges.cloudflare.com https://www.googletagmanager.com https://www.google-analytics.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com https://www.google-analytics.com https://region1.google-analytics.com https://www.google.com https://cloudflareinsights.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    };
+
     const securityHeaders = [
-      { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains; preload" },
+      { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
       { key: "X-Content-Type-Options", value: "nosniff" },
       { key: "X-Frame-Options", value: "DENY" },
       { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-      { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+      // OPE-1549 — geolocation=(self), NOT (): an empty allowlist disables the
+      // Geolocation API for the whole site, whatever the user's site permission
+      // says. It silently broke the Snap app's location (every upload arrived
+      // location_source "none") and the public events "Near me" sort. `self` still
+      // denies it to every cross-origin frame.
+      { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self)" },
       { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
       { key: "Cross-Origin-Resource-Policy", value: "cross-origin" },
-      // OPE-909 — no 'unsafe-eval' in production (measured: zero violations on six
-      // live pages without it). `next dev` evaluates modules with eval, so the
-      // dev server — which is what E2E runs — keeps it; without it hydration
-      // never happens and client-rendered controls never appear.
-      {
-        key: "Content-Security-Policy",
-        value:
-          "default-src 'self'; script-src 'self' 'unsafe-inline'" +
-          (process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "") +
-          " https://challenges.cloudflare.com https://www.googletagmanager.com https://www.google-analytics.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com https://www.google-analytics.com https://region1.google-analytics.com https://www.google.com https://cloudflareinsights.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
-      },
     ];
 
     const cdnCache = (maxAge, swr = 0) => ({
@@ -115,6 +140,12 @@ const nextConfig = {
     return [
       // Global security headers
       { source: "/(.*)", headers: securityHeaders },
+      // Public CSP everywhere EXCEPT the nonce routes (see above). OPE-909 — no
+      // 'unsafe-eval' in production (measured: zero violations on six live
+      // pages without it). `next dev` evaluates modules with eval, so the dev
+      // server — which is what E2E runs — keeps it; without it hydration never
+      // happens and client-rendered controls never appear.
+      { source: NONCE_CSP_EXCLUDED_SOURCE, headers: [publicCsp] },
       // Static pages — CDN caches for 1 day
       ...[
         "/about",

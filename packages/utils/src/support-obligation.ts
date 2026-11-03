@@ -4,8 +4,8 @@
  * Extracted and pure because the ticket's acceptance turns on replaying two
  * real production messages through this decision:
  *
- *   Katie   ktkellycrafts@gmail.com   support 0.90  flagged_for_review=0  MISSED
- *   outreach wayne@plushcargo.com     support 0.82  flagged_for_review=1  flagged
+ *   Katie   usersage1@gmail.com   support 0.90  flagged_for_review=0  MISSED
+ *   outreach cedardesk@plushcargo.com     support 0.82  flagged_for_review=1  flagged
  *
  * A decision buried inside a Workflow handler cannot be replayed against those
  * rows without running the Workflow. This one can.

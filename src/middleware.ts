@@ -17,6 +17,13 @@ import {
   performers,
   performerSlugHistory,
 } from "@/lib/db/schema";
+import { isPublicEventStatus } from "@/lib/event-status";
+import {
+  occurrencePath,
+  parseOccurrenceSegment,
+  resolveOccurrence,
+  seriesOccurrencePath,
+} from "@takemetothefair/utils";
 import { resolveVenueRedirect } from "@/lib/venues/slug-redirect";
 import { isPubliclyVisible, publicEventWhere, type EventLifecycle } from "@/lib/event-lifecycle";
 import {
@@ -29,6 +36,7 @@ import {
 import { getHelpArticle } from "@/lib/help-articles";
 import { unsafeSlug } from "@/lib/utils";
 import { shouldSample, writeRequestSample } from "@/lib/request-sampling";
+import { generateNonce, isNonceCspPath, nonceContentSecurityPolicy } from "@/lib/csp";
 
 /**
  * Middleware handles five pre-route concerns that must NOT be cached:
@@ -85,6 +93,17 @@ export const config = {
     // pages like /events/maine, not category pages, not /events/past, etc.
     // Those are handled by their own static routes — see app/events/).
     "/events/:slug",
+    // OPE-1188 — the OCCURRENCE form, /events/<series>/<4-digit year>. Without
+    // this matcher the OPE-471 walker below (series_slug_history for the year
+    // form) never ran: `/events/fryeburg-fair-me` 301'd while
+    // `/events/fryeburg-fair-me/2027` 404'd, with the history row present.
+    // Year-only, so /events/<state>/<category> facet routes stay out.
+    "/events/:slug/:year(\\d{4})",
+    // OPE-1326 — the EDITION form of a multi-edition series, /events/<series>/
+    // <YYYY-MM[-suffix]>. Deliberately broad (any "dddd-" + lowercase/digit/dash
+    // tail); `parseOccurrenceSegment` is the strict gate. Must accept every
+    // `occurrencePath` output — pinned by the matcher test.
+    "/events/:slug/:year(\\d{4}-[a-z0-9-]+)",
     // Blog detail pages (single slug only; not /blog itself, not /blog/tag/*,
     // not /blog/feed.xml — feed.xml is excluded by name below).
     "/blog/:slug",
@@ -118,6 +137,20 @@ export const config = {
     // and the layout/route auth still runs.
     "/admin/:path*",
     "/api/admin/:path*",
+    // OPE-1380 — every route that gets the per-request nonce CSP
+    // (NONCE_CSP_PREFIXES in src/lib/csp.ts). `/x/:path*` also matches `/x`.
+    // These widen `/vendor/:slug` and `/promoter/:slug` above to the whole
+    // portal. scripts/check-nonce-csp-routes.ts fails CI when a page under a
+    // protected directory is not matched.
+    "/login/:path*",
+    "/register/:path*",
+    "/forgot-password/:path*",
+    "/reset-password/:path*",
+    "/verify-email/:path*",
+    "/vendor/:path*",
+    "/promoter/:path*",
+    "/suggest-event/:path*",
+    "/dashboard/:path*",
   ],
 };
 
@@ -291,6 +324,12 @@ async function handleRouting(request: NextRequest) {
     }
   }
 
+  // OPE-1397 — anonymous RSC hits on /admin* are NOT recorded here, and cannot
+  // be: Next deletes RSC / Next-Router-State-Tree (FLIGHT_HEADERS) before this
+  // function runs (node_modules/next/dist/server/web/adapter.js:137-146), and
+  // before headers() in render too (async-storage/request-store.js:33-38). Only
+  // the Worker's own fetch sees them (a custom Worker entry — not shipped). Guarded by src/__tests__/middleware-no-flight-headers-ope1397.test.ts.
+
   // ── /admin/* + /api/admin/* — read-only Bearer method gate ─────
   // For requests carrying a valid CLAUDE_READONLY_TOKEN Bearer header,
   // reject any non-safe method at the edge with 403. Bypass for cookie /
@@ -325,24 +364,51 @@ async function handleRouting(request: NextRequest) {
   // redirected even once `series_slug_history` existed. The ticket asks for
   // both forms, and this is the one that would have been missed silently.
   //
-  // Deliberately narrow: exactly two segments, the second exactly four digits.
-  // Anything else falls through to the routes that already handle it.
+  // Deliberately narrow: exactly two segments, the second a canonical year or
+  // (OPE-1326) an edition key, per `parseOccurrenceSegment`. Anything else falls
+  // through to the routes that already handle it.
   {
     const rest = pathname.startsWith("/events/") ? pathname.slice("/events/".length) : "";
     const parts = rest.split("/");
-    if (parts.length === 2 && /^\d{4}$/.test(parts[1])) {
-      const [seriesSlug, year] = parts;
+    const parsed = parts.length === 2 ? parseOccurrenceSegment(parts[1]) : null;
+    if (parsed) {
+      const [seriesSlug, segment] = parts;
       const d1 = env.DB as D1Database | undefined;
       if (d1) {
         const db = drizzle(d1);
+        // OPE-1326 — year ↔ edition, decided by the shared resolver. Only a
+        // multi-edition series or an edition-shaped segment can redirect, so an
+        // annual series' year URL costs no extra query (today's path).
+        const editionRedirect = async (
+          slug: string,
+          series: { id: string; editionMode: string }
+        ): Promise<string | null> => {
+          if (series.editionMode !== "multi" && parsed.kind !== "edition") return null;
+          const occ = await db
+            .select({ id: events.id, startDate: events.startDate, editionKey: events.editionKey })
+            .from(events)
+            .where(and(eq(events.seriesId, series.id), isPublicEventStatus()));
+          const r = resolveOccurrence(slug, series.editionMode, occ, parsed);
+          return r?.action === "redirect" ? r.path : null;
+        };
         try {
           const [live] = await db
-            .select({ id: eventSeries.id })
+            .select({ id: eventSeries.id, editionMode: eventSeries.editionMode })
             .from(eventSeries)
             .where(eq(eventSeries.canonicalSlug, unsafeSlug(seriesSlug)))
             .limit(1);
-          // Only walk history on a MISS — a live series renders normally.
-          if (!live) {
+          if (live) {
+            // A live series renders normally — unless the segment names an
+            // edition by the other scheme (a year on a multi-edition series, or
+            // an edition key on an annual one: the rollback path, kept forever).
+            const to = await editionRedirect(seriesSlug, live);
+            if (to) {
+              const url = request.nextUrl.clone();
+              url.pathname = to;
+              return NextResponse.redirect(url, 301);
+            }
+          } else {
+            // Only walk history on a MISS.
             let cursor = seriesSlug;
             const seen = new Set<string>([cursor]);
             for (let hop = 0; hop < 5; hop++) {
@@ -358,15 +424,18 @@ async function handleRouting(request: NextRequest) {
             }
             if (cursor !== seriesSlug) {
               const [target] = await db
-                .select({ id: eventSeries.id })
+                .select({ id: eventSeries.id, editionMode: eventSeries.editionMode })
                 .from(eventSeries)
                 .where(eq(eventSeries.canonicalSlug, unsafeSlug(cursor)))
                 .limit(1);
               if (target) {
                 const url = request.nextUrl.clone();
-                // Keep the year: a reader asking for the 2026 edition should
-                // land on the 2026 edition, not the hub.
-                url.pathname = `/events/${cursor}/${year}`;
+                // Keep the edition: a reader asking for the 2026 edition should
+                // land on the 2026 edition, not the hub — and in ONE hop: on a
+                // multi-edition series the year resolves to its edition here,
+                // never by chaining through /<new-slug>/<year>.
+                url.pathname =
+                  (await editionRedirect(cursor, target)) ?? seriesOccurrencePath(cursor, segment);
                 return NextResponse.redirect(url, 301);
               }
             }
@@ -398,6 +467,11 @@ async function handleRouting(request: NextRequest) {
           // EH3 P2.6 — series occurrence → canonical /events/<series>/<year> 301.
           startDate: events.startDate,
           seriesSlug: eventSeries.canonicalSlug,
+          // OPE-1326 — …or /<series>/<edition key> on a multi-edition series.
+          // THE chokepoint: every `/events/<event-slug>` link on the site passes
+          // through here, so a missed key here sends edition B's links to A.
+          editionMode: eventSeries.editionMode,
+          editionKey: events.editionKey,
         })
         .from(events)
         .leftJoin(eventSeries, eq(events.seriesId, eventSeries.id))
@@ -431,10 +505,13 @@ async function handleRouting(request: NextRequest) {
         // Option-A URL /events/<series-slug>/<year>. Skip when the slug already
         // EQUALS the series canonical slug: that bare slug is the series LANDING
         // (a clean-slug member), which the page must render, not redirect.
-        if (row.seriesSlug && row.startDate && slug !== row.seriesSlug) {
-          const year = new Date(row.startDate).getUTCFullYear();
+        const occPath =
+          row.seriesSlug && slug !== row.seriesSlug
+            ? occurrencePath(row.seriesSlug, row.startDate, row)
+            : null;
+        if (occPath) {
           const url = request.nextUrl.clone();
-          url.pathname = `/events/${row.seriesSlug}/${year}`;
+          url.pathname = occPath;
           return NextResponse.redirect(url, 301);
         }
         // Public — let the page render.
@@ -458,14 +535,29 @@ async function handleRouting(request: NextRequest) {
       if (cursor !== slug) {
         // Verify the chain terminus is a live, public event before 301-ing
         // (otherwise we'd 301 into a 410 / 404 chain).
+        //
+        // OPE-1333 — and 301 to the terminus's FINAL URL in one hop. Sending
+        // `/events/<cursor>` for a series member made the request come back
+        // through the occurrence 301 above: retired slug → member slug →
+        // /<series>/<year|edition>, two hops on 280 of 326 live chains. Same
+        // fields and same rule as the live branch, so the two cannot disagree.
         const [target] = await db
-          .select({ status: events.status })
+          .select({
+            startDate: events.startDate,
+            seriesSlug: eventSeries.canonicalSlug,
+            editionMode: eventSeries.editionMode,
+            editionKey: events.editionKey,
+          })
           .from(events)
+          .leftJoin(eventSeries, eq(events.seriesId, eventSeries.id))
           .where(and(eq(events.slug, unsafeSlug(cursor)), publicEventWhere()))
           .limit(1);
         if (target) {
           const url = request.nextUrl.clone();
-          url.pathname = `/events/${cursor}`;
+          url.pathname =
+            (target.seriesSlug && cursor !== target.seriesSlug
+              ? occurrencePath(target.seriesSlug, target.startDate, target)
+              : null) ?? `/events/${cursor}`;
           return NextResponse.redirect(url, 301);
         }
       }
@@ -852,15 +944,61 @@ async function handleRouting(request: NextRequest) {
  * 404s, or a renamed slug it 301s, can never be answered "nothing changed".
  */
 export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  if (isNonceCspPath(pathname)) {
+    // Only /admin, /vendor/<x> and /promoter/<x> have routing work to do (the
+    // read-only Bearer gate, the singular→plural typo redirect). The other
+    // nonce routes skip handleRouting so A9 request sampling stays on the
+    // public pages it was scoped to. No nonce route is a conditional-GET
+    // candidate (matchConditionalRoute), so applyConditionalGet is skipped.
+    const routed = NONCE_ROUTING_PREFIXES.some(
+      (p) => pathname === p || pathname.startsWith(`${p}/`)
+    )
+      ? await handleRouting(request)
+      : NextResponse.next();
+    return applyNonceCsp(request, routed);
+  }
   const response = await handleRouting(request);
   return await applyConditionalGet(request, response);
+}
+
+const NONCE_ROUTING_PREFIXES = ["/admin", "/vendor", "/promoter"];
+
+/**
+ * OPE-1380 — stamp a fresh nonce CSP on a protected route.
+ *
+ * For a pass-through the policy is ALSO forwarded as a REQUEST header: that is
+ * where Next.js reads the nonce it puts on its own scripts (app-render.js →
+ * getScriptNonceFromHeader). `x-nonce` is forwarded for any server component
+ * that renders a custom <Script>. A redirect / 403 just gets the response
+ * header.
+ */
+function applyNonceCsp(request: NextRequest, response: NextResponse): NextResponse {
+  const nonce = generateNonce();
+  const policy = nonceContentSecurityPolicy(nonce);
+  if (!response.headers.has("x-middleware-next")) {
+    response.headers.set("Content-Security-Policy", policy);
+    return response;
+  }
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("Content-Security-Policy", policy);
+  const next = NextResponse.next({ request: { headers: requestHeaders } });
+  // Keep anything routing put on its pass-through (today: nothing), minus
+  // Next's own middleware control headers, which `next` carries itself.
+  response.headers.forEach((value, key) => {
+    if (!key.startsWith("x-middleware-")) next.headers.set(key, value);
+  });
+  next.headers.set("Content-Security-Policy", policy);
+  return next;
 }
 
 /** Per-type lookup of the validator inputs. Slug is the public identity. */
 async function loadEntityMtime(
   db: ReturnType<typeof drizzle>,
   type: ConditionalEntityType,
-  slug: string
+  slug: string,
+  segment?: string
 ): Promise<Date | null | undefined> {
   const s = unsafeSlug(slug);
   // `undefined` = no such row (leave routing's answer alone); `null` = found
@@ -906,6 +1044,38 @@ async function loadEntityMtime(
         .limit(1);
       return r ? r.u : undefined;
     }
+    case "event-occurrence": {
+      // OPE-1291 — the SAME row the page renders: resolveOccurrenceTarget's
+      // rule (series by canonical slug → public occurrences → the segment), via
+      // the shared resolver. The page also renders series fields (name, canonical
+      // slug), so the validator is the later of the two rows' updated_at.
+      // OPE-1326 — a segment that 301s gets no validator: the redirect branch
+      // above answers it before any render.
+      const parsed = segment === undefined ? null : parseOccurrenceSegment(segment);
+      if (!parsed) return undefined;
+      const [series] = await db
+        .select({
+          id: eventSeries.id,
+          u: eventSeries.updatedAt,
+          editionMode: eventSeries.editionMode,
+        })
+        .from(eventSeries)
+        .where(eq(eventSeries.canonicalSlug, s))
+        .limit(1);
+      if (!series) return undefined;
+      const occ = await db
+        .select({
+          id: events.id,
+          startDate: events.startDate,
+          editionKey: events.editionKey,
+          u: events.updatedAt,
+        })
+        .from(events)
+        .where(and(eq(events.seriesId, series.id), isPublicEventStatus()));
+      const r = resolveOccurrence(slug, series.editionMode, occ, parsed);
+      if (r?.action !== "render") return undefined; // the page 404s or 301s — no validator
+      return latestOf(series.u, r.occurrence.u);
+    }
     case "blog": {
       const [r] = await db
         .select({ u: blogPosts.updatedAt })
@@ -915,6 +1085,13 @@ async function loadEntityMtime(
       return r ? r.u : undefined;
     }
   }
+}
+
+/** Later of two nullable timestamps; null only when both are. */
+function latestOf(a: Date | null, b: Date | null): Date | null {
+  if (!a) return b;
+  if (!b) return a;
+  return a.getTime() >= b.getTime() ? a : b;
 }
 
 async function applyConditionalGet(
@@ -946,14 +1123,14 @@ async function applyConditionalGet(
 
   let updatedAt: Date | null | undefined;
   try {
-    updatedAt = await loadEntityMtime(drizzle(d1), matched.type, matched.slug);
+    updatedAt = await loadEntityMtime(drizzle(d1), matched.type, matched.slug, matched.segment);
   } catch {
     // A validator is an optimisation; never fail a page render for one.
     return response;
   }
   if (updatedAt === undefined) return response;
 
-  const etag = buildEntityEtag(matched.type, matched.slug, updatedAt);
+  const etag = buildEntityEtag(matched.type, matched.slug, updatedAt, matched.segment);
 
   if (
     isNotModified({

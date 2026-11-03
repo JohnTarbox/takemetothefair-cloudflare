@@ -23,7 +23,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const extractMultipleEvents = vi.fn();
 
-vi.mock("@/lib/url-import/ai-extractor", () => ({
+vi.mock("@/lib/url-import/ai-extractor", async (importOriginal) => ({
+  // OPE-1316 Ask 2 — keep the real timeout constants the route now reads.
+  ...(await importOriginal<typeof import("@/lib/url-import/ai-extractor")>()),
   extractMultipleEvents: (...args: unknown[]) => extractMultipleEvents(...args),
 }));
 

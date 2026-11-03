@@ -4,7 +4,8 @@ import Link from "next/link";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
-import { eq, and, lt, count, inArray, desc } from "drizzle-orm";
+import { eq, and, count, inArray, desc } from "drizzle-orm";
+import { pastEndPredicate } from "@/lib/event-dates";
 import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
@@ -41,7 +42,7 @@ async function getPastEvents(searchParams: SearchParams) {
 
   const db = getCloudflareDb();
 
-  const conditions = [isPublicEventStatus(), lt(events.endDate, new Date())];
+  const conditions = [isPublicEventStatus(), pastEndPredicate(new Date())];
 
   if (searchParams.state) {
     conditions.push(eq(venues.state, searchParams.state) as ReturnType<typeof eq>);

@@ -26,7 +26,7 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   vendors,
   performers,
@@ -34,8 +34,9 @@ import {
   claimTokens,
   adminActions,
   vendorOutreachAttempts,
+  events,
 } from "../schema.js";
-import { jsonContent } from "../helpers.js";
+import { decodeHtmlEntities, jsonContent, PUBLIC_EVENT_STATUSES } from "../helpers.js";
 import {
   applyCanSpamFooter,
   isEmailSuppressed,
@@ -48,12 +49,15 @@ import type { AuthContext } from "../auth.js";
 
 const PUBLIC_HOST = "https://meetmeatthefair.com";
 const BCC_TO = "jtarboxme@gmail.com";
-const SIGN_OFF = "— Meet Me at the Fair";
 // 14-day invite window (spec §4). Longer than the 24h self-serve claim token
 // because a cold contact needs time to notice + act on an unsolicited invite.
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 const TOKEN_BYTE_LENGTH = 32;
+
+/** OPE-1507 — stands in for the raw token in a dry-run preview. Not a token:
+ *  no `claim_tokens` row hashes to it. */
+export const DRY_RUN_TOKEN_PLACEHOLDER = "PREVIEW-ONLY-NO-TOKEN-MINTED";
 
 interface EmailJobMessage {
   to: string;
@@ -118,26 +122,201 @@ function inviteUrl(
   return `${PUBLIC_HOST}/register?role=${entityType}&claim=${encodeURIComponent(slug)}&invite=${rawToken}`;
 }
 
-/** claim_invite copy (mirrors admin-send-vendor-email's buildTemplate) with the
- *  invite magic link substituted for the plain claim URL. */
-function renderInviteEmail(businessName: string, url: string): RenderedEmail {
-  const text = `Hi ${businessName},
+/**
+ * OPE-1340 — the magic link as a real `<a href>`, styled like the main app's
+ * email CTA (src/lib/email/templates.ts, "Read the post"). The MCP Worker cannot
+ * import that module, so the one line of markup is mirrored here.
+ *
+ * Before this, the URL went through `paragraphsToHtml` with the rest of the body
+ * and reached the HTML part as bare text — clickable only if the recipient's
+ * mail client happened to auto-link a ~200-character URL (AOL webmail does not
+ * reliably). The bare URL stays in the text part, and as a plain visible link
+ * under the button for clients that strip button styling.
+ */
+function ctaButtonHtml(url: string, label: string): string {
+  const href = escapeHtml(url);
+  return (
+    `<div style="margin:16px 0;"><a href="${href}" style="display:inline-block;padding:12px 20px;` +
+    `background:#E8960C;color:#1E2761;font-weight:600;text-decoration:none;border-radius:8px;">` +
+    `${escapeHtml(label)}</a></div>` +
+    `<p style="font-size:13px;color:#6F6455;">Or open this link: <a href="${href}">${href}</a></p>`
+  );
+}
+
+export type ClaimInviteEntityType = "VENDOR" | "PROMOTER" | "PERFORMER";
+
+/** OPE-1340 — John's standard sign-off (ruling 2026-10-20, Option A): "John",
+ *  then the site as a link. No last name. Every invite carries exactly one. */
+const SIGN_OFF_TEXT = `John\n${PUBLIC_HOST}`;
+const SIGN_OFF_HTML = `<p>John<br><a href="${PUBLIC_HOST}">meetmeatthefair.com</a></p>`;
+
+/** OPE-1340 — the 14-day / single-use line, shared by the PROMOTER and PERFORMER
+ *  copy and the OPE-1507 personal-note path. */
+export const FOURTEEN_DAY_LINE =
+  "This link is just for you and works for 14 days. If you have questions, reply to this email.";
+
+/**
+ * OPE-1340 — the "tell us about your other shows" paragraph, approved by John
+ * 2026-10-20 10:17 ET, one line per entity type. Rendered after the button and
+ * before the 14-day line, on the default AND the personal-note path, from this
+ * one constant so the two cannot drift.
+ *
+ * ⚠️ NOT LIVE (`OTHER_SHOWS_LIVE = false`). The same ruling made it conditional
+ * on a reply to an `email:claim-invite` send reaching a human as an answer to our
+ * message. Read 2026-10-20, it does not: `decideOwedHuman` (email-handlers/
+ * owed-human.ts) owes a human only when the thread's previous send was
+ * `reply:manual*`, and its previous-send lookup joins the ledger through
+ * `inbound_email_id`, which a cold invite does not have — so a vendor answering
+ * "I'll be at these shows" would be classified like any fresh inbound (possibly
+ * a new submission, with an auto-ack). Reported on OPE-1340; flip this only
+ * once that routing exists.
+ */
+export const OTHER_SHOWS_PARAGRAPH: Record<ClaimInviteEntityType, string> = {
+  VENDOR:
+    "Will you be at other shows this season? Reply with the show names and dates and we'll add them to your page. After you claim it, you can also pick shows we already list from your profile.",
+  PROMOTER:
+    "Running other shows we don't list yet? Reply with the names and dates and we'll add them.",
+  PERFORMER:
+    "Playing at other fairs or festivals? Reply with where and when and we'll add them to your page.",
+};
+export const OTHER_SHOWS_LIVE = false;
+
+/** OPE-1507 — a personal note may be at most this long. */
+export const PERSONAL_NOTE_MAX = 2000;
+
+export interface InviteRenderInput {
+  entityType: ClaimInviteEntityType;
+  /** Business / organization / act name. */
+  name: string;
+  url: string;
+  /** PROMOTER only: public, upcoming shows on the page. 0 drops the sentence. */
+  upcomingShows?: number;
+  /** OPE-1507 — replaces the greeting and body paragraphs when present. */
+  personalNote?: string | null;
+  /** OPE-1507 — overrides the template subject when present. */
+  subject?: string | null;
+  /** Defaults to OTHER_SHOWS_LIVE. Explicit only in tests. */
+  otherShows?: boolean;
+}
+
+/** OPE-1507 — escape, keep paragraph breaks, and make bare https:// URLs real
+ *  links (the OPE-1340 lesson: a URL a client must auto-link is not a link). */
+function noteToHtml(note: string): string {
+  return note
+    .trim()
+    .split(/\n{2,}/)
+    .map((para) => {
+      const html = escapeHtml(para)
+        .replace(/https:\/\/[^\s<]+/g, (m) => {
+          const trail = /[.,;:!?)]+$/.exec(m)?.[0] ?? "";
+          const href = trail ? m.slice(0, -trail.length) : m;
+          return `<a href="${href}">${href}</a>${trail}`;
+        })
+        .replace(/\n/g, "<br>");
+      return `<p>${html}</p>`;
+    })
+    .join("");
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** The body paragraphs ABOVE the button, per entity type (default path). */
+function defaultIntro(input: InviteRenderInput): { subject: string; text: string; html: string } {
+  if (input.entityType === "PROMOTER") {
+    // OPE-1340 Option A, verbatim from the 10-11 AGENT BLOCKED draft.
+    const lead = `Hello,
+
+${input.name} is listed on Meet Me at the Fair, a free directory that helps people across New England find fairs, festivals and craft shows. We built your page from public information, and we'd like you to take it over. It's free.`;
+    const n = input.upcomingShows ?? 0;
+    const shows = n > 0 ? `Your page shows ${plural(n, "upcoming show", "upcoming shows")}. ` : "";
+    const can = `${shows}Once it's yours, you can:`;
+    const bullets = [
+      "see all your shows on the site in one place",
+      "add a new show, or copy this year's to next year in a couple of clicks",
+      "send us corrections to dates, hours or vendor details, and we'll update them",
+    ];
+    return {
+      subject: "Your shows are on Meet Me at the Fair — claim your page",
+      text: `${lead}\n\n${can}\n${bullets.map((b) => `- ${b}`).join("\n")}`,
+      html: `${paragraphsToHtml(lead)}<p>${escapeHtml(can)}</p><ul>${bullets
+        .map((b) => `<li>${escapeHtml(b)}</li>`)
+        .join("")}</ul>`,
+    };
+  }
+  if (input.entityType === "PERFORMER") {
+    const lead = `Hello,
+
+${input.name} has a page on Meet Me at the Fair, a free directory of New England fairs, festivals and craft shows. It lists where you're performing, drawn from public event listings. Claiming it marks the page as yours, and you can reply any time with new dates or corrections. It's free.`;
+    return {
+      subject: "Claim your performer page on Meet Me at the Fair",
+      text: lead,
+      html: paragraphsToHtml(lead),
+    };
+  }
+  // VENDOR — copy unchanged by OPE-1340 (ruling: "VENDOR copy is unchanged").
+  const intro = `Hi ${input.name},
 
 You're listed on Meet Me at the Fair — the New England directory connecting fair-, festival-, and craft-show-goers across all six states with the businesses they love. We built your listing from public event data, and we'd love for you to claim it (it's free).
 
-Claiming lets you correct your details, add photos and products, and link your website so shoppers can find you. This link is just for you and gets you straight there:
-  ${url}
-
-There's no cost and no catch — claiming just puts you in control of how your business appears.
-
-If you have any questions, just reply to this email.
-
-${SIGN_OFF}`;
+Claiming lets you correct your details, add photos and products, and link your website so shoppers can find you. This link is just for you and gets you straight there:`;
   return {
-    subject: `Claim your free listing on Meet Me at the Fair`,
-    text,
-    html: paragraphsToHtml(text),
+    subject: "Claim your free listing on Meet Me at the Fair",
+    text: intro,
+    html: paragraphsToHtml(intro),
   };
+}
+
+/**
+ * Renders the claim invite. Exported for tests.
+ *
+ * Order (OPE-1340 + OPE-1507): body → Claim button → [other-shows paragraph] →
+ * closing line(s) → ONE sign-off. The CAN-SPAM footer is applied by the caller.
+ *
+ * - Default path: the entity type's approved copy. VENDOR keeps its own closing
+ *   paragraphs (its copy is unchanged); PROMOTER and PERFORMER close with the
+ *   14-day line. The vendor's old "— Meet Me at the Fair" sign-off is replaced
+ *   by John's, so no email carries two.
+ * - Personal-note path (OPE-1507): the note REPLACES the greeting and body; then
+ *   the button, the 14-day line and the sign-off. No template greeting is added.
+ */
+export function renderInviteEmail(input: InviteRenderInput): RenderedEmail {
+  const otherShows =
+    (input.otherShows ?? OTHER_SHOWS_LIVE) ? OTHER_SHOWS_PARAGRAPH[input.entityType] : null;
+  const note = input.personalNote?.trim() ? input.personalNote.trim() : null;
+  const intro = defaultIntro(input);
+  const subject = input.subject?.trim() ? input.subject.trim() : intro.subject;
+
+  const closing =
+    !note && input.entityType === "VENDOR"
+      ? `There's no cost and no catch — claiming just puts you in control of how your business appears.
+
+If you have any questions, just reply to this email.`
+      : FOURTEEN_DAY_LINE;
+
+  const textParts = [
+    note ?? intro.text,
+    // The bare claim URL stays in the text part (OPE-1340), indented as before.
+    `  ${input.url}`,
+    ...(otherShows ? [otherShows] : []),
+    closing,
+    SIGN_OFF_TEXT,
+  ];
+  // The default vendor text keeps its original shape: intro, newline, URL.
+  const text =
+    !note && input.entityType === "VENDOR"
+      ? `${textParts[0]}\n${textParts.slice(1).join("\n\n")}`
+      : textParts.join("\n\n");
+
+  const html =
+    (note ? noteToHtml(note) : intro.html) +
+    ctaButtonHtml(input.url, "Claim your page") +
+    (otherShows ? paragraphsToHtml(otherShows) : "") +
+    paragraphsToHtml(closing) +
+    SIGN_OFF_HTML;
+
+  return { subject, text, html };
 }
 
 export function registerCreateClaimInviteTool(
@@ -150,7 +329,7 @@ export function registerCreateClaimInviteTool(
 
   server.tool(
     "create_claim_invite",
-    "Cold-contact claim invite (OPE-67; OPE-318 added PERFORMER). Mint a single-use, 14-day INVITE_TOKEN for an UNCLAIMED vendor, promoter or performer listing and email its contact address a magic link into the claim/register funnel. Idempotent: if an unexpired invite already exists for the same (entity, email) it is a no-op (created:false, reason:active_invite_exists). Honors the suppression list (suppressed:true, nothing sent/minted). Does NOT write an entity_claims row (deferred to redemption — entity_claims.user_id is NOT NULL). The raw token is emailed only, never returned. For vendors, records a vendor_outreach_attempts touch. Admin only.",
+    "Cold-contact claim invite (OPE-67; OPE-318 added PERFORMER). Mint a single-use, 14-day INVITE_TOKEN for an UNCLAIMED vendor, promoter or performer listing and email its contact address a magic link into the claim/register funnel. Idempotent: if an unexpired invite already exists for the same (entity, email) it is a no-op (created:false, reason:active_invite_exists) unless `resend: true`, which revokes it and sends a fresh link (OPE-1340). Honors the suppression list (suppressed:true, nothing sent/minted). Does NOT write an entity_claims row (deferred to redemption — entity_claims.user_id is NOT NULL). The raw token is emailed only, never returned. For vendors, records a vendor_outreach_attempts touch. Admin only.",
     {
       entity_type: z
         .enum(["VENDOR", "PROMOTER", "PERFORMER"])
@@ -166,9 +345,37 @@ export function registerCreateClaimInviteTool(
         .describe(
           "Override recipient. Defaults to the listing's contact_email. Compared lowercased."
         ),
+      resend: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1340 — reissue: when an unexpired invite already exists for this (entity, email), revoke it and mint + send a fresh one instead of returning active_invite_exists. The earlier link stops working. Use when an invite was lost or its link broke."
+        ),
+      personal_note: z
+        .string()
+        .max(PERSONAL_NOTE_MAX)
+        // Decoded at the boundary (CLAUDE.md): the renderer escapes once, so an
+        // agent's `&amp;` must arrive as `&`, not reach the reader as "&amp;".
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe(
+          `OPE-1507 — plain text (max ${PERSONAL_NOTE_MAX} chars). REPLACES the template's greeting and body paragraphs, so the operator's message and the claim button go out as ONE email: note → "Claim your page" button → 14-day line → sign-off ("John" / meetmeatthefair.com) → unsubscribe footer. Paragraph breaks are kept, HTML is escaped, bare https:// URLs become links. Do not sign it — the sign-off is added once.`
+        ),
+      subject: z
+        .string()
+        .max(200)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("OPE-1507 — overrides the template subject line."),
+      dry_run: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1507 — render exactly what would be sent (recipient, subject, body_html, body_text) with a placeholder in place of the token, and STOP: mints nothing, sends nothing, writes no ledger, outreach or audit row. Use it to show the operator the email before a live send."
+        ),
     },
-    async ({ entity_type, entity_id, email }) => {
-      if (!env?.EMAIL_JOBS) {
+    async ({ entity_type, entity_id, email, resend, personal_note, subject, dry_run }) => {
+      if (!dry_run && !env?.EMAIL_JOBS) {
         return {
           content: [
             {
@@ -302,7 +509,87 @@ export function registerCreateClaimInviteTool(
           )
         );
       const active = existing.find((r) => r.expiresAt.getTime() > now.getTime());
-      if (active) {
+
+      // OPE-1340 — {N} in the promoter copy: public, upcoming shows on the page.
+      let upcomingShows = 0;
+      if (entity_type === "PROMOTER") {
+        const [c] = await db
+          .select({ n: sql<number>`count(*)` })
+          .from(events)
+          .where(
+            and(
+              eq(events.promoterId, entity_id),
+              isNull(events.mergedInto),
+              inArray(events.status, [...PUBLIC_EVENT_STATUSES]),
+              sql`coalesce(${events.endDate}, ${events.startDate}) >= ${Math.floor(now.getTime() / 1000)}`
+            )
+          );
+        upcomingShows = Number(c?.n ?? 0);
+      }
+      const renderInput = {
+        entityType: entity_type,
+        name: entity.name,
+        upcomingShows,
+        personalNote: personal_note ?? null,
+        subject: subject ?? null,
+      };
+      const reasonLine =
+        entity_type === "VENDOR"
+          ? "your business is listed on Meet Me at the Fair."
+          : "your organization is listed on Meet Me at the Fair.";
+
+      // OPE-1507 — dry run: the email exactly as it would go, token replaced by
+      // a placeholder, and nothing written anywhere. Runs AFTER every gate above
+      // (missing, claimed, no email, suppressed) so a preview never shows an
+      // email the live call would refuse to send.
+      if (dry_run) {
+        const preview = await applyCanSpamFooter(
+          renderInviteEmail({
+            ...renderInput,
+            url: inviteUrl(entity_type, entity.slug, DRY_RUN_TOKEN_PLACEHOLDER),
+          }),
+          { recipientEmail: targetEmail, reasonLine, env }
+        );
+        const wouldNoop = Boolean(active && !resend);
+        return {
+          content: [
+            jsonContent({
+              dry_run: true,
+              would_send: !wouldNoop,
+              ...(wouldNoop
+                ? {
+                    reason: "active_invite_exists",
+                    note: "A live send would be a no-op: an unexpired invite exists. Pass resend: true to replace it.",
+                  }
+                : {}),
+              entityType: entity_type,
+              entityId: entity_id,
+              to: targetEmail,
+              bcc: BCC_TO,
+              personalNote: Boolean(personal_note?.trim()),
+              subject: preview.subject.slice(0, 200),
+              body_html: preview.html,
+              body_text: preview.text,
+            }),
+          ],
+        };
+      }
+      if (!env?.EMAIL_JOBS) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "create_claim_invite requires the EMAIL_JOBS queue binding on the MCP Worker.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      // OPE-1340 — `resend` revokes the live token (swept with the stale ones
+      // below) so a broken or lost invite can be replaced inside its 14 days.
+      // Only ever one live token per (entity, email): the old link dies here.
+      const reissued = Boolean(active && resend);
+      if (active && !resend) {
         return {
           content: [
             jsonContent({
@@ -336,12 +623,8 @@ export function registerCreateClaimInviteTool(
       });
 
       // 5. Send the invite email, mirroring send_vendor_email's rails.
-      const reasonLine =
-        entity_type === "VENDOR"
-          ? "your business is listed on Meet Me at the Fair."
-          : "your organization is listed on Meet Me at the Fair.";
       const rendered = await applyCanSpamFooter(
-        renderInviteEmail(entity.name, inviteUrl(entity_type, entity.slug, rawToken)),
+        renderInviteEmail({ ...renderInput, url: inviteUrl(entity_type, entity.slug, rawToken) }),
         { recipientEmail: targetEmail, reasonLine, env }
       );
 
@@ -379,7 +662,10 @@ export function registerCreateClaimInviteTool(
           channel: "email",
           outcome: "sent",
           outcomeAt: now,
-          notes: "create_claim_invite",
+          // OPE-1507 — say whether the operator's own words went out.
+          notes: personal_note?.trim()
+            ? "create_claim_invite (personal note)"
+            : "create_claim_invite",
           createdBy: auth.userId,
         });
       }
@@ -396,6 +682,11 @@ export function registerCreateClaimInviteTool(
           bcc: BCC_TO,
           expiresAt: expiresAt.toISOString(),
           outreachAttemptId,
+          reissued,
+          // OPE-1507 — the ledger row carries the rendered body itself (note
+          // included); these flags make the choice filterable here.
+          personalNote: Boolean(personal_note?.trim()),
+          subjectOverride: Boolean(subject?.trim()),
         }),
         createdAt: now,
       });
@@ -404,6 +695,7 @@ export function registerCreateClaimInviteTool(
         content: [
           jsonContent({
             created: true,
+            reissued,
             entityType: entity_type,
             entityId: entity_id,
             email: targetEmail,

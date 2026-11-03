@@ -55,21 +55,39 @@ function parseCategories(categories: unknown): string[] {
 const iso = (d: Date | string | null | undefined): string =>
   d instanceof Date ? d.toISOString() : typeof d === "string" ? d : "";
 
-/** Returns the vendor + its public events, or null if the vendor doesn't exist. */
+/**
+ * OPE-1396 (API5) — the loader's verdict. `gone` is a soft-deleted vendor:
+ * its /vendors/<slug> page is 301/410 in middleware, so nothing public may
+ * serve its event list either. The API maps `gone` to 410 (matching the
+ * vendor page); the SSR page can only `notFound()`.
+ */
+export type VendorEventsLookup =
+  | { kind: "ok"; data: VendorEventsData }
+  | { kind: "gone" }
+  | { kind: "missing" };
+
+/** The vendor + its public events, or null if the vendor doesn't exist or is soft-deleted. */
 export async function getVendorEventsData(db: Db, slug: string): Promise<VendorEventsData | null> {
+  const r = await lookupVendorEvents(db, slug);
+  return r.kind === "ok" ? r.data : null;
+}
+
+export async function lookupVendorEvents(db: Db, slug: string): Promise<VendorEventsLookup> {
   const vendorResults = await db
     .select({
       id: vendors.id,
       businessName: vendors.businessName,
       displayName: vendors.displayName,
       slug: vendors.slug,
+      deletedAt: vendors.deletedAt,
     })
     .from(vendors)
     .where(eq(vendors.slug, unsafeSlug(slug)))
     .limit(1);
 
-  if (vendorResults.length === 0) return null;
-  const vendor = vendorResults[0];
+  if (vendorResults.length === 0) return { kind: "missing" };
+  const { deletedAt, ...vendor } = vendorResults[0];
+  if (deletedAt) return { kind: "gone" };
 
   const eventResults = await db
     .select({
@@ -122,12 +140,15 @@ export async function getVendorEventsData(db: Db, slug: string): Promise<VendorE
     }));
 
   return {
-    vendor: {
-      id: vendor.id,
-      businessName: vendor.businessName,
-      displayName: vendor.displayName,
-      slug: vendor.slug,
+    kind: "ok",
+    data: {
+      vendor: {
+        id: vendor.id,
+        businessName: vendor.businessName,
+        displayName: vendor.displayName,
+        slug: vendor.slug,
+      },
+      events: formattedEvents,
     },
-    events: formattedEvents,
   };
 }

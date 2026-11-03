@@ -102,6 +102,11 @@ export function VendorClaimWidget({
     setMessage(null);
     // ENG1.5 (2026-06-10) — direct claim (email matched): method "register".
     if (vendorSlug) trackVendorClaim("started", "register", vendorSlug, vendorId);
+    // OPE-364 (1a, John 2026-09-30) — funnel step 4 fires on the ATTEMPT,
+    // before the POST, like register_submitted and submit_submitted. Success-only
+    // made the step unprovable without creating a real claim, and hid a claim
+    // endpoint that rejects everyone. `approved` stays success-only below.
+    if (vendorSlug) trackVendorClaim("submitted", "register", vendorSlug, vendorId);
     try {
       const res = await fetch("/api/vendor/claim/direct", {
         method: "POST",
@@ -114,11 +119,8 @@ export function VendorClaimWidget({
         setMessage(body.message ?? body.error ?? "Claim failed. Try again or contact support.");
         return;
       }
-      // Direct claim is granted instantly — submitted + approved on success.
-      if (vendorSlug) {
-        trackVendorClaim("submitted", "register", vendorSlug, vendorId);
-        trackVendorClaim("approved", "register", vendorSlug, vendorId);
-      }
+      // Direct claim is granted instantly — approved on success.
+      if (vendorSlug) trackVendorClaim("approved", "register", vendorSlug, vendorId);
       setStatus("claimed");
       setMessage("Listing claimed. Reloading…");
       onClaimed?.();
@@ -137,6 +139,11 @@ export function VendorClaimWidget({
     // ENG1.5 (2026-06-10) — email round-trip path: method "email". The
     // approval leg fires later, when /confirm redirects back with ?claimed=1.
     if (vendorSlug) trackVendorClaim("started", "email", vendorSlug, vendorId);
+    // OPE-364 (1a, John 2026-09-30) — funnel step 4 fires on the ATTEMPT,
+    // before the POST, like register_submitted and submit_submitted. Success-only
+    // made the step unprovable without creating a real claim, and hid a claim
+    // endpoint that rejects everyone. `approved` stays success-only below.
+    if (vendorSlug) trackVendorClaim("submitted", "email", vendorSlug, vendorId);
     try {
       const res = await fetch("/api/vendor/claim/initiate", { method: "POST" });
       if (!res.ok) {
@@ -145,7 +152,6 @@ export function VendorClaimWidget({
         setMessage(body.error ?? "Failed to start claim. Try again.");
         return;
       }
-      if (vendorSlug) trackVendorClaim("submitted", "email", vendorSlug, vendorId);
       setStatus("sent");
       setMessage("Check your email for a confirmation link. It expires in 24 hours.");
     } catch (e) {

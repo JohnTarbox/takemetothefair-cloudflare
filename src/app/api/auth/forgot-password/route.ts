@@ -12,6 +12,7 @@ import { getSiteUrl } from "@/lib/email/send";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { passwordResetTemplate } from "@/lib/email/templates";
 import { isAddressUndeliverable } from "@/lib/email/undeliverable";
+import { hashResetToken } from "@/lib/auth/password-reset-token";
 
 const schema = z.object({ email: z.string().email() });
 
@@ -77,8 +78,10 @@ export async function POST(request: NextRequest) {
     const token = crypto.randomUUID() + crypto.randomUUID().replace(/-/g, "");
     const expires = new Date(Date.now() + TOKEN_TTL_MS);
 
+    // OPE-1378 (AUTH8) — only the SHA-256 digest is stored; the raw token
+    // lives solely in the emailed link.
     await db.insert(passwordResetTokens).values({
-      token,
+      token: await hashResetToken(token),
       userId: user.id,
       expires,
     });

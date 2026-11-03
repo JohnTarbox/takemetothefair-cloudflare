@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatTimestamp } from "@/lib/datetime";
+import { safeHref } from "@takemetothefair/utils";
 
 interface SuggestionRow {
   id: string;
@@ -147,7 +148,7 @@ export default function EmailSourceSuggestionsPage() {
                     <dt className="text-muted-foreground">URL</dt>
                     <dd>
                       <a
-                        href={row.url}
+                        href={safeHref(row.url)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="break-all text-royal hover:underline"

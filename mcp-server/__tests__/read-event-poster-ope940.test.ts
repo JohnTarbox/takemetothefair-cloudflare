@@ -141,4 +141,62 @@ describe("read_event_poster, through the real tool", () => {
     expect(res.isError).toBe(true);
     expect(run).not.toHaveBeenCalled();
   });
+
+  // OPE-1370 (SSRF6) — the poster URL is caller-supplied and had no guard.
+  it("refuses a poster URL that redirects to loopback, without requesting the hop", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        seen.push(String(input));
+        if (String(input) === "https://x.test/poster.jpg") {
+          // A runtime-followed redirect would land on the hop; manual stops here.
+          return init?.redirect === "manual"
+            ? new Response(null, { status: 302, headers: { location: "http://[::7f00:1]/p.jpg" } })
+            : new Response(new Uint8Array([0xff, 0xd8, 0xff]), {
+                headers: { "Content-Type": "image/jpeg" },
+              });
+        }
+        return new Response(new Uint8Array([0xff, 0xd8, 0xff]), {
+          headers: { "Content-Type": "image/jpeg" },
+        });
+      })
+    );
+    run.mockClear();
+    const res = (await server.invoke("read_event_poster", {
+      image_url: "https://x.test/poster.jpg",
+    })) as { isError?: boolean; content: Array<{ text: string }> };
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/internal host/i);
+    expect(seen).toEqual(["https://x.test/poster.jpg"]);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("stops reading an oversize poster at the cap instead of buffering it whole", async () => {
+    let sent = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull(c) {
+                if (sent >= 64 * 1024 * 1024) return c.close();
+                sent += 1024 * 1024;
+                c.enqueue(new Uint8Array(1024 * 1024));
+              },
+            }),
+            { headers: { "Content-Type": "image/jpeg" } }
+          )
+      )
+    );
+    run.mockClear();
+    const res = (await server.invoke("read_event_poster", {
+      image_url: "https://x.test/huge.jpg",
+    })) as { isError?: boolean; content: Array<{ text: string }> };
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/reads at most/);
+    expect(sent).toBeLessThan(16 * 1024 * 1024);
+    expect(run).not.toHaveBeenCalled();
+  });
 });

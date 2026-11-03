@@ -149,3 +149,37 @@ describe("renderVendorDigestContent", () => {
     expect(html).toContain("large show");
   });
 });
+
+// OPE-794 — John, 2026-09-30: hide Apply for full / waitlist shows.
+describe("OPE-794 — a waitlisted show has no apply button", () => {
+  const base = {
+    name: "OgunquitFest Artisan Craft Fair",
+    slug: "ogunquitfest-2026",
+    startDate: new Date("2026-10-10T12:00:00Z"),
+    endDate: null,
+    datesUnconfirmed: false,
+    categories: [],
+    commercialVendorsAllowed: null,
+    estimatedAttendance: null,
+    eventScale: null,
+    indoorOutdoor: null,
+    applicationUrl: "https://www.ogunquit.org/annual-craft-fairs/",
+    sourceUrl: null,
+    promoterWebsite: null,
+  };
+  const now = new Date("2026-09-30T12:00:00Z");
+
+  it("WAITLIST renders the badge and no 'Apply for a booth'", () => {
+    const html = renderVendorDigestContent([{ ...base, capacity: "WAITLIST" }], now)!;
+    expect(html).toContain("Waitlist only");
+    expect(html).not.toContain("Apply for a booth");
+  });
+
+  it("OPEN, UNKNOWN and unset keep the apply button (positive landmark)", () => {
+    for (const capacity of ["OPEN", "UNKNOWN", undefined] as const) {
+      const html = renderVendorDigestContent([{ ...base, capacity }], now)!;
+      expect(html).toContain("Apply for a booth");
+      expect(html).not.toContain("Waitlist only");
+    }
+  });
+});

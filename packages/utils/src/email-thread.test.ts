@@ -15,6 +15,7 @@ import {
   isThreadableSubject,
   normalizeMessageId,
   normalizeThreadSubject,
+  replySubject,
   parseMessageIdList,
   participantKey,
   resolveThread,
@@ -103,8 +104,8 @@ describe("participantKey", () => {
 describe("resolveThread — tier 1, the header chain", () => {
   it("threads a reply onto the message it answers", () => {
     const r = resolveThread(
-      { inReplyTo: "<orig@mail.com>", participants: "a|b" },
-      [row({ threadId: "t-1", messageId: "<orig@mail.com>" })],
+      { inReplyTo: "<userpoppy1@mail.com>", participants: "a|b" },
+      [row({ threadId: "t-1", messageId: "<userpoppy1@mail.com>" })],
       NEW_ID
     );
     expect(r).toEqual({ threadId: "t-1", basis: "header_chain" });
@@ -116,10 +117,10 @@ describe("resolveThread — tier 1, the header chain", () => {
     const r = resolveThread(
       {
         inReplyTo: "<ours@meetmeatthefair.com>",
-        emailReferences: "<orig@mail.com>",
+        emailReferences: "<userpoppy1@mail.com>",
         participants: "a|b",
       },
-      [row({ threadId: "t-1", messageId: "<orig@mail.com>" })],
+      [row({ threadId: "t-1", messageId: "<userpoppy1@mail.com>" })],
       NEW_ID
     );
     expect(r.basis).toBe("header_chain");
@@ -128,8 +129,12 @@ describe("resolveThread — tier 1, the header chain", () => {
 
   it("threads across a RENAMED subject — a header match outranks the subject", () => {
     const r = resolveThread(
-      { inReplyTo: "<orig@mail.com>", subject: "completely different now", participants: "a|b" },
-      [row({ threadId: "t-1", messageId: "<orig@mail.com>", normalizedSubject: "original" })],
+      {
+        inReplyTo: "<userpoppy1@mail.com>",
+        subject: "completely different now",
+        participants: "a|b",
+      },
+      [row({ threadId: "t-1", messageId: "<userpoppy1@mail.com>", normalizedSubject: "original" })],
       NEW_ID
     );
     expect(r.basis).toBe("header_chain");
@@ -139,8 +144,8 @@ describe("resolveThread — tier 1, the header chain", () => {
     // Rows written before drizzle/0263 have no thread. Adopting their NULL
     // would write NULL as this message's thread and lose it entirely.
     const r = resolveThread(
-      { inReplyTo: "<orig@mail.com>", participants: "a|b" },
-      [row({ threadId: null, messageId: "<orig@mail.com>" })],
+      { inReplyTo: "<userpoppy1@mail.com>", participants: "a|b" },
+      [row({ threadId: null, messageId: "<userpoppy1@mail.com>" })],
       NEW_ID
     );
     expect(r).toEqual({ threadId: NEW_ID, basis: "new" });
@@ -214,5 +219,39 @@ describe("resolveThread — tier 2, and what it must refuse", () => {
       threadId: NEW_ID,
       basis: "new",
     });
+  });
+});
+
+describe("replySubject (OPE-1540)", () => {
+  it("prefixes a plain subject", () => {
+    expect(replySubject("Booth question")).toBe("Re: Booth question");
+  });
+
+  it("leaves an existing reply prefix alone, in any case and spacing", () => {
+    // The specimen: John's 2026-10-29 reply went out as "Re: Re: Optional …".
+    expect(replySubject("Re: Optional editable-sign resource")).toBe(
+      "Re: Optional editable-sign resource"
+    );
+    expect(replySubject("RE: X")).toBe("RE: X");
+    expect(replySubject("  re:X")).toBe("  re:X");
+    expect(replySubject("Re[2]: X")).toBe("Re[2]: X");
+    expect(replySubject("Re [3] : X")).toBe("Re [3] : X");
+    expect(replySubject("AW: X")).toBe("AW: X");
+    expect(replySubject("sv: X")).toBe("sv: X");
+  });
+
+  it("still prefixes a forward, and words that merely start with re/sv/aw", () => {
+    expect(replySubject("Fwd: X")).toBe("Re: Fwd: X");
+    expect(replySubject("Registration open")).toBe("Re: Registration open");
+    expect(replySubject("Reminder: fair moved")).toBe("Re: Reminder: fair moved");
+    expect(replySubject("Award: best booth")).toBe("Re: Award: best booth");
+  });
+
+  it("gives a non-empty default for a missing or blank subject", () => {
+    expect(replySubject(null)).toBe("Re: your message");
+    expect(replySubject(undefined)).toBe("Re: your message");
+    expect(replySubject("")).toBe("Re: your message");
+    expect(replySubject("   ")).toBe("Re: your message");
+    expect(replySubject("", "your listing")).toBe("Re: your listing");
   });
 });

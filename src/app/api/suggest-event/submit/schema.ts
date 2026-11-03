@@ -71,6 +71,11 @@ export const submitEventSchema = z.object({
   specificDates: z.array(z.string()).nullable().optional(),
   submittedByUserId: z.string().optional(), // User who submitted (auto-filled for authenticated users)
   source: z.enum(["community", "vendor", "email"]).optional(), // Submission source
+  // OPE-1558 — which public form a community submission came through. Only
+  // `/list-your-event` sends it today. Recorded as an `events.tags` entry so the
+  // self-listing funnel's last step ("published") can be read from the stored
+  // row rather than reconstructed. Changes nothing about status or review.
+  intakeForm: z.enum(["list-your-event"]).optional(),
   // Cohort 2 (analyst, 2026-06-01) — set by the inbound-email workflow
   // when findDuplicate returns a MEDIUM-confidence match (city_state_date
   // or similar_name_date). Surfaces the candidate inline on the
@@ -78,4 +83,8 @@ export const submitEventSchema = z.object({
   // Trusted-internal field; not exposed via the public vendor / community
   // suggest forms.
   possibleDuplicateOf: z.string().nullable().optional(),
+  // OPE-1286 — the promoter the inbound newsletter lane attributed the item to.
+  // Honoured by the route ONLY for an internal caller, and only when the row
+  // exists; a public caller's value is ignored, never trusted.
+  promoterId: z.string().nullable().optional(),
 });

@@ -62,7 +62,9 @@ jobs:
             ARGS="$ARGS --no-fail-fast"
           fi
           npm run gvalidate -- $ARGS
-        continue-on-error: true
+        # OPE-363 (John 2026-10-13): no `continue-on-error`. It was not load-bearing —
+        # the report upload below already runs on failure via `if: always()` — and it
+        # made a failing weekly rich-results validation read as green.
 
       - name: Upload validation reports
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

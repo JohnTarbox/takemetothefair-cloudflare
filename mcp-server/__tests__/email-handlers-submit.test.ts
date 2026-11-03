@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NonRetryableError } from "cloudflare:workflows";
 import {
   submitFetch,
+  senderMeterKey,
   submitExtract,
   submitCheckDuplicate,
   submitEvent,
@@ -51,9 +52,31 @@ describe("submitFetch — retry contract", () => {
     expect(JSON.parse(result.jsonLdSerialized!)).toEqual({ "@type": "Event" });
   });
 
+  // OPE-424 — the transport the main app used reaches the workflow, which
+  // flags a plain-HTTP read for review. Absent from an older deploy → absent here.
+  it("carries transport:'http' through, and omits it when the main app did not send it", async () => {
+    mockFetch(() =>
+      Response.json({ success: true, content: "c", fetchMethod: "standard", transport: "http" })
+    );
+    expect((await submitFetch(ENV, "http://example.org")).transport).toBe("http");
+    mockFetch(() => Response.json({ success: true, content: "c" }));
+    expect(await submitFetch(ENV, "http://example.org")).not.toHaveProperty("transport");
+  });
+
   it("throws NonRetryableError on 4xx (don't retry permanent failures)", async () => {
     mockFetch(() => new Response("bad url", { status: 400 }));
     await expect(submitFetch(ENV, "https://example.org")).rejects.toBeInstanceOf(NonRetryableError);
+  });
+
+  // OPE-1412 — the main app's GLOBAL daily email-fetch ceiling refuses with the
+  // same 429 as the per-sender bucket. It must stay a NON-retryable `fetch-`
+  // failure: the workflow then takes its existing failed-fetch path (body
+  // fallback, same reply), and a retry would only re-spend against the cap.
+  it("a 429 (per-sender or global ceiling) is a non-retryable fetch- failure", async () => {
+    mockFetch(() => new Response("Too many requests", { status: 429 }));
+    const err = await submitFetch(ENV, "https://example.org", { sender: "a@b.c" }).catch((e) => e);
+    expect(err).toBeInstanceOf(NonRetryableError);
+    expect(err.message).toBe("fetch-429");
   });
 
   it("throws plain Error on 5xx (retry transient failures)", async () => {
@@ -115,6 +138,35 @@ describe("submitFetch — retry contract", () => {
     const err = await submitFetch(ENV, "https://example.org").catch((e) => e);
     expect(err).toBeInstanceOf(NonRetryableError);
     expect(err.message).toMatch(/^fetch-upstream:/);
+  });
+});
+
+// OPE-1370 (SSRF8) — the main app meters import-url-fetch per ORIGINAL sender.
+describe("submitFetch — per-sender metering stamp", () => {
+  const headersOf = async (sender?: string) => {
+    const spy = vi.fn(
+      async (_i: RequestInfo | URL, _init?: RequestInit) =>
+        Response.json({ success: true, content: "x" }) as Response
+    );
+    vi.stubGlobal("fetch", spy);
+    await submitFetch(ENV, "https://example.org", sender ? { sender } : {});
+    return new Headers(spy.mock.calls[0][1]?.headers);
+  };
+
+  it("sends a stable, case-insensitive hash of the sender — never the address", async () => {
+    const h = await headersOf("Organizer@Example.org");
+    const key = h.get("x-mmatf-sender");
+    expect(key).toMatch(/^[0-9a-f]{32}$/);
+    expect(key).toBe(await senderMeterKey("organizer@example.org "));
+    expect(key).not.toBe(await senderMeterKey("someone-else@example.org"));
+    expect(h.get("x-mmatf-entrypoint")).toBe("workflow");
+    expect([...h.values()].join(" ")).not.toMatch(/example\.org/i);
+    expect(h.get("x-internal-key")).toBe("test-key");
+  });
+
+  it("sends no sender stamp when there is no sender (holdout re-fetch)", async () => {
+    const h = await headersOf();
+    expect(h.get("x-mmatf-sender")).toBeNull();
   });
 });
 
@@ -273,7 +325,7 @@ describe("submitEvent — retry contract", () => {
     );
     const result = await submitEvent(
       ENV,
-      { url: "https://x", event: { name: "My Fair" } },
+      { url: "https://x", event: { name: "My Fair", startDate: "2026-10-10" } },
       "alice@example.com",
       { inboundEmailId: "email-test", dedupWasBlind: false }
     );
@@ -286,29 +338,44 @@ describe("submitEvent — retry contract", () => {
     mockFetch(
       () => new Response(JSON.stringify({ success: false, error: "validation" }), { status: 400 })
     );
-    const err = await submitEvent(ENV, { url: "https://x", event: { name: "x" } }, "a@b.com", {
-      inboundEmailId: "email-test",
-      dedupWasBlind: false,
-    }).catch((e) => e);
+    const err = await submitEvent(
+      ENV,
+      { url: "https://x", event: { name: "x", startDate: "2026-10-10" } },
+      "a@b.com",
+      {
+        inboundEmailId: "email-test",
+        dedupWasBlind: false,
+      }
+    ).catch((e) => e);
     expect(err).toBeInstanceOf(NonRetryableError);
   });
 
   it("throws plain Error on 5xx (retry transient failures)", async () => {
     mockFetch(() => new Response("oops", { status: 502 }));
-    const err = await submitEvent(ENV, { url: "https://x", event: { name: "x" } }, "a@b.com", {
-      inboundEmailId: "email-test",
-      dedupWasBlind: false,
-    }).catch((e) => e);
+    const err = await submitEvent(
+      ENV,
+      { url: "https://x", event: { name: "x", startDate: "2026-10-10" } },
+      "a@b.com",
+      {
+        inboundEmailId: "email-test",
+        dedupWasBlind: false,
+      }
+    ).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(NonRetryableError);
   });
 
   it("throws plain Error on network failure (retryable)", async () => {
     mockFetch(() => Promise.reject(new Error("ECONNREFUSED")));
-    const err = await submitEvent(ENV, { url: "https://x", event: { name: "x" } }, "a@b.com", {
-      inboundEmailId: "email-test",
-      dedupWasBlind: false,
-    }).catch((e) => e);
+    const err = await submitEvent(
+      ENV,
+      { url: "https://x", event: { name: "x", startDate: "2026-10-10" } },
+      "a@b.com",
+      {
+        inboundEmailId: "email-test",
+        dedupWasBlind: false,
+      }
+    ).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(NonRetryableError);
   });

@@ -45,6 +45,7 @@ import { logEnrichment } from "@/lib/enrichment-log";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { unsafeSlug } from "@/lib/utils";
+import { changedRows } from "@/lib/db/changed-rows";
 
 const schema = z.object({
   slug: z.string().min(1).max(200),
@@ -157,15 +158,38 @@ export async function POST(request: Request) {
     // sub-200ms flow). We update the vendor row, mirror to user_roles,
     // and write the audit + enrichment rows. The vendor.userId
     // transfer is idempotent — assigning the same id is a no-op.
-    await db
-      .update(vendors)
-      .set({
-        userId: user.id,
-        claimed: true,
-        claimedAt: now,
-        claimedBy: user.id,
-      })
-      .where(eq(vendors.id, vendor.id));
+    //
+    // OPE-1378 (AUTH7) — the UPDATE carries the same `claimed = false` guard as
+    // every other claim path (redeem-claim-token, resolve-claim-*,
+    // admin-review). The pre-check above reads the row first, so without the
+    // guard a concurrent claim landing between that read and this write was
+    // silently re-owned. 0 rows changed means someone else won: 409, and no
+    // role / entity_claims / audit side effects.
+    //
+    // The rightful owner re-claiming an already-claimed row skips the write
+    // (nothing to change) so it stays idempotent rather than tripping the 409.
+    if (!(vendor.claimed && vendor.userId === user.id)) {
+      const updated = await db
+        .update(vendors)
+        .set({
+          userId: user.id,
+          claimed: true,
+          claimedAt: now,
+          claimedBy: user.id,
+        })
+        .where(and(eq(vendors.id, vendor.id), eq(vendors.claimed, false)));
+
+      if (changedRows(updated) === 0) {
+        return NextResponse.json(
+          {
+            error: "already_claimed",
+            message:
+              "This listing has been claimed by another account. If that's an error, please contact support.",
+          },
+          { status: 409 }
+        );
+      }
+    }
 
     await db
       .insert(userRoles)

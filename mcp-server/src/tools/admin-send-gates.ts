@@ -34,13 +34,25 @@ import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
+/**
+ * OPE-1486 — gates that WRITE public records rather than send mail. Not send
+ * gates, so they are not in `SEND_GATE_NAMES`; listed here so the deployed
+ * value can be read before anyone quotes it. The 2026-09-30 OPE-240 receipt
+ * stated `PHOTO_AUTOWRITE_ENABLED current: "false"` from a ticket description
+ * while the Worker had been running "true" for four days, and John ruled on
+ * that premise. Same rules as the send gates: fixed list, no key parameter,
+ * read-only. Both are closed unless exactly "true".
+ */
+export const WRITE_GATE_NAMES = ["PHOTO_AUTOWRITE_ENABLED", "PHOTO_VISION_ENABLED"] as const;
+export type WriteGateName = (typeof WRITE_GATE_NAMES)[number];
+
 export function registerSendGatesTool(
   server: McpServer,
   _db: Db,
   auth: AuthContext,
   // OPE-950 — typed to the gate allowlist, so the Worker's own Env passes
   // without a cast (it used to arrive through an `as unknown as Record<…>` cast).
-  env?: Partial<Record<SendGateName, string>>
+  env?: Partial<Record<SendGateName | WriteGateName, string>>
 ) {
   if (auth.role !== "ADMIN") return;
 
@@ -61,6 +73,10 @@ export function registerSendGatesTool(
       "only place they can be read. Each gate carries unset_means: AUTO_REPLY_ENABLED",
       'is OPEN when unset (only the string "false" holds the acks); every other gate',
       "is closed when unset.",
+      "",
+      `write_gates reports the gates that create public records from email (${WRITE_GATE_NAMES.join(", ")}):`,
+      'enabled only when exactly "true". Read a flag HERE before stating its',
+      '"current" value in a receipt or an approval request; never from a ticket or the file.',
     ].join(" "),
     {},
     async () => {
@@ -77,6 +93,10 @@ export function registerSendGatesTool(
             unset_but_enforced_here: gates
               .filter((g) => g.readable_here && g.value === null)
               .map((g) => g.name),
+            write_gates: WRITE_GATE_NAMES.map((name) => {
+              const value = env?.[name] ?? null;
+              return { name, value, enabled: value === "true", unset_means: "closed" };
+            }),
             note:
               "Values are set in the committed [vars] of each Worker's wrangler.toml. " +
               "A dashboard edit is wiped by the next deploy (OPE-284/OPE-509).",

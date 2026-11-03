@@ -879,12 +879,12 @@ Once the substrate is proven for the classifier, extend the same pattern to extr
 
 ### Classifier-routing test cases (drawn from real submissions)
 
-| Inbound email                                                                             | Expected classification                            | Notes                                                                                     |
-| ----------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `jtarboxme@gmail.com` → `submit@`, body `https://near-fest.com/`                          | `new_event` / `single_url` / conf ≥0.9             | The original Phase 2 canonical case; classifier should pick this confidently              |
-| `jtarboxme@gmail.com` → `submit@`, body `https://www.ham-con.org/`                        | `new_event` / `single_url` / conf ≥0.9             | Currently fails at fetch step (A5 fix queued); classifier should still classify correctly |
-| `scott@cfnparts.com` → `corrections@`, "NHAC is not sponsoring any events on June 7th"    | `correction` / conf ≥0.85                          | Elizabeth Marston's real correction email 2026-05-18                                      |
-| `jtarboxme@gmail.com` → `submit@`, body has Starling Hall event URL + extra prose details | `new_event` / `single_url` or `mixed` / conf ≥0.85 | Garden & Craft Fair / Breakfast with Bake Sale series                                     |
+| Inbound email                                                                              | Expected classification                            | Notes                                                                                     |
+| ------------------------------------------------------------------------------------------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `jtarboxme@gmail.com` → `submit@`, body `https://near-fest.com/`                           | `new_event` / `single_url` / conf ≥0.9             | The original Phase 2 canonical case; classifier should pick this confidently              |
+| `jtarboxme@gmail.com` → `submit@`, body `https://www.ham-con.org/`                         | `new_event` / `single_url` / conf ≥0.9             | Currently fails at fetch step (A5 fix queued); classifier should still classify correctly |
+| `birchdesk@cfnparts.com` → `corrections@`, "NHAC is not sponsoring any events on June 7th" | `correction` / conf ≥0.85                          | Morgan Sample's real correction email 2026-05-18                                          |
+| `jtarboxme@gmail.com` → `submit@`, body has Starling Hall event URL + extra prose details  | `new_event` / `single_url` or `mixed` / conf ≥0.85 | Garden & Craft Fair / Breakfast with Bake Sale series                                     |
 
 ### Sender feedback test cases (forward-looking)
 

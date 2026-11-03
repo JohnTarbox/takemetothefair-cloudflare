@@ -33,6 +33,7 @@ import { getDb } from "../db.js";
 import { logError } from "../logger.js";
 import { decideEventGrounding, type EventGroundingDecision } from "@takemetothefair/utils";
 import { emitExtractionFault } from "../faults/extraction-emitter.js";
+import { stageEnrichOnMatch } from "./enrich-proposal.js";
 
 const SOURCE_FETCH = "mcp:email-handler:extract:fetch";
 const SOURCE_EXTRACT = "mcp:email-handler:extract:ai";
@@ -74,6 +75,33 @@ export interface SubmitFetchResult {
    *  on 401/403/429/timeout. Forwarded to workflow's mark-done step which
    *  persists it to inbound_emails.fetch_method (drizzle/0078). */
   fetchMethod: "standard" | "browser-rendering";
+  /** OPE-424 — `"http"` when the page could only be read over plain HTTP
+   *  (the origin has no working TLS). Lower-confidence: the workflow flags
+   *  the email for review. Absent on an older main-app deploy. */
+  transport?: "https" | "http";
+  /** OPE-1250 — set when `url` is the page a cross-host redirect landed on
+   *  (a share.google / shortener link). The link the sender actually sent is
+   *  kept here as secondary provenance; `url` is what dedup and citations use. */
+  requestedUrl?: string;
+}
+
+/**
+ * OPE-1250 — adopt a redirect's final URL only when it changed HOST. A share or
+ * short link (share.google → wgme.com) is opaque and unique per share, so
+ * storing it as `source_url` defeats URL dedup and provenance. A same-host
+ * redirect (http→https, a trailing slash, www.) is left alone: existing
+ * `source_url` dedup keys were stored in that form and must keep matching.
+ */
+export function adoptFinalUrl(requested: string, finalUrl: string | null | undefined): string {
+  if (!finalUrl || finalUrl === requested) return requested;
+  try {
+    const host = (u: string) => new URL(u).hostname.toLowerCase().replace(/^www\./, "");
+    const f = new URL(finalUrl);
+    if (f.protocol !== "https:" && f.protocol !== "http:") return requested;
+    return host(requested) === host(finalUrl) ? requested : finalUrl;
+  } catch {
+    return requested;
+  }
 }
 
 export interface SubmitExtractResult {
@@ -304,12 +332,41 @@ interface ExtractedEvent {
  *   - upstream {success:false}  → NonRetryableError with upstream message
  *   - 5xx response or network   → plain Error, workflow retries
  */
-export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitFetchResult> {
+/**
+ * OPE-1370 (SSRF8) — the per-sender key for the main app's metered
+ * `import-url-fetch` bucket. Every inbound-email fetch arrives from this
+ * Worker's egress, so with no caller stamp they all counted under ONE IP key:
+ * a stream of rotating senders could spend the shared 60/hour budget and
+ * starve legitimate submissions. The address is hashed (never sent raw — the
+ * key only needs to be stable per sender) and lowercased so case variants of
+ * one mailbox share a bucket.
+ */
+export async function senderMeterKey(fromAddress: string): Promise<string> {
+  const data = new TextEncoder().encode(fromAddress.trim().toLowerCase());
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+  return Array.from(digest.slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export interface SubmitFetchOptions {
+  /** The original sender; metered per sender when present (SSRF8). */
+  sender?: string | null;
+}
+
+export async function submitFetch(
+  env: HandlerEnv,
+  url: string,
+  opts: SubmitFetchOptions = {}
+): Promise<SubmitFetchResult> {
+  const headers: Record<string, string> = { "x-internal-key": env.INTERNAL_API_KEY };
+  if (opts.sender) {
+    headers["X-MMATF-Entrypoint"] = "workflow";
+    headers["X-MMATF-Sender"] = await senderMeterKey(opts.sender);
+  }
   let res: Response;
   try {
     res = await fetch(
       `${env.MAIN_APP_URL}/api/admin/import-url/fetch?url=${encodeURIComponent(url)}`,
-      { headers: { "x-internal-key": env.INTERNAL_API_KEY } }
+      { headers }
     );
   } catch (err) {
     // Network error — retryable
@@ -332,6 +389,9 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
         ogImage?: string | null;
         jsonLd?: unknown;
         fetchMethod?: "standard" | "browser-rendering";
+        transport?: "https" | "http";
+        /** OPE-1250 — post-redirect URL, when it differs from the requested one. */
+        finalUrl?: string;
       }
     | { success: false; error: string; fetchMethod?: "failed" | "pdf_unsupported" }
     | null;
@@ -347,8 +407,10 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
     }
     throw new NonRetryableError(`fetch-upstream: ${upstream}`);
   }
+  const adopted = adoptFinalUrl(url, body.finalUrl);
   return {
-    url,
+    url: adopted,
+    ...(adopted !== url ? { requestedUrl: url } : {}),
     content: body.content.slice(0, MAX_FETCH_CONTENT_LEN),
     // Capped so a link-farm footer cannot push a Workflow step output toward
     // the 1 MiB ceiling. The crawl cap is 15 pages; 300 candidates is far more
@@ -363,6 +425,7 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
     // older deploy that doesn't return the field. Better to under-count
     // browser-rendering than fail the workflow.
     fetchMethod: body.fetchMethod ?? "standard",
+    ...(body.transport ? { transport: body.transport } : {}),
   };
 }
 
@@ -384,10 +447,22 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
  * Empty string when there's no usable email body (free-text path uses
  * submitFreeTextExtract instead, not this function).
  */
+/**
+ * OPE-1316 — who asked for this extraction. Recorded on the route's timing row
+ * (success AND failure), so a latency distribution can be split by caller: the
+ * unattended callers are the ones a longer limit would be for.
+ */
+export type ExtractCaller =
+  | "email-workflow"
+  | "email-free-text"
+  | "holdout-sampler"
+  | "photo-intake";
+
 export async function submitExtract(
   env: HandlerEnv,
   fetched: SubmitFetchResult,
-  emailBody: string = ""
+  emailBody: string = "",
+  caller: ExtractCaller = "email-workflow"
 ): Promise<SubmitExtractResult> {
   let res: Response;
   try {
@@ -406,6 +481,7 @@ export async function submitExtract(
         // Optional: forwarded only when non-empty so older /extract
         // route deploys (pre-D1) ignore the field gracefully.
         ...(emailBody.trim().length > 0 ? { emailBody: emailBody.slice(0, 8000) } : {}),
+        caller,
       }),
     });
   } catch (err) {
@@ -441,12 +517,15 @@ export async function submitExtract(
         // a single event from deterministic signals when AI returns 0.
         extractionMethod?: "json-ld" | "ai" | "thin";
       }
-    | { success: false; error: string }
+    | { success: false; error: string; aiFailure?: string }
     | null;
   if (!body || !body.success || body.events.length === 0) {
     const upstream =
       body && "error" in body ? body.error : body && body.success ? "zero-events" : "no-body";
-    throw new NonRetryableError(`extract-upstream: ${upstream}`);
+    // OPE-1249 — the route's own record of WHY the AI failed, so a timeout is
+    // classified as one instead of as `other`.
+    const ai = body && !body.success && body.aiFailure ? ` [ai: ${body.aiFailure}]` : "";
+    throw new NonRetryableError(`extract-upstream: ${upstream}${ai}`);
   }
   // Default extractionMethod to 'ai' when the upstream doesn't return the
   // field (older deploy / fallback path). The endpoint returns 'json-ld'
@@ -510,6 +589,9 @@ export async function submitFreeTextExtract(
         // No URL — extractor handles missing url gracefully (skip
         // ticketUrl fallback that defaults to sourceUrl on AI path).
         metadata: { title: null, description: null, ogImage: null, jsonLd: null },
+        // OPE-1057 rework — name the caller so the route's timing row (OPE-1316)
+        // counts free-text extractions; they were logged as `internal-unnamed`.
+        caller: "email-free-text" satisfies ExtractCaller,
       }),
     });
   } catch (err) {
@@ -542,12 +624,15 @@ export async function submitFreeTextExtract(
         count: number;
         confidence?: Record<string, Record<string, "high" | "medium" | "low">>;
       }
-    | { success: false; error: string }
+    | { success: false; error: string; aiFailure?: string }
     | null;
   if (!body || !body.success || body.events.length === 0) {
     const upstream =
       body && "error" in body ? body.error : body && body.success ? "zero-events" : "no-body";
-    throw new NonRetryableError(`extract-upstream: ${upstream}`);
+    // OPE-1249 — the route's own record of WHY the AI failed, so a timeout is
+    // classified as one instead of as `other`.
+    const ai = body && !body.success && body.aiFailure ? ` [ai: ${body.aiFailure}]` : "";
+    throw new NonRetryableError(`extract-upstream: ${upstream}${ai}`);
   }
   const event = body.events[0];
   const extractId = event._extractId;
@@ -605,9 +690,14 @@ export async function submitCheckDuplicate(
     venueAddress?: string;
     venueCity?: string;
     venueState?: string;
-  } = {
-    sourceUrl: extracted.url,
-  };
+  } = {};
+  // OPE-1286 — only a real URL. The free-text path (and the newsletter lane)
+  // carries `url: ""`, and the route's schema is `z.string().url()`: an empty
+  // string 400s the whole check, which this function reads as "not a
+  // duplicate". Every free-text email submission was compared to nothing —
+  // 0 of 26 ever came back already-exists or ok-medium-dup, against 6 of 52
+  // `ai` and 5 of 10 `json-ld` (prod, 2026-10-20).
+  if (extracted.url) body.sourceUrl = extracted.url;
   if (extracted.event.name) body.name = extracted.event.name;
   if (extracted.event.startDate) body.startDate = extracted.event.startDate;
   if (extracted.event.venueName) body.venueName = extracted.event.venueName;
@@ -739,6 +829,172 @@ export interface SubmitEventContext {
    * a fetch failure never becomes a data-loss event.
    */
   sourceTexts?: string[];
+  /**
+   * OPE-1286 — the promoter the newsletter lane attributed this item to. The
+   * main app honours it only from an internal caller, and only when the row
+   * exists; absent, it resolves the owner from the source URL as before.
+   */
+  promoterId?: string | null;
+}
+
+/**
+ * OPE-1253 — what the email lane must never turn into an event row.
+ *
+ * `suggest_event` refuses a dateless create ("start_date is required so
+ * duplicate-detection can run"); the email lane had no such floor. 20
+ * `email_submission` rows were created with no start_date, 7 still PENDING on
+ * 2026-09-30, among them "Weekly Polls on Facebook" (a link label in a
+ * forwarded newsletter) and "- YouTube" (a page title). None could be deduped.
+ */
+export type EmailCandidateRefusal = "no-date" | "non-event-name" | "over-split-year";
+
+/** Platform link labels and page titles that read as names but are not events. */
+const NON_EVENT_NAME_PATTERNS: RegExp[] = [
+  // "Weekly Polls on Facebook", "Follow us on Instagram"
+  /\bon\s+(facebook|instagram|twitter|x|tiktok|youtube|linkedin|pinterest|threads)\s*$/i,
+  // "- YouTube", "| Facebook" — a page-title suffix with the title stripped off
+  /^\s*[-–—|:]\s*(youtube|facebook|instagram|tiktok|twitter|x|linkedin)\s*$/i,
+  // a bare platform name
+  /^\s*(youtube|facebook|instagram|tiktok|twitter|linkedin|pinterest)\s*$/i,
+  // "Watch on YouTube", "Watch now", "Watch the video"
+  /^\s*watch\s+(on|now|live|the\s+video|our|this)\b/i,
+  // "Follow us", "Like us", "Subscribe", "Join us on …"
+  /^\s*(follow|like|subscribe\s+to|join)\s+us\b/i,
+];
+
+export function emailCandidateRefusal(ev: {
+  name?: string | null;
+  startDate?: string | null;
+}): EmailCandidateRefusal | null {
+  const name = (ev.name ?? "").trim();
+  if (!name || NON_EVENT_NAME_PATTERNS.some((r) => r.test(name))) return "non-event-name";
+  if (!ev.startDate) return "no-date";
+  return null;
+}
+
+/**
+ * The refusal as submitEvent will see it: AFTER grounding, which can itself
+ * drop an unsupported start_date (OPE-465 abstention) — so a candidate that
+ * arrived dated can still be one that would be written dateless.
+ */
+export function refusalForCandidate(
+  extracted: Pick<SubmitExtractResult, "event">,
+  sourceTexts: string[] = []
+): EmailCandidateRefusal | null {
+  const grounding = decideEventGrounding({
+    startDate: extracted.event.startDate,
+    endDate: extracted.event.endDate,
+    sources: sourceTexts,
+  });
+  const startDate = grounding.dropFields.includes("start_date") ? null : extracted.event.startDate;
+  return refusalAfterGrounding(extracted.event.name, startDate, grounding);
+}
+
+/**
+ * The one rule, given a grounding verdict. OPE-465's ruling (John, 2026-09-30)
+ * is kept as the single exception: a source that says the details are not
+ * available YET ("information … will be sent out later this year" — the UMF
+ * December fair) is still created, and flagged into the review queue. Every
+ * other dateless candidate is refused.
+ */
+function refusalAfterGrounding(
+  name: string | null | undefined,
+  startDate: string | null | undefined,
+  grounding: EventGroundingDecision
+): EmailCandidateRefusal | null {
+  const refusal = emailCandidateRefusal({ name, startDate });
+  if (refusal === "no-date" && grounding.refuseCreate) return null;
+  return refusal;
+}
+
+/**
+ * OPE-1253 — a refused candidate is never a silent drop. Same channels as
+ * OPE-465's ungrounded-field record: one extraction fault per dropped field,
+ * an `admin_actions(action='email.candidate_refused')` row naming the inbound
+ * email and the verdicts, and the inbound row flagged for review. Never throws.
+ */
+export async function recordCandidateRefusal(
+  env: HandlerEnv,
+  extracted: Pick<SubmitExtractResult, "event" | "url">,
+  sourceTexts: string[],
+  inboundEmailId: string,
+  reason: EmailCandidateRefusal
+): Promise<void> {
+  try {
+    const db = getDb(env.DB);
+    const grounding = decideEventGrounding({
+      startDate: extracted.event.startDate,
+      endDate: extracted.event.endDate,
+      sources: sourceTexts,
+    });
+    for (const field of grounding.dropFields) {
+      const result = grounding.results.find((r) => r.field === field);
+      await emitExtractionFault(db, {
+        signature: `extract.unsupported_field:${field}`,
+        source: SOURCE_SUBMIT,
+        familyId: "extract.unsupported_field",
+        detail: result?.reason ?? null,
+      });
+    }
+    await db.insert(adminActions).values({
+      action: "email.candidate_refused",
+      actorUserId: null,
+      targetType: "inbound_email",
+      targetId: inboundEmailId,
+      payloadJson: JSON.stringify({
+        reason,
+        name: extracted.event.name ?? null,
+        extractedStartDate: extracted.event.startDate ?? null,
+        sourceUrl: extracted.url || null,
+        droppedFields: grounding.dropFields,
+        verdicts: grounding.results.map((r) => ({
+          field: r.field,
+          verdict: r.verdict,
+          reason: r.reason,
+        })),
+      }),
+      createdAt: new Date(),
+    });
+    await db
+      .update(inboundEmails)
+      .set({ flaggedForReview: 1 })
+      .where(eq(inboundEmails.id, inboundEmailId));
+  } catch (err) {
+    await logError(getDb(env.DB), {
+      source: SOURCE_SUBMIT,
+      message: "candidate-refusal record failed",
+      error: err,
+    }).catch(() => {});
+  }
+}
+
+/** Prefix of the error submitEvent throws for a refused candidate. */
+export const SUBMIT_REFUSED_PREFIX = "submit-refused: ";
+
+/**
+ * OPE-1253 — newsletter click-trackers. Opaque, expiring, unique per send:
+ * useless as provenance or a dedup key. A tracker that redirected is replaced
+ * by its destination upstream (adoptFinalUrl, OPE-1250); one that did not is
+ * stored as NO source_url rather than as the tracker.
+ */
+const CLICK_TRACKER_HOST_SUFFIXES = [
+  "rs6.net",
+  "ccsend.com",
+  "mlsend.com",
+  "list-manage.com",
+  "mailchi.mp",
+  "sendgrid.net",
+  "hubspotlinks.com",
+];
+
+export function isClickTrackerUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return CLICK_TRACKER_HOST_SUFFIXES.some((s) => host === s || host.endsWith(`.${s}`));
+  } catch {
+    return false;
+  }
 }
 
 export async function submitEvent(
@@ -767,6 +1023,22 @@ export async function submitEvent(
     if (field === "end_date") groundedEvent.endDate = null;
   }
 
+  // OPE-1253 — the floor, at the one chokepoint every creating branch funnels
+  // through. Callers pre-check with refusalForCandidate so a refused candidate
+  // gets a recorded disposition; this throw is the backstop for any path that
+  // does not, and it fires AFTER grounding because grounding can drop the date.
+  const refusal = refusalAfterGrounding(groundedEvent.name, groundedEvent.startDate, grounding);
+  if (refusal) {
+    await recordCandidateRefusal(
+      env,
+      extracted,
+      context.sourceTexts ?? [],
+      context.inboundEmailId,
+      refusal
+    );
+    throw new NonRetryableError(`${SUBMIT_REFUSED_PREFIX}${refusal}`);
+  }
+
   let res: Response;
   try {
     const submitBody: Record<string, unknown> = {
@@ -777,11 +1049,15 @@ export async function submitEvent(
     // Omit sourceUrl entirely when free-text-extracted (no source URL
     // exists). The submitEventSchema requires sourceUrl to be a valid
     // URL when present, so passing empty-string would fail validation.
-    if (extracted.url) {
+    // OPE-1253 — never a newsletter click-tracker.
+    if (extracted.url && !isClickTrackerUrl(extracted.url)) {
       submitBody.sourceUrl = extracted.url;
     }
     if (possibleDuplicateOf) {
       submitBody.possibleDuplicateOf = possibleDuplicateOf;
+    }
+    if (context.promoterId) {
+      submitBody.promoterId = context.promoterId;
     }
     res = await fetch(`${env.MAIN_APP_URL}/api/suggest-event/submit`, {
       method: "POST",
@@ -796,6 +1072,8 @@ export async function submitEvent(
         success: true;
         routed?: "occurrence" | "occurrence_exists";
         event: { id: string; slug: string };
+        /** OPE-1152 — the candidate the route tagged the new row against. */
+        possibleDuplicateOf?: string | null;
       }
     | { success: false; error: string }
     | null;
@@ -847,7 +1125,14 @@ export async function submitEvent(
   // OPE-465 scope 4 — emit, don't just suppress. A verifier that silently
   // drops bad fields fixes the data and hides the defect, and this lane would
   // lose the only automatic signal it has for extractor fabrication.
-  if (grounding.dropFields.length > 0) {
+  //
+  // OPE-465 (John, 2026-09-30) — "details to follow" is FLAGGED, not refused.
+  // `refuseCreate` is the verifier's "the source says the details do not exist
+  // yet, and no supported date remains" — the UMF December fair. The event is
+  // still created (a refusal would need new customer-facing copy), but it lands
+  // in the review queue. This had to be its own trigger: the UMF specimen has
+  // no dates at all, so nothing is DROPPED and the dropFields branch never ran.
+  if (grounding.dropFields.length > 0 || grounding.refuseCreate) {
     await recordUngroundedFields(env, grounding, created, context.inboundEmailId);
   }
 
@@ -856,6 +1141,41 @@ export async function submitEvent(
   // identical to one that passed a real check.
   if (context.dedupWasBlind) {
     await recordBlindDedupCreation(env, extracted, created, context.inboundEmailId);
+  }
+
+  // OPE-1152 — the submit route is itself a MATCH surface, and both of its
+  // match outcomes used to drop the email's content with no record:
+  //   - `occurrence_exists`: the edition already exists under its series, so
+  //     nothing was created and the content went nowhere (New Gloucester,
+  //     inbound 9fc287ef — replied `ok-medium`, staged nothing).
+  //   - `possibleDuplicateOf`: a PENDING row was created and tagged against an
+  //     existing event (Hackmatack, 09eccd4f — three PENDING twins, all later
+  //     rejected, the vendor terms applied to the keeper by hand).
+  // Stage against the matched event in both cases. Staging only, never throws.
+  const matchedEventId =
+    created.routed === "occurrence_exists"
+      ? created.id
+      : (body.possibleDuplicateOf ?? context.possibleDuplicateOf ?? null);
+  if (matchedEventId) {
+    try {
+      await stageEnrichOnMatch(getDb(env.DB), {
+        existingEventId: matchedEventId,
+        url: extracted.url,
+        event: groundedEvent as unknown as Record<string, unknown>,
+        matchType:
+          created.routed === "occurrence_exists" ? "occurrence_exists" : "possible_duplicate",
+        path: created.routed === "occurrence_exists" ? "occurrence-exists" : "possible-duplicate",
+        inboundEmailId: context.inboundEmailId || null,
+        fromAddress,
+      });
+    } catch (err) {
+      await logError(getDb(env.DB), {
+        source: "mcp:workflow:enrich-proposal",
+        message: "dedup enrich-proposal capture failed (submit route match)",
+        error: err,
+        context: { matchedEventId, routed: created.routed },
+      }).catch(() => {});
+    }
   }
 
   return created;
@@ -897,6 +1217,14 @@ async function recordUngroundedFields(
         detail: result?.reason ?? null,
       });
     }
+    if (grounding.refuseCreate) {
+      await emitExtractionFault(db, {
+        signature: "extract.details_forthcoming",
+        source: SOURCE_SUBMIT,
+        familyId: "extract.details_forthcoming",
+        detail: grounding.reason,
+      });
+    }
     await db.insert(adminActions).values({
       action: "extract.ungrounded",
       actorUserId: null,
@@ -907,6 +1235,9 @@ async function recordUngroundedFields(
         eventName: created.eventName,
         eventSlug: created.slug,
         droppedFields: grounding.dropFields,
+        // OPE-465 — the source says the details are not available yet.
+        detailsForthcoming: grounding.refuseCreate,
+        reason: grounding.reason,
         // The verdicts, so a review does not have to re-derive them — and so
         // a wrong drop is arguable against the text that caused it.
         verdicts: grounding.results.map((r) => ({

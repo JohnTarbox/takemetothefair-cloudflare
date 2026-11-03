@@ -55,7 +55,13 @@ export type EmailIntent =
   // OPE-317 — a dedicated signup address John can hand out at shows. An
   // inbound email to it subscribes the SENDER through the normal double
   // opt-in, so the confirmation click still does the consenting.
-  | "newsletter_subscribe";
+  | "newsletter_subscribe"
+  // OPE-328 — gemba@ observations, queued in D1 for an agent to post to Linear.
+  | "gemba_observation"
+  // OPE-1265 — lists@ / lists+<promoter-slug>@: promoter mailing lists we
+  // subscribed our own address to. Address-bound (the classifier never runs on
+  // it), never replied to, never forwarded.
+  | "list_subscription";
 
 const INTENT_MAP: Record<string, EmailIntent> = {
   "submit@meetmeatthefair.com": "submit",
@@ -68,6 +74,7 @@ const INTENT_MAP: Record<string, EmailIntent> = {
   // subscribe@meetmeatthefair.com → meetmeatthefair-mcp Worker (dashboard step),
   // same as photos@ needed.
   "subscribe@meetmeatthefair.com": "newsletter_subscribe",
+  "gemba@meetmeatthefair.com": "gemba_observation",
   // UR1 Phase 1 — dedicated problem-report intake addresses. Add Email
   // Routing rules in CF dashboard for both addresses → mcp Worker.
   "report@meetmeatthefair.com": "problem_report",
@@ -75,6 +82,11 @@ const INTENT_MAP: Record<string, EmailIntent> = {
   // OPE-202 — photo intake. NB: add the CF Email Routing rule
   // photos@meetmeatthefair.com → meetmeatthefair-mcp Worker (dashboard step).
   "photos@meetmeatthefair.com": "photo_intake",
+  // OPE-1265 — promoter mailing lists we subscribe to ourselves. Plus-tagged
+  // per promoter (lists+maine-lobster-festival@…); stripPlusSegment routes the
+  // tagged form here too. NB: the lists@ Email Routing rule → meetmeatthefair-mcp
+  // Worker must exist (dashboard step). STOP before publishing this address.
+  "lists@meetmeatthefair.com": "list_subscription",
 };
 
 /**
@@ -215,5 +227,13 @@ export function shouldForwardToAdmin(intent: EmailIntent): boolean {
   // OPE-317 `newsletter_subscribe` is fully handled server-side (the sender
   // gets the confirmation email); forwarding every show-floor signup to the
   // admin inbox would recreate the noise the alert diet just removed.
-  return intent !== "submit" && intent !== "photo_intake" && intent !== "newsletter_subscribe";
+  // OPE-328 `gemba_observation` is John's own observation, queued for Linear.
+  return (
+    intent !== "submit" &&
+    intent !== "photo_intake" &&
+    intent !== "newsletter_subscribe" &&
+    intent !== "gemba_observation" &&
+    // OPE-1265 — newsletters at volume; they are processed, not read in Gmail.
+    intent !== "list_subscription"
+  );
 }

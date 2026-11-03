@@ -5,6 +5,7 @@
  */
 
 import { and, count, desc, eq, gte, sql } from "drizzle-orm";
+import { publicEventsBasis } from "./catalog-basis";
 import { errorLogs, events, indexnowSubmissions, timeToIndexLog, vendors } from "@/lib/db/schema";
 import { freshness, rate } from "./render-state";
 import {
@@ -152,9 +153,9 @@ export async function loadRecentErrors(db: Db, sinceDate: Date): Promise<RecentE
 
 export async function loadSitemapQuality(db: Db): Promise<SitemapQualityCard> {
   // Pass = passes the §10.2 sitemap completeness gate (>= SITEMAP_MIN_COMPLETENESS).
-  // Filters: vendors must not be soft-deleted; events any status (the sitemap
-  // narrows further on isPublicEventStatus, but for the quality ratio we
-  // measure the full population).
+  // OPE-1347 #2 — the catalog bases (catalog-basis.ts): live vendors, PUBLIC
+  // events. Was every event row (2,321 incl. rejected), which disagreed with
+  // this same tile's badge (kpi-states, public events) under one label.
   const [vTotal, vPass, eTotal, ePass] = await Promise.all([
     db
       .select({ n: count() })
@@ -169,11 +170,11 @@ export async function loadSitemapQuality(db: Db): Promise<SitemapQualityCard> {
           gte(vendors.completenessScore, SITEMAP_MIN_COMPLETENESS)
         )
       ),
-    db.select({ n: count() }).from(events),
+    db.select({ n: count() }).from(events).where(publicEventsBasis()),
     db
       .select({ n: count() })
       .from(events)
-      .where(gte(events.completenessScore, SITEMAP_MIN_COMPLETENESS)),
+      .where(and(publicEventsBasis(), gte(events.completenessScore, SITEMAP_MIN_COMPLETENESS))),
   ]);
   const vTotalN = vTotal[0]?.n ?? 0;
   const vPassN = vPass[0]?.n ?? 0;
@@ -193,8 +194,17 @@ export async function loadSitemapQuality(db: Db): Promise<SitemapQualityCard> {
   };
 }
 
-/** The in-memory sort cap. Named, because it is reported rather than hidden. */
-export const TIME_TO_INDEX_SAMPLE_CAP = 1000;
+/**
+ * The in-memory sort cap. Named, because it is reported rather than hidden.
+ *
+ * OPE-1347 #3 — was 1,000, which made Median/P90/Avg a slice of the newest
+ * 1,000 of ~5,510 resolved rows (63.1 / 71.2 / 61.9d) when the population reads
+ * 41.7 / 62.4 / 40.8d. The feed has been closed since 2026-06-13 (IndexNow
+ * paused), so the population is fixed; one integer column for all of it is
+ * cheap. The cap now sits far above it, so the stats ARE the population, and
+ * `truncated` still says so honestly if that ever stops being true.
+ */
+export const TIME_TO_INDEX_SAMPLE_CAP = 20_000;
 
 export async function loadTimeToIndex(db: Db): Promise<TimeToIndexCard> {
   // Median computed in JS — SQLite has no MEDIAN aggregate. Pull resolved

@@ -36,9 +36,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local env files
-.env
-.env*.local
+# local env files — every .env variant, at any depth (root, mcp-server/, packages/*),
+# except the committed template (OPE-1379).
+.env*
+!.env.example
 
 # vercel
 .vercel

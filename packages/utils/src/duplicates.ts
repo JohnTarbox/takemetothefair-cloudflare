@@ -29,8 +29,12 @@ export function normalizeString(str: string | null | undefined): string {
  *   2. Leading ordinal: "38th " / "1st " / "2nd " / "3rd "
  *   3. Leading "Annual "
  *   4. Trailing 4-digit year: " 2026"
- *   5. Non-alphanumeric (whitespace kept)
- *   6. Collapse whitespace + trim
+ *   5. Word separators "-", "/", "_", en dash, em dash → a space (OPE-1410:
+ *      deleting them joined words, so "Arts-and-Crafts Fair" became
+ *      "artsandcrafts fair" and missed "Arts and Crafts Fair")
+ *   6. Remaining non-alphanumeric deleted (whitespace kept; apostrophes
+ *      still vanish without a gap: "Foo's" → "foos")
+ *   7. Collapse whitespace + trim
  *
  * Locked in by the Winthrop Arts Festival case (K2, 2026-05-31): "38th Annual
  * Winthrop Arts Festival" and "Winthrop Arts Festival 2026" must both reduce to
@@ -45,6 +49,7 @@ export function normalizeName(name: string): string {
     .replace(/^\s*\d+(st|nd|rd|th)\s+/, "")
     .replace(/^\s*annual\s+/i, "")
     .replace(/\s+\d{4}\s*$/, "")
+    .replace(/[-/_\u2013\u2014]/g, " ")
     .replace(/[^a-z0-9\s]/g, "")
     .replace(/\s+/g, " ")
     .trim();

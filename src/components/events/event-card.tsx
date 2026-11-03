@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { isPastUnconfirmed, PAST_UNCONFIRMED_LABEL } from "@/lib/events/past-unconfirmed";
 import Link from "next/link";
-import Image from "next/image";
-import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
+import Image from "@/components/ui/responsive-image";
+import { cdnImage, cdnSrcSet, focalPointGravity } from "@/lib/cdn-image";
 import { Calendar, MapPin, Tag, Store, Users, Home, Trees } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +14,8 @@ import { parseJsonArray } from "@/types";
 import { nextOccurrence, showsNextOccurrence } from "@/lib/event-occurrence";
 import { relativeTimeLabel, type RelativeTimeTone } from "@/lib/events/relative-time-label";
 import { formatAudienceBadge } from "@/lib/event-audience";
-import type { events, venues, promoters } from "@/lib/db/schema";
+import type { venues, promoters } from "@/lib/db/schema";
+import type { PublicEvent } from "@/lib/db/event-join-projection";
 import { AddToCalendar } from "./AddToCalendar";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { getCategoryColors, getCategoryBadgeClass, getCategoryImage } from "@/lib/category-colors";
@@ -22,7 +23,8 @@ import { getStateName } from "@/lib/states";
 import { formatDateMedium, formatDateShort, formatMonthShort } from "@/lib/datetime";
 import { DERIVED_DATE_SHORT, shouldShowProjectedDateCopy } from "@/lib/events/derived-date";
 
-type Event = typeof events.$inferSelect;
+// OPE-1387 — public allow-listed shape; never the full events row.
+type Event = PublicEvent;
 type Venue = typeof venues.$inferSelect;
 type Promoter = typeof promoters.$inferSelect;
 
@@ -231,20 +233,15 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
               // Eventbrite's fp-x/fp-y.
               const gravity = focalPointGravity(event.imageFocalX, event.imageFocalY);
               const cardWidths = [400, 600, 800, 1200];
-              const cardSrcSet = cardWidths
-                .map((w) =>
-                  cdnImage(event.imageUrl!, {
-                    width: w,
-                    height: Math.round((w * 9) / 16),
-                    fit: "cover",
-                    ...(gravity ? { gravity } : {}),
-                    format: "auto",
-                    quality: 80,
-                    onerror: "redirect",
-                  })
-                )
-                .map((url, i) => `${url} ${cardWidths[i]}w`)
-                .join(", ");
+              const cardSrcSet = cdnSrcSet(event.imageUrl, cardWidths, (w) => ({
+                width: w,
+                height: Math.round((w * 9) / 16),
+                fit: "cover",
+                ...(gravity ? { gravity } : {}),
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              }));
               const cardSrc = cdnImage(event.imageUrl, {
                 width: 800,
                 height: 450,

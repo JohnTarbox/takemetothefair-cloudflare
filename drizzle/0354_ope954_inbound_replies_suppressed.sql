@@ -1,0 +1,12 @@
+-- OPE-954 — a row-level "send nothing about this row" flag, for replays.
+--
+-- John approved replaying inbound f8ef71e5 (a 09-12 forward-as-attachment that
+-- failed before the OCR bound shipped) on one condition: the submitter must not
+-- receive a third automated message. A parameter on one workflow run cannot
+-- guarantee that — the stale-inbound sweep re-dispatches a stuck row as a NORMAL
+-- run, and its give-up path emails the submitter directly. So the flag lives on
+-- the row and every send path checks it.
+--
+-- Additive; NULL for every existing row (= unchanged behaviour). Safe on an
+-- empty database.
+ALTER TABLE inbound_emails ADD COLUMN replies_suppressed_reason TEXT;

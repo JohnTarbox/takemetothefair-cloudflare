@@ -1,4 +1,5 @@
 import { parseVendorSocialLinks } from "@/lib/vendor-social";
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 
 // Map common vendor types to schema.org LocalBusiness subtypes
 function getSchemaType(vendorType?: string | null): string {
@@ -194,7 +195,7 @@ export function VendorSchema({
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(cleanSchema) }}
+      dangerouslySetInnerHTML={{ __html: safeJsonLd(cleanSchema) }}
     />
   );
 }

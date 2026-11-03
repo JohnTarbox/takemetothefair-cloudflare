@@ -1,7 +1,7 @@
 /**
  * OPE-599 — a waiting operator queue must reach the operator.
  *
- * Kenneth Soares claimed `gooseberry-leather-company` on 2026-07-22 and offered
+ * Kendall Sample claimed `gooseberry-leather-company` on 2026-07-22 and offered
  * to verify from his business domain. Nobody asked. The claim sat PENDING for
  * 36 days in a table that held TWO ROWS IN ITS ENTIRE HISTORY, and was found
  * only because an unrelated sweep happened to read it.
@@ -45,7 +45,7 @@ beforeEach(() => {
   ({ db, raw } = createTestDb());
   // entity_claims.user_id is NOT NULL — the claimant is the point of the row.
   raw["prepare"](
-    `INSERT INTO users (id, email, name, role) VALUES ('u-ken','kenneth@gooseberryleather.com','Kenneth Soares','VENDOR')`
+    `INSERT INTO users (id, email, name, role) VALUES ('u-ken','dogwood1desk@gooseberryleather.com','Kendall Sample','VENDOR')`
   ).run();
   sent = [];
   env = {
@@ -92,15 +92,15 @@ describe("decideOperatorQueueNotice", () => {
  * OPE-761 — the fifth queue: inbound mail hibernating on the workflow's
  * `admin-decision` pause.
  *
- * Jeremy Hall (Assistant Division Director, CT DEEP) wrote to `hello@` on
- * 2026-09-02 and got five hours of silence; `advisor@flippa.com`'s `press` row
+ * Jordan Sample (Assistant Division Director, CT DEEP) wrote to `hello@` on
+ * 2026-09-02 and got five hours of silence; `alder1desk@flippa.com`'s `press` row
  * sat two days. Both were CORRECTLY parked — the routing worked. Nothing
  * announced them, and the clock they are on ends in a generic auto-ack rather
  * than an answer.
  */
 describe("OPE-761 — inbound awaiting admin decision", () => {
   /** Seed an inbound row `ageHours` old, parked in `waiting`. */
-  function seedWaiting(id: string, intent: string, ageHours: number, from = "jeremy.hall@ct.gov") {
+  function seedWaiting(id: string, intent: string, ageHours: number, from = "pat.tamarack@ct.gov") {
     raw["prepare"](
       `INSERT INTO inbound_emails (id, received_at, from_address, to_address, subject, intent, status, created_at)
        VALUES (?, ?, ?, 'hello@meetmeatthefair.com', ?, ?, 'waiting', ?)`
@@ -123,12 +123,12 @@ describe("OPE-761 — inbound awaiting admin decision", () => {
     expect(sent).toHaveLength(0);
   });
 
-  it("alerts on Jeremy's shape — a `correction` parked past the SLA", async () => {
+  it("alerts on Jordan's shape — a `correction` parked past the SLA", async () => {
     seedWaiting("i-jeremy", "correction", 72);
     await checkOperatorQueues(db, env, NOW);
 
     expect(sent).toHaveLength(1);
-    expect(sent[0].text).toContain("jeremy.hall@ct.gov");
+    expect(sent[0].text).toContain("pat.tamarack@ct.gov");
     expect(sent[0].text).toContain("correction");
   });
 
@@ -136,11 +136,11 @@ describe("OPE-761 — inbound awaiting admin decision", () => {
     // The acceptance criterion is that ANY intent with no handler can no longer
     // sit unannounced. Reading `status='waiting'` rather than an allow-list of
     // intents is what makes that true for the next lane as well as this one.
-    seedWaiting("i-flippa", "press", 50, "advisor@flippa.com");
+    seedWaiting("i-flippa", "press", 50, "alder1desk@flippa.com");
     await checkOperatorQueues(db, env, NOW);
 
     expect(sent).toHaveLength(1);
-    expect(sent[0].text).toContain("advisor@flippa.com");
+    expect(sent[0].text).toContain("alder1desk@flippa.com");
   });
 
   it("reports hours REMAINING before the auto-ack cliff, not just age", async () => {
@@ -197,7 +197,7 @@ describe("OPE-761 — inbound awaiting admin decision", () => {
 });
 
 describe("the notice, end to end, on real backdated rows", () => {
-  it("alerts on Kenneth's shape — a PENDING claim aged past the SLA", async () => {
+  it("alerts on Kendall's shape — a PENDING claim aged past the SLA", async () => {
     seedClaim("c-1", "PENDING", 36);
     await checkOperatorQueues(db, env, NOW);
     expect(sent).toHaveLength(1);

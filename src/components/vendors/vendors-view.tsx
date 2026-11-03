@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { safeHref } from "@takemetothefair/utils";
 import { LayoutGrid, Table, Store, CheckCircle, ExternalLink, Download } from "lucide-react";
 import { VendorCard } from "./vendor-card";
 import {
@@ -262,9 +263,9 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
                         >
                           View
                         </Link>
-                        {vendor.website && (
+                        {safeHref(vendor.website) && (
                           <a
-                            href={vendor.website}
+                            href={safeHref(vendor.website)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-muted-foreground hover:text-muted-foreground"

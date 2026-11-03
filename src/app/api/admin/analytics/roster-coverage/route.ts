@@ -11,6 +11,7 @@ import {
   hasNoCategories,
 } from "@takemetothefair/db-schema";
 import { events, eventVendors } from "@/lib/db/schema";
+import { pastEndPredicate, upcomingEndPredicate } from "@/lib/event-dates";
 import { PRODUCER_CLASS_CATEGORIES, ROSTER_EVIDENCE_MIN } from "@takemetothefair/constants";
 
 /**
@@ -158,14 +159,16 @@ export async function GET(request: NextRequest) {
         AND (${eventVendors.participationType} IS NULL
              OR ${eventVendors.participationType} <> 'SPONSOR_ONLY')
     )`;
-    const nowSecs = Math.floor(now.getTime() / 1000);
-    const isOver = sql`${events.endDate} IS NOT NULL AND ${events.endDate} < ${nowSecs}`;
+    // OPE-1396 (DUP5) — past/upcoming are the shared predicates (effective end
+    // = COALESCE(end_date, start_date), 24h grace), so a start-date-only event
+    // is placed by its start date and "undated" means NEITHER date is set. The
+    // three buckets stay exhaustive and disjoint.
     const [unevalRow] = await db
       .select({
         total: sql<number>`count(*)`,
-        past: sql<number>`sum(case when ${isOver} then 1 else 0 end)`,
-        upcoming: sql<number>`sum(case when ${events.endDate} is not null and not (${isOver}) then 1 else 0 end)`,
-        undated: sql<number>`sum(case when ${events.endDate} is null then 1 else 0 end)`,
+        past: sql<number>`sum(case when ${pastEndPredicate(now)} then 1 else 0 end)`,
+        upcoming: sql<number>`sum(case when ${upcomingEndPredicate(now)} then 1 else 0 end)`,
+        undated: sql<number>`sum(case when ${events.endDate} is null and ${events.startDate} is null then 1 else 0 end)`,
         // The "finished work with no receipt" bucket — rows already holding
         // roster-grade links that no status records. These are what a drain
         // would otherwise research from scratch.

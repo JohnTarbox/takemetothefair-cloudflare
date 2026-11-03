@@ -31,6 +31,13 @@ export function registerCreateOccurrenceTool(server: McpServer, auth: AuthContex
       "is a no-op (returns created:false, reason:occurrence_exists). The occurrence is",
       "created TENTATIVE + flagged for review; dates are only set if you pass them",
       "(otherwise an operator fills them in later).",
+      "EDITIONS (OPE-1327): on a MULTI-EDITION series (edition_mode='multi', e.g. one",
+      "that runs in May AND October), the idempotency key is the EDITION, not the year:",
+      "edition_key = YYYY-MM of start_date in the venue's time zone (derived when you",
+      "pass start_date), or pass edition_key yourself — with a lowercase suffix for a",
+      "same-month clash, e.g. 2027-05-xli. Two editions of one year are two",
+      "occurrences. A multi-edition call with neither edition_key nor start_date",
+      "returns edition_key_required. On an annual series edition_key is ignored.",
     ].join(" "),
     {
       series_id: z.string().min(1).describe("event_series id to create the occurrence under."),
@@ -49,6 +56,13 @@ export function registerCreateOccurrenceTool(server: McpServer, auth: AuthContex
         .string()
         .optional()
         .describe("Provenance: the source occurrence this was rolled from (K27)."),
+      edition_key: z
+        .string()
+        .regex(/^\d{4}-(0[1-9]|1[0-2])(-[a-z0-9]+)*$/)
+        .optional()
+        .describe(
+          "Multi-edition series only: the edition's URL key, YYYY-MM[-suffix]. Omit to derive it from start_date."
+        ),
     },
     async (params) => {
       if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {

@@ -12,10 +12,11 @@ export const dynamic = "force-dynamic";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import {
   base64UrlDecode,
-  openUnsubscribeEmail,
+  openUnsubscribeEmailAny,
   SEALED_SEGMENT,
-  verifySealedUnsubscribe,
-  verifyUnsubscribeToken,
+  unsubscribeVerifySecrets,
+  verifySealedUnsubscribeAny,
+  verifyUnsubscribeTokenAny,
 } from "@takemetothefair/utils";
 import { handleUnsubscribe, unsubscribePage } from "@/lib/unsubscribe-page";
 import { logError } from "@/lib/logger";
@@ -28,7 +29,9 @@ interface Params {
 export async function GET(request: Request, { params }: Params) {
   const { e, t } = await params;
   const env = getCloudflareEnv();
-  const secret = env.UNSUBSCRIBE_SECRET || env.INTERNAL_API_KEY || "";
+  // OPE-1346 — every secret a delivered link may carry, not just the signer:
+  // setting UNSUBSCRIBE_SECRET must not break links signed under INTERNAL_API_KEY.
+  const secrets = unsubscribeVerifySecrets(env);
   const db = getCloudflareDb();
 
   // OPE-864 — `/unsubscribe/v2/<sealed>` carries the address ENCRYPTED. The
@@ -37,7 +40,7 @@ export async function GET(request: Request, { params }: Params) {
   const sealed = e === SEALED_SEGMENT;
   let email = "";
   if (sealed) {
-    email = (await openUnsubscribeEmail(secret, t)) ?? "";
+    email = (await openUnsubscribeEmailAny(secrets, t)) ?? "";
     if (!email) {
       return unsubscribePage(
         "Invalid unsubscribe link",
@@ -60,8 +63,13 @@ export async function GET(request: Request, { params }: Params) {
   return handleUnsubscribe({
     email,
     token: t,
-    secret,
-    verify: sealed ? verifySealedUnsubscribe : verifyUnsubscribeToken,
+    // The secret list is closed over; `handleUnsubscribe`'s single-secret slot
+    // is unused here (non-empty only so its contract reads naturally).
+    secret: secrets[0] ?? "",
+    verify: (_one, addr, tok) =>
+      sealed
+        ? verifySealedUnsubscribeAny(secrets, addr, tok)
+        : verifyUnsubscribeTokenAny(secrets, addr, tok),
     // OPE-869 — one writer for a GLOBAL opt-out, across BOTH stores.
     //
     // This path used to insert an `email_suppression_list` row and nothing

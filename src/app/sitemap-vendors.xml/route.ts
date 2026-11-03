@@ -26,8 +26,16 @@ import { getIndexableVendorRows } from "@/lib/sitemap/indexable-vendors";
 //
 // The EXISTS subquery in the WHERE and the correlated COUNT in the SELECT
 // both walk event_vendors → events → venues; SQLite plans these
-// independently, so they can't share work. At ~1.3K vendors this is fine;
-// if it gets expensive, cache an `eventVenueGeoCount` column.
+// independently, so they can't share work. OPE-1395 (2026-10-16): this note
+// once said "~1.3K vendors"; there are now ~11.6K and a render reads ~32K
+// rows (prod EXPLAIN/rows_read). Still tolerable for a crawler-only route, but
+// if it grows, cache an `eventVenueGeoCount` column.
+//
+// Why it stays force-dynamic (not `revalidate`): the handler reads the request
+// for its conditional GET (If-None-Match / If-Modified-Since → 304), and on a
+// D1 failure it returns an EMPTY urlset — a cached copy of that would tell
+// crawlers every vendor URL was gone for the whole revalidate window. Every
+// other sitemap route is force-dynamic for the same reasons.
 async function buildVendorUrls(): Promise<SitemapUrl[]> {
   // A10/A11 — the indexable-vendor gate now lives in the shared helper so the
   // GSC sweep inspects the SAME vendor set this sitemap publishes.

@@ -8,12 +8,12 @@
 
 import Link from "next/link";
 import { and, eq, gte, lt } from "drizzle-orm";
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { problemReports, errorLogs, inboundEmails, users } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/require-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -22,8 +22,7 @@ interface Props {
 }
 
 export default async function AdminProblemReportDetailPage({ params }: Props) {
-  const session = await auth();
-  if (session?.user?.role !== "ADMIN") redirect("/");
+  await requireAdmin({ allowReadonlyBearer: false });
 
   const { id } = await params;
   const db = getCloudflareDb();

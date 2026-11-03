@@ -15,13 +15,8 @@
 import { toCalendarEvents, type CalendarEventInput } from "@/lib/calendar/to-calendar-event";
 import { categoryColorsForEvents } from "@/lib/calendar/colors";
 import { buildCalendarTheme } from "@/lib/calendar/theme";
-import {
-  parseCalMonth,
-  monthAnchorIso,
-  parseCalYear,
-  parseCalDate,
-  parseCalDays,
-} from "@/lib/calendar/window";
+import { parseCalMonth, monthAnchorIso, parseCalYear, parseCalDays } from "@/lib/calendar/window";
+import { resolveFocusDate, todayEasternIso } from "@/lib/calendar/focus-date";
 import { todayIsoUtc } from "@takemetothefair/datetime";
 import { CalendarMonthClient } from "./calendar-month-client";
 import { CalendarAgendaClient } from "./calendar-agenda-client";
@@ -39,15 +34,18 @@ interface Props {
   events: CalendarEventInput[];
   /** All current search params, so the toggles preserve active filters. */
   searchParams: Record<string, string | undefined>;
-  /** Whether the CAL2 Agenda/Year sub-views are enabled (else Month-only, no sub-toggle). */
-  cal2Enabled: boolean;
 }
 
-export function CalendarSSR({ events, searchParams, cal2Enabled }: Props) {
-  const subView = cal2Enabled ? parseCalSubView(searchParams.cal_view) : "month";
+export function CalendarSSR({ events, searchParams }: Props) {
+  const subView = parseCalSubView(searchParams.cal_view);
   // Step 5 — default hides past events; the "Include past events" filter shows them.
   const includePast = searchParams.includePast === "true";
   const now = new Date().toISOString(); // host-pinned per request
+  // OPE-1488 — ONE focus date for every view (`date=`, else legacy `cal_date`, else
+  // the `cal` month / `cal_year`, else today on the Eastern calendar). Month and Year
+  // derive their anchors from it, so a view switch never jumps back to today.
+  const today = todayEasternIso();
+  const focusDate = resolveFocusDate(searchParams, today);
 
   // Month + Agenda consume the loaded window through the same adapter; Year doesn't.
   const calendarEvents =
@@ -68,7 +66,13 @@ export function CalendarSSR({ events, searchParams, cal2Enabled }: Props) {
       />
     );
   } else if (subView === "year") {
-    body = <CalendarYearSSR year={parseCalYear(searchParams.cal_year)} />;
+    body = (
+      <CalendarYearSSR
+        year={parseCalYear(focusDate.slice(0, 4))}
+        focusDate={focusDate}
+        today={today}
+      />
+    );
   } else if (subView === "week" || subView === "day" || subView === "custom") {
     body = (
       <CalendarTimeGridClient
@@ -77,12 +81,12 @@ export function CalendarSSR({ events, searchParams, cal2Enabled }: Props) {
         displayTimeZone={DISPLAY_TIME_ZONE}
         theme={theme}
         view={subView}
-        anchor={parseCalDate(searchParams.cal_date)}
+        anchor={focusDate}
         {...(subView === "custom" ? { customViewDays: parseCalDays(searchParams.cal_days) } : {})}
       />
     );
   } else {
-    const initialAnchor = monthAnchorIso(parseCalMonth(searchParams.cal));
+    const initialAnchor = monthAnchorIso(parseCalMonth(focusDate.slice(0, 7)));
     body = (
       <CalendarMonthClient
         events={calendarEvents}
@@ -90,6 +94,8 @@ export function CalendarSSR({ events, searchParams, cal2Enabled }: Props) {
         displayTimeZone={DISPLAY_TIME_ZONE}
         initialAnchor={initialAnchor}
         theme={theme}
+        focusDate={focusDate}
+        today={today}
       />
     );
   }
@@ -97,11 +103,7 @@ export function CalendarSSR({ events, searchParams, cal2Enabled }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
-        {cal2Enabled ? (
-          <CalendarSubViewToggle view={subView} searchParams={searchParams} />
-        ) : (
-          <span />
-        )}
+        <CalendarSubViewToggle view={subView} searchParams={searchParams} focusDate={focusDate} />
         <ViewToggle view="calendar" searchParams={searchParams} />
       </div>
       {body}

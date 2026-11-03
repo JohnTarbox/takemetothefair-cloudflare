@@ -32,6 +32,7 @@ import {
   events,
   eventApplications,
   eventDays,
+  eventInternalNotes,
   eventVendors,
   promoters,
   vendors,
@@ -129,6 +130,8 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           eventScale: events.eventScale,
           indoorOutdoor: events.indoorOutdoor,
           petFriendly: events.petFriendly,
+          parkingNotes: events.parkingNotes,
+          accessibilityNotes: events.accessibilityNotes,
           imageUrl: events.imageUrl,
           imageFocalX: events.imageFocalX,
           imageFocalY: events.imageFocalY,
@@ -171,6 +174,14 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           isError: true,
         };
       }
+
+      // OPE-1151 — the event's PRIVATE notes (a separate table so no public
+      // full-row events select can carry them). Admin read only.
+      const [internalNotesRow] = await db
+        .select({ notes: eventInternalNotes.notes })
+        .from(eventInternalNotes)
+        .where(eq(eventInternalNotes.eventId, event.id))
+        .limit(1);
 
       const vendorRows = await db
         .select({ id: eventVendors.id })
@@ -407,6 +418,9 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             // (the OPE-497 shape). The event's OWN value; the venue's is under
             // `venue.pet_friendly` and must not be substituted for it.
             pet_friendly: event.petFriendly,
+            // OPE-1481 — the organizer's own notes; each value is cited.
+            parking_notes: event.parkingNotes,
+            accessibility_notes: event.accessibilityNotes,
             image_url: event.imageUrl,
             image_focal_x: event.imageFocalX,
             image_focal_y: event.imageFocalY,
@@ -416,6 +430,9 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             primary_audience: event.primaryAudience,
             public_access: event.publicAccess,
             access_notes: event.accessNotes,
+            // OPE-1151 — private; never rendered. Returned so update_event's
+            // internal_notes has a reader (OPE-534 parity).
+            internal_notes: internalNotesRow?.notes ?? null,
             registration_required: event.registrationRequired,
             recurrence_rule: event.recurrenceRule,
             discontinuous_dates: event.discontinuousDates,

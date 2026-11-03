@@ -13,6 +13,7 @@ import {
 import { trackClaimViewServer } from "@/lib/analytics/claim-funnel";
 import { classifyDevice, NEW_FUNNEL_STEP_NAMES } from "@/lib/analytics/funnel-steps";
 import { BEACON_EVENT_NAMES } from "@/lib/analytics/event-sinks";
+import { classifySynthetic, SYNTHETIC_KEYS } from "@/lib/analytics/synthetic-traffic";
 
 const MAX_BODY_BYTES = 4_000;
 const MAX_PROPERTY_BYTES = 2_000;
@@ -150,11 +151,23 @@ export async function POST(request: Request) {
   // traffic, which is how it stayed invisible.
   const { device, os } = classifyDevice(request.headers.get("user-agent"));
 
+  // OPE-1498 — synthetic traffic (our canary, production-verify, self-declared
+  // crawlers) is TAGGED here, server-side and merged last like device/os, so
+  // the funnel read paths can exclude it. The client's own copy of these keys
+  // is stripped first: only the server may say a row is (or is not) synthetic.
+  // Visitor rows get no key at all — absence means "real".
+  const clientProps: Record<string, unknown> = { ...(parsed.data.properties ?? {}) };
+  for (const k of SYNTHETIC_KEYS) delete clientProps[k];
+  const syntheticMark = classifySynthetic(
+    request.headers.get("cookie"),
+    request.headers.get("user-agent")
+  );
+
   const db = getCloudflareDb();
   await trackServerEvent(db, {
     eventName: parsed.data.name,
     eventCategory: parsed.data.category,
-    properties: { ...(parsed.data.properties ?? {}), device, os },
+    properties: { ...clientProps, device, os, ...(syntheticMark ?? {}) },
     userId,
     source: "client_beacon",
   });

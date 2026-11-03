@@ -6,6 +6,8 @@ Allow: /
 Disallow: /admin/
 Disallow: /api/
 Disallow: /dashboard/
+# OPE-1496 — the newsletter click redirect: a log-then-302, never content.
+Disallow: /go/
 # NOTE (OPE-87): the singular /vendor/ and /promoter/ prefixes are the private
 # user portals, but they are deliberately NOT disallowed here. Blocking them made
 # stray singular links to real public records (e.g. a blog typo /vendor/<slug>)

@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { safeHref } from "@takemetothefair/utils";
 
 interface PreviewEvent {
   sourceId: string;
@@ -795,7 +796,7 @@ function EventRow({
         )}
         {event.sourceUrl && (
           <a
-            href={event.sourceUrl}
+            href={safeHref(event.sourceUrl)}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-xs text-royal hover:underline mt-1"

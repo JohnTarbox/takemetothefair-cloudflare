@@ -8,9 +8,10 @@
  * formatting are P2.3 glue; the selection/partition judgment lives here so it's
  * unit-tested in isolation (same pattern as the rest of src/lib/series/).
  */
+import { occurrencePath, occurrenceYear } from "@takemetothefair/utils";
 import type { OccurrenceForSchema } from "./series-schema-org";
 import type { PlaceVenue } from "@/lib/seo/place-jsonld";
-import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
+import { columnDateForJsonLd, type JsonLdEventDay } from "@/lib/seo/column-date-jsonld";
 
 /** Minimal occurrence shape — a public, non-tombstone event under the series. */
 export interface OccurrenceRow {
@@ -37,6 +38,33 @@ export interface OccurrenceRow {
   ticketUrl?: string | null;
   ticketPriceMinCents?: number | null;
   ticketPriceMaxCents?: number | null;
+  /** OPE-1326 — the stored edition key; addresses the member on a multi-edition series. */
+  editionKey?: string | null;
+  /**
+   * OPE-1547 — the occurrence's day rows and venue zone, so its JSON-LD dates go
+   * through `columnDateForJsonLd` exactly as the event page's do. Absent ⇒ a
+   * date-only (noon) column stays a bare date; a real instant keeps its time.
+   */
+  eventDays?: JsonLdEventDay[];
+  venueTimezone?: string | null;
+}
+
+/**
+ * OPE-1547 — an occurrence's JSON-LD start/end. Same rule as the event page
+ * (EventSchema → columnDateForJsonLd): a real instant keeps its time in the
+ * venue zone; the noon date-only sentinel takes that day's hours from
+ * event_days, else stays a bare date.
+ */
+export function occurrenceJsonLdDates(
+  o: Pick<OccurrenceRow, "startDate" | "endDate" | "eventDays" | "venueTimezone">
+): { startDateIso: string | null; endDateIso: string | null } {
+  const tz = o.venueTimezone ?? undefined;
+  return {
+    startDateIso: o.startDate
+      ? (columnDateForJsonLd(o.startDate, "start", o.eventDays, tz) ?? null)
+      : null,
+    endDateIso: o.endDate ? (columnDateForJsonLd(o.endDate, "end", o.eventDays, tz) ?? null) : null,
+  };
 }
 
 export interface OccurrenceView extends OccurrenceRow {
@@ -47,7 +75,7 @@ export interface OccurrenceView extends OccurrenceRow {
 }
 
 function occYear(o: OccurrenceRow): number | null {
-  return o.startDate ? o.startDate.getUTCFullYear() : null;
+  return occurrenceYear(o.startDate);
 }
 
 /** Effective end for past/upcoming classification: endDate, else startDate. */
@@ -96,6 +124,39 @@ export function pickHeroOccurrence(occurrences: OccurrenceRow[], now: Date): Occ
 }
 
 /**
+ * OPE-589 — the canonical path for a series hub (`/events/<series>`).
+ *
+ * John's ruling 2026-09-30: for a recurring event the `/<year>` page is the
+ * canonical URL. Measured 2026-09-08 over gsc_search_metrics: occurrence pages
+ * `/events/<slug>/<year>` 601k impressions at 2.35% CTR; series hubs 74k at
+ * 0.69% — the hub ranked and then failed to satisfy, while declaring itself
+ * canonical against the sitemap (which already lists the /year form).
+ *
+ * The hub keeps serving (a canonical is not a redirect); it points search
+ * engines at the hero occurrence — the same one the landing page leads with —
+ * using the same UTC-year rule as the sitemap's `canonicalEventPath`. A series
+ * with no dated occurrence stays self-canonical: there is no /year to name.
+ */
+export function seriesHubCanonicalPath(
+  canonicalSlug: string,
+  occurrences: OccurrenceRow[],
+  now: Date,
+  // OPE-1326 — required: on a multi-edition series the hub canonical is the
+  // hero's EDITION path (/2026-10), which a year-only caller would get wrong.
+  editionMode: string | null
+): string {
+  const hero = pickHeroOccurrence(occurrences, now);
+  return (
+    (hero &&
+      occurrencePath(canonicalSlug, hero.startDate, {
+        editionMode,
+        editionKey: hero.editionKey,
+      })) ??
+    `/events/${canonicalSlug}`
+  );
+}
+
+/**
  * OPE-182 — read-through for the drift-prone denormalized `event_series` columns.
  *
  * `event_series.description` and `.image_url` are write-once backfill SNAPSHOTS:
@@ -130,20 +191,21 @@ export function resolveSeriesLandingContent(
 }
 
 /**
- * Map occurrences to schema.org `subEvent` inputs (chronological). Emits date-
- * only ISO from the UTC Date; P2.3 may substitute venue-zone formatting, which
- * is why the caller owns the final EventSchema wiring.
+ * Map occurrences to schema.org `subEvent` inputs (chronological). Dates go
+ * through `occurrenceJsonLdDates` (OPE-1547) — the same rule the event page uses.
  */
 export function toSchemaOccurrences(occurrences: OccurrenceRow[]): OccurrenceForSchema[] {
   return [...occurrences].sort(byStartAsc).map((o) => ({
     slug: o.slug,
     year: occYear(o),
+    // OPE-1326 — the subEvent url uses it on a multi-edition series.
+    editionKey: o.editionKey ?? null,
     name: o.name,
-    // OPE-482 follow-up — Eastern calendar date. These feed the subEvent
-    // `startDate`/`endDate` in the series JSON-LD; the UTC slice put an
-    // end-of-day-Eastern occurrence on the following day.
-    startDateIso: o.startDate ? toIsoDateOnlyInVenueZone(o.startDate) : null,
-    endDateIso: o.endDate ? toIsoDateOnlyInVenueZone(o.endDate) : null,
+    // OPE-1547 — the event page's rule, not a date-only slice: a real instant
+    // keeps its time (venue-zone offset, so OPE-482's end-of-day-Eastern case
+    // still lands on the right calendar day), the noon sentinel takes its hours
+    // from event_days. Feeds the subEvent `startDate`/`endDate`.
+    ...occurrenceJsonLdDates(o),
     venue: o.venue ?? null,
     // OPE-18 — pass the WARNING-set sources through to the builder (emit-when-known).
     imageUrl: o.imageUrl ?? null,

@@ -46,6 +46,8 @@ const SCHEMA_SQL = `
     city TEXT,
     state TEXT,
     zip TEXT,
+    self_signup INTEGER NOT NULL DEFAULT 0,
+    show_street_address INTEGER NOT NULL DEFAULT 0,
     latitude REAL,
     longitude REAL,
     year_established INTEGER,
@@ -111,7 +113,8 @@ const SCHEMA_SQL = `
     image TEXT,
     oauth_provider TEXT,
     created_at INTEGER,
-    updated_at INTEGER
+    updated_at INTEGER,
+    session_version INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE admin_actions (
     id TEXT PRIMARY KEY, action TEXT, actor_user_id TEXT, target_type TEXT,

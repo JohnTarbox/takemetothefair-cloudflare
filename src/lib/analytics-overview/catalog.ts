@@ -6,6 +6,7 @@
 import { and, count, eq, gte, lt } from "drizzle-orm";
 import { events, vendors, venues } from "@/lib/db/schema";
 import { trendOf, type Db } from "./shared";
+import { activeVenuesBasis, liveVendorsBasis, publicEventsBasis } from "./catalog-basis";
 import {
   ENHANCED_PROFILE_PRICE_USD,
   type CatalogGrowthCard,
@@ -30,21 +31,27 @@ export async function loadCatalogGrowth(
     venuesPrior,
     vendorsPrior,
   ] = await Promise.all([
-    db.select({ c: count() }).from(events).where(eq(events.status, "APPROVED")),
-    db.select({ c: count() }).from(venues),
-    db.select({ c: count() }).from(vendors),
+    db.select({ c: count() }).from(events).where(publicEventsBasis()),
+    db.select({ c: count() }).from(venues).where(activeVenuesBasis()),
+    db.select({ c: count() }).from(vendors).where(liveVendorsBasis()),
     db
       .select({ c: count() })
       .from(events)
-      .where(and(eq(events.status, "APPROVED"), gte(events.createdAt, sinceDate))),
-    db.select({ c: count() }).from(venues).where(gte(venues.createdAt, sinceDate)),
-    db.select({ c: count() }).from(vendors).where(gte(vendors.createdAt, sinceDate)),
+      .where(and(publicEventsBasis(), gte(events.createdAt, sinceDate))),
+    db
+      .select({ c: count() })
+      .from(venues)
+      .where(and(activeVenuesBasis(), gte(venues.createdAt, sinceDate))),
+    db
+      .select({ c: count() })
+      .from(vendors)
+      .where(and(liveVendorsBasis(), gte(vendors.createdAt, sinceDate))),
     db
       .select({ c: count() })
       .from(events)
       .where(
         and(
-          eq(events.status, "APPROVED"),
+          publicEventsBasis(),
           gte(events.createdAt, priorStartDate),
           lt(events.createdAt, priorEndDate)
         )
@@ -52,11 +59,23 @@ export async function loadCatalogGrowth(
     db
       .select({ c: count() })
       .from(venues)
-      .where(and(gte(venues.createdAt, priorStartDate), lt(venues.createdAt, priorEndDate))),
+      .where(
+        and(
+          activeVenuesBasis(),
+          gte(venues.createdAt, priorStartDate),
+          lt(venues.createdAt, priorEndDate)
+        )
+      ),
     db
       .select({ c: count() })
       .from(vendors)
-      .where(and(gte(vendors.createdAt, priorStartDate), lt(vendors.createdAt, priorEndDate))),
+      .where(
+        and(
+          liveVendorsBasis(),
+          gte(vendors.createdAt, priorStartDate),
+          lt(vendors.createdAt, priorEndDate)
+        )
+      ),
   ]);
 
   const totals = {

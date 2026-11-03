@@ -30,14 +30,14 @@
  * pattern as /admin/source-quality + /admin/blog + /admin/stuck-urls.
  */
 
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { analyticsEvents, eventVendors, vendors, vendorOutreachAttempts } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LogOutreachButton } from "@/components/admin/log-outreach-button";
-
-export const revalidate = 300;
+import { safeHref } from "@takemetothefair/utils";
 
 const WEIGHT_EVENT_COUNT = 0.35;
 const WEIGHT_VIEW_COUNT = 0.3;
@@ -296,6 +296,7 @@ function outcomeBadgeClasses(outcome: string): string {
 export const dynamic = "force-dynamic";
 
 export default async function VendorClaimLeaderboardPage() {
+  await requireAdmin();
   const rows = await loadLeaderboard();
   const totalRows = rows.length;
 
@@ -376,7 +377,7 @@ export default async function VendorClaimLeaderboardPage() {
                         {r.contactPhone && <div>{r.contactPhone}</div>}
                         {r.website && (
                           <a
-                            href={r.website}
+                            href={safeHref(r.website)}
                             target="_blank"
                             rel="noreferrer"
                             className="text-royal hover:underline truncate inline-block max-w-[200px]"

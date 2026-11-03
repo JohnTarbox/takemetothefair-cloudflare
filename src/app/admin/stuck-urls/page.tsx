@@ -24,6 +24,7 @@
  * pattern as /admin/source-quality + /admin/blog.
  */
 
+import { requireAdmin } from "@/lib/require-admin";
 import { inArray, notInArray } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, gscInspectionState } from "@/lib/db/schema";
@@ -36,9 +37,7 @@ import {
   type IndexState,
 } from "@/lib/gsc-index-state";
 import { unsafeSlug } from "@/lib/utils";
-import { chunkedInArray } from "@takemetothefair/utils";
-
-export const revalidate = 300;
+import { chunkedInArray, safeHref } from "@takemetothefair/utils";
 
 interface ClusterRow {
   bucket: EntityBucket;
@@ -205,6 +204,7 @@ function bucketLabel(b: EntityBucket): string {
 export const dynamic = "force-dynamic";
 
 export default async function StuckUrlsPage() {
+  await requireAdmin();
   const { clusters, totalRows, totalStuckRows } = await loadClusters();
   const indexedRows = totalRows - totalStuckRows;
   const indexedPct = totalRows > 0 ? Math.round((indexedRows / totalRows) * 1000) / 10 : 0;
@@ -287,7 +287,7 @@ export default async function StuckUrlsPage() {
                         return (
                           <li key={u} className="font-mono text-muted-foreground truncate">
                             <a
-                              href={u}
+                              href={safeHref(u)}
                               target="_blank"
                               rel="noreferrer"
                               className="hover:text-royal hover:underline"

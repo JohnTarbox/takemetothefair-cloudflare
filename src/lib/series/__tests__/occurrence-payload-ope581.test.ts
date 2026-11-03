@@ -40,6 +40,7 @@ import {
   eventSeries as eventSeriesTable,
   eventDays as eventDaysTable,
   adminActions as adminActionsTable,
+  eventReviewFlags as eventReviewFlagsTable,
 } from "../../db/schema";
 import { createOccurrenceForSeries } from "../create-occurrence";
 
@@ -69,7 +70,13 @@ let db: ReturnType<typeof drizzle<typeof schema>>;
 
 beforeEach(() => {
   raw = new Database(":memory:");
-  for (const t of [eventSeriesTable, eventsTable, eventDaysTable, adminActionsTable]) {
+  for (const t of [
+    eventSeriesTable,
+    eventsTable,
+    eventDaysTable,
+    adminActionsTable,
+    eventReviewFlagsTable, // OPE-767
+  ]) {
     raw.exec(ddlFor(t));
   }
   db = drizzle(raw, { schema });

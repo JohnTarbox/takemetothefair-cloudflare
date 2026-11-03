@@ -41,6 +41,7 @@ export const dynamic = "force-dynamic";
  * `no_event_signal` too — the asymmetry is deliberate and documented in
  * url-health.ts. Nothing here nulls a website or unpublishes anything.
  */
+import { bodyBytesOf } from "@/lib/goodwill/url-health";
 import { NextResponse } from "next/server";
 import { and, isNotNull, ne, sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
@@ -52,12 +53,12 @@ import {
   isSweepActionable,
   type SweepVerdict,
 } from "@/lib/goodwill/domain-takeover";
-import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 import { logError } from "@/lib/logger";
+import { projectUrlHealthVerdict } from "@/lib/url-health-issues";
+import { probe } from "@/lib/goodwill/url-probe";
 
 const DEFAULT_CHUNK = 50;
 const MAX_CHUNK = 100;
-const FETCH_TIMEOUT_MS = 10_000;
 
 /**
  * The field name recorded on every row this sweep writes.
@@ -69,41 +70,6 @@ const FETCH_TIMEOUT_MS = 10_000;
  * my local gate did not.
  */
 const SOURCE_FIELD = "promoters.website";
-
-interface Probe {
-  reachedOrigin: boolean;
-  status: number | null;
-  html: string | null;
-  /** OPE-988 — where redirects left us; a hop to another domain is a takeover signal. */
-  finalUrl?: string | null;
-}
-
-async function probe(url: string): Promise<Probe> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": SCRAPER_USER_AGENT },
-      signal: controller.signal,
-      redirect: "follow",
-    });
-    // OPE-979 — the body is read on EVERY status. The classifier still
-    // ignores a non-2xx body for its event-signal verdicts (a themed 404 must
-    // not score as healthy), but a closure announcement is routinely served as
-    // a 503 maintenance page — eagleshows.com is — and was never being read.
-    // A 2xx body is read whole, as before — a JS-heavy organizer page can carry
-    // its event text past any fixed cap (easterngunexpo.com reads `ok` whole and
-    // `no_event_signal` cut at 300 KB, measured). Only a non-2xx body, which
-    // feeds nothing but the closure check, is capped.
-    const body = await res.text().catch(() => "");
-    const html = (res.ok ? body : body.slice(0, 300_000)) || null;
-    return { reachedOrigin: true, status: res.status, html, finalUrl: res.url || null };
-  } catch {
-    return { reachedOrigin: false, status: null, html: null };
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 export async function POST(request: Request): Promise<NextResponse> {
   if (!(await isAuthorized(request))) {
@@ -154,6 +120,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       examined: rows.length,
       ok: 0,
       no_event_signal: 0,
+      parked_page: 0,
       http_error: 0,
       unreachable: 0,
       closure_notice: 0,
@@ -162,6 +129,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       /** OPE-979 — hosts where a second stored path served the same page. */
       same_page_on_every_path: 0,
       actionable: 0,
+      /** OPE-1280 — site-health rows opened (or re-opened) / closed by this chunk. */
+      issues_opened: 0,
+      issues_resolved: 0,
+      issues_projection_failed: 0,
       next_cursor: null as number | null,
     };
 
@@ -229,8 +200,34 @@ export async function POST(request: Request): Promise<NextResponse> {
         httpStatus: p.status,
         signals: health.signals.join(",") || null,
         detail: health.detail,
+        // OPE-1294 — the raw size, so a parked shell is separable from a bot wall.
+        bodyBytes: bodyBytesOf(p.html),
         checkedAt: now,
       });
+
+      // OPE-1280 — the operator-visible half: open/refresh/close this URL's
+      // site-health row. Its own try: a queue write failing must not stop the
+      // sweep or lose the check row above, which is already written.
+      try {
+        const proj = await projectUrlHealthVerdict(db, {
+          sourceField: SOURCE_FIELD,
+          url: website,
+          verdict,
+          httpStatus: p.status,
+          checkedAt: now,
+        });
+        result.issues_opened += proj.opened + proj.reopened;
+        result.issues_resolved += proj.resolved;
+      } catch (projectErr) {
+        result.issues_projection_failed += 1;
+        await logError(db, {
+          level: "warn",
+          message: "url-health → health_issues projection failed",
+          error: projectErr,
+          source: "api/admin/url-health/promoters/sweep",
+          context: { website, verdict },
+        });
+      }
 
       result[verdict] += 1;
       if (isSweepActionable(verdict, isActionable)) result.actionable += 1;
@@ -311,7 +308,7 @@ export async function GET(request: Request): Promise<NextResponse> {
              (SELECT COUNT(*) FROM url_health_checks h
                WHERE h.url = r.url AND h.verdict = r.verdict) AS consecutive
       FROM ranked r
-      WHERE r.rn = 1 AND r.verdict IN ('domain_takeover', 'closure_notice', 'no_event_signal', 'http_error')
+      WHERE r.rn = 1 AND r.verdict IN ('domain_takeover', 'closure_notice', 'parked_page', 'no_event_signal', 'http_error')
       ORDER BY r.checked_at DESC
       LIMIT 200
     `);

@@ -128,10 +128,17 @@ export function trackApiError(endpoint: string, statusCode: number, detail?: str
 
 type BeaconCategory = "funnel" | "engagement" | "conversion";
 
-/** OPE-1165 — `{trafficMedium, trafficSource}` for a click beacon, or nothing. */
+/** OPE-1165 — `{trafficMedium, trafficSource}` for a click beacon, or nothing.
+ *  OPE-1496 — plus `campaign` (the landing `utm_campaign`) when there was one,
+ *  the same key the `/go/` redirect writes, so both report the same way. */
 function trafficProps(): Record<string, string> {
   const a = getTrafficAttribution();
-  return a ? { trafficMedium: a.medium, trafficSource: a.source } : {};
+  if (!a) return {};
+  return {
+    trafficMedium: a.medium,
+    trafficSource: a.source,
+    ...(a.campaign ? { campaign: a.campaign } : {}),
+  };
 }
 
 function sendBeacon(name: string, category: BeaconCategory, properties?: Record<string, unknown>) {
@@ -209,16 +216,25 @@ export function trackOutboundApplicationClick(eventSlug: string, destinationUrl:
   });
 }
 
-/** Track a click on an outbound ticket URL on an event detail page. */
-export function trackOutboundTicketClick(eventSlug: string, destinationUrl: string) {
+/** Track a click on an outbound ticket URL on an event detail page.
+ *  `ctaSource` (OPE-265) says which field the link came from, so the CTA
+ *  experiment's `source_url` fallback clicks are separable from ticket-URL
+ *  clicks. Omitted by callers that predate it, and then absent from the row. */
+export function trackOutboundTicketClick(
+  eventSlug: string,
+  destinationUrl: string,
+  ctaSource?: "ticket_url" | "source_url"
+) {
   trackEvent("outbound_ticket_click", {
     category: "conversion",
     label: eventSlug,
     destination_url: destinationUrl,
+    ...(ctaSource ? { cta_source: ctaSource } : {}),
   });
   sendBeacon("outbound_ticket_click", "conversion", {
     eventSlug,
     destinationUrl,
+    ...(ctaSource ? { ctaSource } : {}),
     // OPE-1165 — the tab session's GA4-style attribution, so the conversion
     // rate can count organic clicks against organic sessions.
     ...trafficProps(),
@@ -238,7 +254,11 @@ export type BlogOutboundTargetType =
   // in the meter because only detail links classified.
   | "EVENT_DIRECTORY"
   | "VENDOR_DIRECTORY"
-  | "VENUE_DIRECTORY";
+  | "VENUE_DIRECTORY"
+  // OPE-1298 — the claim CTA (/for-vendors) OPE-100 added beside the directory
+  // CTA. It classified as nothing, so 48 days of the treatment measured only
+  // half of what it put on the page.
+  | "VENDOR_CLAIM";
 
 /** First path segment → target type. Matches the prefix-to-type contract
  *  the GA4 custom dimensions will be filtered on (see
@@ -296,6 +316,11 @@ export function classifyBlogOutboundLink(
   if (d) {
     const targetType = DIRECTORY_TYPE[d[1]];
     return targetType ? { targetType, targetSlug: href } : null;
+  }
+  // OPE-1298 — the vendor claim page. targetSlug keeps the full href so any
+  // campaign query on the CTA survives into the event.
+  if (/^\/for-vendors(?:[/?#]|$)/.test(href)) {
+    return { targetType: "VENDOR_CLAIM", targetSlug: href };
   }
   return null;
 }
@@ -645,7 +670,13 @@ export function trackNewsletterConfirm() {
 // entity_type / entity_id / method land as GA4 custom dimensions — see
 // docs/ope66-ga4-custom-dimensions.md.
 
-export function trackClaimView(entityType: "VENDOR" | "PROMOTER", entitySlug: string) {
+export function trackClaimView(
+  entityType: "VENDOR" | "PROMOTER",
+  entitySlug: string,
+  surface?: ClaimSurface,
+  // OPE-364 — which input admitted the view (see use-first-human-interaction).
+  trigger?: string
+) {
   const params = {
     category: "funnel" as const,
     label: `${entityType}:${entitySlug}`,
@@ -653,7 +684,34 @@ export function trackClaimView(entityType: "VENDOR" | "PROMOTER", entitySlug: st
     entity_slug: entitySlug,
   };
   trackEvent("claim_view", params);
-  sendBeacon("claim_view", "funnel", { entityType, entitySlug });
+  sendBeacon("claim_view", "funnel", {
+    entityType,
+    entitySlug,
+    ...(surface ? { surface } : {}),
+    ...(trigger ? { trigger } : {}),
+  });
+}
+
+// ── OPE-364 (2026-10-14) — claim-funnel steps from the claim WIZARD ─────────
+//
+// `claim_started` / `claim_submitted` were only ever beaconed by the two
+// email-match paths (DirectClaimButton, the owner-profile widget). The OPE-64
+// wizard at /claim/<type>/<slug> — the path every other claimant takes — sent
+// GA4 `_server` events only, so prod held ZERO rows of either step in D1, ever
+// (measured 2026-10-14: 23 claim_view, 13 claim_form_interacted, 0, 0). The
+// funnel read as total drop-off at `started` while claims were being made.
+//
+// `surface` says which entry path emitted the row, so the three can be told
+// apart without another deploy. Beacon-only, like the other OPE-364 steps.
+export type ClaimSurface = "wizard" | "evidence";
+
+export function trackClaimStep(
+  stage: "started" | "submitted",
+  entityType: "VENDOR" | "PROMOTER" | "PERFORMER",
+  entitySlug: string,
+  surface: ClaimSurface
+) {
+  sendBeacon(`claim_${stage}`, "funnel", { entityType, entitySlug, surface });
 }
 
 // ── OPE-364: per-step funnel instrumentation ────────────────────────────────
@@ -675,7 +733,7 @@ export function trackClaimView(entityType: "VENDOR" | "PROMOTER", entitySlug: st
 // forgotten.
 
 /** Fire once when a funnel's entry page renders. */
-export function trackFunnelView(funnel: "register" | "submit") {
+export function trackFunnelView(funnel: "register" | "submit" | "list") {
   sendBeacon(`${funnel}_view`, "funnel");
 }
 
@@ -687,11 +745,39 @@ export function trackFunnelView(funnel: "register" | "submit") {
  * client (see funnel-steps.ts). Re-firing per keystroke would exhaust that
  * budget and start dropping the very steps we are trying to measure.
  */
-export function trackFunnelInteracted(funnel: "register" | "claim" | "submit") {
+export function trackFunnelInteracted(funnel: "register" | "claim" | "submit" | "list") {
   sendBeacon(`${funnel}_form_interacted`, "funnel");
 }
 
-/** Fire when the funnel's form is actually submitted by the user. */
-export function trackFunnelSubmitted(funnel: "register" | "submit") {
-  sendBeacon(`${funnel}_submitted`, "funnel");
+/**
+ * Fire when the funnel's form is actually submitted by the user.
+ *
+ * OPE-1500 — `attempt` numbers the submits within one page mount. Step 2
+ * (`*_form_interacted`) is latched to first touch, but every submit ATTEMPT
+ * beacons step 3, so a visitor who retries after a validation or Turnstile
+ * error counted once on step 2 and N times on step 3. Real-visitor register read
+ * interacted→submitted = 125% (7d to 2026-10-19), and every excess row was a
+ * retry inside one visit. Retries are still beaconed, because a visitor
+ * resubmitting three times in a minute is a friction signal. The funnel read path
+ * counts only `attempt = 1` as the step.
+ */
+export function trackFunnelSubmitted(funnel: "register" | "submit" | "list", attempt: number) {
+  sendBeacon(`${funnel}_submitted`, "funnel", { attempt });
+}
+
+/**
+ * OPE-1500 — one per page mount (`useMemo(() => makeSubmitAttemptTracker(…), [])`):
+ * each call beacons the next attempt number, starting at 1. A re-mount is a new
+ * visit and starts again at 1. `send` is injectable for tests.
+ */
+export function makeSubmitAttemptTracker(
+  funnel: "register" | "submit" | "list",
+  send: typeof trackFunnelSubmitted = trackFunnelSubmitted
+): () => number {
+  let attempts = 0;
+  return () => {
+    attempts += 1;
+    send(funnel, attempts);
+    return attempts;
+  };
 }

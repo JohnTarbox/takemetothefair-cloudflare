@@ -111,7 +111,7 @@ function mockAi(responseText: string): AiBinding {
 
 const BASE_INPUT: ClassifierInput = {
   toAddress: "submit@meetmeatthefair.com",
-  fromAddress: "sara.beth.sovrago@gmail.com",
+  fromAddress: "user.basil1@gmail.com",
   senderTrustTier: "unknown",
   isReplyToOurThread: false,
   attachmentCount: 0,

@@ -10,6 +10,12 @@ export type UserProps = {
   role: "ADMIN" | "PROMOTER" | "VENDOR" | "USER";
   vendorId?: string;
   promoterId?: string;
+  /**
+   * OPE-1366 — users.session_version when these props were resolved. The
+   * refresh-time check (token-exchange.ts) refuses the grant once the row's
+   * value moves past it. Absent on grants minted before OPE-1366 (= 0).
+   */
+  sessionVersion?: number;
 };
 
 /**
@@ -37,6 +43,7 @@ export async function lookupUser(
   name: string | null;
   role: string;
   passwordHash: string | null;
+  sessionVersion: number;
 } | null> {
   const rows = await db
     .select({
@@ -45,6 +52,7 @@ export async function lookupUser(
       name: users.name,
       role: users.role,
       passwordHash: users.passwordHash,
+      sessionVersion: users.sessionVersion,
     })
     .from(users)
     .where(eq(users.email, email))
@@ -53,16 +61,42 @@ export async function lookupUser(
   return rows.length > 0 ? rows[0] : null;
 }
 
+/** OPE-1366 — the refresh-time re-read: the same fields as `lookupUser`, by id. */
+export async function lookupUserById(
+  db: Db,
+  userId: string
+): Promise<{
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  sessionVersion: number;
+} | null> {
+  const rows = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      role: users.role,
+      sessionVersion: users.sessionVersion,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return rows.length > 0 ? rows[0] : null;
+}
+
 /** Resolve vendor/promoter IDs for a user to build the full OAuth props. */
 export async function resolveUserProps(
   db: Db,
-  user: { id: string; email: string; name: string | null; role: string }
+  user: { id: string; email: string; name: string | null; role: string; sessionVersion: number }
 ): Promise<UserProps> {
   const props: UserProps = {
     userId: user.id,
     email: user.email,
     name: user.name || "",
     role: user.role as UserProps["role"],
+    sessionVersion: user.sessionVersion,
   };
 
   if (user.role === "VENDOR" || user.role === "ADMIN") {

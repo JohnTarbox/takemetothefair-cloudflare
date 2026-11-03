@@ -34,11 +34,20 @@ import {
   appendSlugSegment,
   normalizeName,
   computeNextOccurrence,
+  deriveEditionKey,
   parseRecurrenceRule,
+  stripNameDateSuffix,
   unsafeSlug,
   type Slug,
 } from "@takemetothefair/utils";
-import { events, eventDays, adminActions, promoters } from "./schema.js";
+import {
+  events,
+  eventDays,
+  eventSeries,
+  adminActions,
+  promoters,
+  raiseEventReviewFlag,
+} from "./schema.js";
 import { isCeasedPromoter } from "./promoters/succession.js";
 import { recomputeEventCompleteness } from "./helpers.js";
 import type { Db } from "./db.js";
@@ -96,6 +105,24 @@ export async function rolloverEventIfRecurring(
   if (!source) return { created: false, skipReason: "source-not-found" };
 
   // --- Eligibility gates ----------------------------------------------------
+  // OPE-1332 — only an ADJUDICATED edition rolls forward: editorial status
+  // APPROVED. A rolled edition is a machine projection (TENTATIVE, dates
+  // unconfirmed) and is publicly indexable, so its source must be one a person
+  // approved; projecting PENDING / DRAFT / REJECTED / CANCELLED rows would
+  // propagate never-reviewed (or explicitly rejected) data into next year
+  // faster than adjudication can catch it.
+  //
+  // Read 2026-10-06: the occurred-sweep's pass 1 already selects APPROVED
+  // only, but pass 2 (the OCCURRED backfill) and the manual
+  // update_event_lifecycle path filter on lifecycle alone — so this core is the
+  // one place every caller passes through. Of 106 rolled rows with lineage,
+  // 105 came from APPROVED sources; one (franklin-county-field-days-vt-2027)
+  // has a source that is CANCELLED today (status at roll time unverified).
+  // TENTATIVE sources are excluded too: rolling a projection projects a
+  // projection (OPE-740).
+  if (source.status !== "APPROVED") {
+    return { created: false, skipReason: "source-not-approved" };
+  }
   const parsed = parseRecurrenceRule(source.recurrenceRule);
   if (!parsed) return { created: false, skipReason: "no-recurrence-rule" };
   if (parsed.freq !== "YEARLY") return { created: false, skipReason: "unsupported-cadence" };
@@ -126,14 +153,51 @@ export async function rolloverEventIfRecurring(
   const next = computeNextOccurrence(source.startDate, source.endDate, source.recurrenceRule);
   if (!next) return { created: false, skipReason: "cannot-compute-next" };
 
+  // --- OPE-1327: multi-edition series bucket by (series, edition key) ---------
+  // NEAR-Fest runs May AND October. Bucketing them by (promoter, name, year)
+  // made the second roll of a year see the first one's edition and skip as
+  // "edition-exists" — the fall edition was never rolled. On a multi-edition
+  // series the rolled edition's key is derived from its computed start (October
+  // 2027 → 2028-10), and idempotency is "this series already holds that key".
+  let rolledEditionKey: string | null = null;
+  if (source.seriesId) {
+    const [series] = await db
+      .select({ editionMode: eventSeries.editionMode })
+      .from(eventSeries)
+      .where(eq(eventSeries.id, source.seriesId))
+      .limit(1);
+    if (series?.editionMode === "multi") {
+      rolledEditionKey = deriveEditionKey(next.start);
+      if (!rolledEditionKey) return { created: false, skipReason: "cannot-compute-next" };
+      const [held] = await db
+        .select({ id: events.id })
+        .from(events)
+        .where(
+          and(
+            eq(events.seriesId, source.seriesId),
+            eq(events.editionKey, rolledEditionKey),
+            isNull(events.mergedInto),
+            ne(events.status, "REJECTED")
+          )
+        )
+        .limit(1);
+      if (held) return { created: false, skipReason: "edition-exists" };
+    }
+  }
+
   // --- Idempotency: skip if a next-year edition already exists ---------------
   // Year-bucketed match on (promoter, normalized name). Annual fairs drift a
   // few days year-to-year, so a fixed day window would false-negative; the
   // calendar-year bucket is the right unit for a YEARLY cadence.
+  // OPE-1327 — annual series only; a multi-edition series was decided above.
   const nextYear = next.start.getUTCFullYear();
   const yearStart = new Date(Date.UTC(nextYear, 0, 1));
   const yearEnd = new Date(Date.UTC(nextYear + 1, 0, 1));
-  const normalizedSourceName = normalizeName(source.name);
+  // OPE-1543 — roll from the name with any display-line suffix ("— Aug 27–30 in
+  // Cummington, MA") removed. A year swap on the raw name would publish 2026's
+  // dates under the 2027 edition's name.
+  const sourceName = stripNameDateSuffix(source.name);
+  const normalizedSourceName = normalizeName(sourceName);
 
   const candidates = await db
     .select({ id: events.id, name: events.name })
@@ -148,7 +212,7 @@ export async function rolloverEventIfRecurring(
       )
     );
   const existing = candidates.find((c) => normalizeName(c.name) === normalizedSourceName);
-  if (existing) return { created: false, skipReason: "edition-exists" };
+  if (existing && !rolledEditionKey) return { created: false, skipReason: "edition-exists" };
 
   // --- Derive the new edition's name + slug ---------------------------------
   // Swap a standalone source-year token (e.g. "Fryeburg Fair 2026") for the
@@ -156,13 +220,13 @@ export async function rolloverEventIfRecurring(
   // computed year to the slug so the slug stays year-meaningful (not "-2").
   const sourceYear = source.startDate.getUTCFullYear();
   const yearTokenRe = new RegExp(`\\b${sourceYear}\\b`);
-  const nameHasYear = yearTokenRe.test(source.name);
+  const nameHasYear = yearTokenRe.test(sourceName);
   const newName = nameHasYear
-    ? source.name.replace(new RegExp(`\\b${sourceYear}\\b`, "g"), String(nextYear))
-    : source.name;
+    ? sourceName.replace(new RegExp(`\\b${sourceYear}\\b`, "g"), String(nextYear))
+    : sourceName;
   const baseSlug: Slug = nameHasYear
     ? createSlug(newName)
-    : appendSlugSegment(createSlug(source.name), nextYear);
+    : appendSlugSegment(createSlug(sourceName), nextYear);
 
   let finalSlug: Slug = baseSlug;
   let suffix = 0;
@@ -201,12 +265,13 @@ export async function rolloverEventIfRecurring(
     // This achieves the chosen goal — series-linked editions, automation kept —
     // with zero inheritance regression. Revisit if a single create-path is wanted.
     seriesId: source.seriesId,
+    // OPE-1327 — the rolled edition's own frozen key (NULL on annual series).
+    editionKey: rolledEditionKey,
     name: newName,
     slug: finalSlug,
     description: source.description,
     promoterId: source.promoterId,
     venueId: dropFormerVenue ? null : source.venueId,
-    ...(dropFormerVenue ? { flaggedForReview: 1 } : {}),
     stateCode: source.stateCode,
     isStatewide: source.isStatewide,
     startDate: next.start,
@@ -273,9 +338,6 @@ export async function rolloverEventIfRecurring(
     lifecycleStatusChangedAt: now,
     lifecycleReason: `auto-rollover from ${source.slug}`,
     rolledFromEventId: sourceEventId,
-    // Surface in the /admin/events?flagged=1 reconcile queue: an operator (or a
-    // scheduled reconcile) must confirm the predicted dates and flip to APPROVED.
-    flaggedForReview: 1,
     completenessScore: 0,
     createdAt: now,
     updatedAt: now,
@@ -299,6 +361,11 @@ export async function rolloverEventIfRecurring(
   });
 
   await db.batch([insertEvent, insertAudit]);
+  // Surface in the /admin/events?flagged=1 reconcile queue: an operator (or a
+  // scheduled reconcile) must confirm the predicted dates and flip to APPROVED.
+  // OPE-767 — recorded as reasons, so each can be discharged on its own.
+  await raiseEventReviewFlag(db, newEventId, "rollover");
+  if (dropFormerVenue) await raiseEventReviewFlag(db, newEventId, "former_venue");
 
   // Recompute AFTER the row exists — the scorer reads it back by id. A
   // date-predicted skeleton is objectively less complete than its parent, so

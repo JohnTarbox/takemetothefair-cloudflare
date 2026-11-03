@@ -21,7 +21,6 @@ import {
   promoters,
   eventVendors,
   vendors,
-  users,
   eventDays,
   eventApplications,
   eventSeries,
@@ -35,8 +34,10 @@ import { logError } from "@/lib/logger";
 import { buildEventTitle, buildEventMetaDescription } from "@/lib/seo-utils";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
-import { chunkedInArray } from "@takemetothefair/utils";
+import { seriesHubCanonicalPath } from "@/lib/series/occurrence-view";
+import { chunkedInArray, occurrencePath, withPublicStreetAddress } from "@takemetothefair/utils";
 import { withD1ReadLogged } from "@/lib/db/d1-resilience";
+import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
 
 /**
  * OPE-790 — one jittered retry on a Cloudflare-side D1 blip before the failure
@@ -46,6 +47,26 @@ import { withD1ReadLogged } from "@/lib/db/d1-resilience";
  */
 export function getEvent(slug: string) {
   return withD1ReadLogged("app/events/[slug]/page.tsx:getEvent", () => getEventOnce(slug));
+}
+
+/**
+ * OPE-790 rework — count one page view. Called ONCE per render, by the page
+ * (not by generateMetadata), OUTSIDE `getEvent`'s retry, and best-effort: a
+ * view counter is never worth an error page, and is never retried (a retried
+ * write can apply twice).
+ *
+ * RAW SQL DELIBERATELY (OPE-332). `events.updatedAt` carries `$onUpdateFn`, so
+ * a Drizzle `.update(events)` would stamp updated_at — the HTTP validator for
+ * this page — on every view, and the 304 path could never fire.
+ */
+export async function countEventView(eventId: string): Promise<void> {
+  try {
+    await getCloudflareDb().run(
+      sql`UPDATE events SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ${eventId}`
+    );
+  } catch (e) {
+    console.warn(`[event-detail] view count skipped for ${eventId}:`, e);
+  }
 }
 
 async function getEventOnce(slug: string) {
@@ -66,14 +87,10 @@ async function getEventOnce(slug: string) {
 
     const eventData = eventResults[0];
 
-    // Get promoter's user
-    const promoterUser = eventData.promoter?.userId
-      ? await db
-          .select({ name: users.name, email: users.email })
-          .from(users)
-          .where(eq(users.id, eventData.promoter.userId))
-          .limit(1)
-      : [];
+    // OPE-1387 — the promoter's account (name + EMAIL) used to be loaded here
+    // and attached as `promoter.user`. Nothing rendered it, but it rode the
+    // page's event object; a public page has no business holding an account
+    // email. Removed rather than stripped.
 
     // Get event vendors. Soft-deleted vendors (drizzle/0053) are filtered
     // out — the entry hides entirely from the event's vendor lineup per the
@@ -165,17 +182,13 @@ async function getEventOnce(slug: string) {
       )
       .orderBy(eventApplications.lane, eventApplications.department);
 
-    // Increment view count.
-    //
-    // RAW SQL DELIBERATELY (OPE-332). `events.updatedAt` now carries
-    // `$onUpdateFn`, so any Drizzle `.update(events)` also stamps updated_at —
-    // and updated_at is the HTTP validator for this page. Routing a per-view
-    // counter through Drizzle would therefore invalidate the validator on every
-    // single page view, so the 304 path could never fire. A view is not a
-    // content change; this is the one write that must not say it is.
-    await db.run(
-      sql`UPDATE events SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ${eventData.events.id}`
-    );
+    // OPE-790 rework — the view-count UPDATE used to run HERE, inside the
+    // function `getEvent` retries. So the retried "read" contained a write: a
+    // D1 timeout that committed and reported failure (the very class retried)
+    // could count a view twice, and a failed COUNTER took the page down — both
+    // absorbed blips on 10-03/10-04 were this UPDATE. It also ran twice per
+    // render (generateMetadata and the page both call getEvent). It now lives
+    // in `countEventView`, called once by the page, outside the retry.
 
     // venue/promoter are the lite projection from eventJoinProjection;
     // cast back to the schema row type so consumer prop types compile
@@ -188,10 +201,16 @@ async function getEventOnce(slug: string) {
     // series ref (canonical_slug + name) for the occurrence canonical URL +
     // schema.org superEvent. seriesId is NULL for every event until the P1
     // backfill, so this extra lookup never runs today.
-    let series: { canonicalSlug: string; name: string } | null = null;
+    // OPE-1326 — and its edition_mode, so the canonical/og:url, the JSON-LD url
+    // and the ask-about link address a multi-edition member by its edition key.
+    let series: { canonicalSlug: string; name: string; editionMode: string } | null = null;
     if (eventData.events.seriesId) {
       const [s] = await db
-        .select({ canonicalSlug: eventSeries.canonicalSlug, name: eventSeries.name })
+        .select({
+          canonicalSlug: eventSeries.canonicalSlug,
+          name: eventSeries.name,
+          editionMode: eventSeries.editionMode,
+        })
         .from(eventSeries)
         .where(eq(eventSeries.id, eventData.events.seriesId))
         .limit(1);
@@ -202,12 +221,7 @@ async function getEventOnce(slug: string) {
       ...eventData.events,
       series,
       venue: eventData.venue as FullVenue | null,
-      promoter: eventData.promoter
-        ? {
-            ...(eventData.promoter as FullPromoter),
-            user: promoterUser[0] || { name: null, email: null },
-          }
-        : null,
+      promoter: eventData.promoter ? (eventData.promoter as FullPromoter) : null,
       eventVendors: eventVendorResults.map((ev) => {
         const vendor = ev.vendors!;
         // EH2 — resolved public-facing {name, slug}. For brand_parent /
@@ -221,7 +235,9 @@ async function getEventOnce(slug: string) {
         );
         return {
           ...ev.event_vendors,
-          vendor,
+          // OPE-1398 — full vendor rows reach client components (RSC payload);
+          // a self-signup vendor's street address is nulled before they do.
+          vendor: withPublicStreetAddress(vendor),
           displayTarget,
         };
       }),
@@ -258,14 +274,30 @@ async function getEventOnce(slug: string) {
  */
 export async function buildEventMetadata(slug: string, asOccurrence = false): Promise<Metadata> {
   // EH3 P2.3 — series-first resolution. When the slug is a series canonical_slug,
-  // render the series-landing metadata (self-canonical to /events/<series>).
+  // render the series-landing metadata. OPE-589: its canonical is the hero
+  // occurrence's /events/<series>/<year>, NOT itself (see seriesHubCanonicalPath).
   // Returns null until the gated backfill creates series, so event pages are
   // unaffected today.
   // K46 — the /year occurrence route passes asOccurrence so the occurrence
   // canonicalizes to /events/<series>/<year> instead of the landing URL.
-  const landing = asOccurrence ? null : await getSeriesLanding(slug);
+  // OPE-1301 — this read precedes getEvent's try-block; same noindex fallback.
+  let landing: Awaited<ReturnType<typeof getSeriesLanding>>;
+  try {
+    landing = asOccurrence ? null : await getSeriesLanding(slug);
+  } catch (e) {
+    if (isD1PlatformFault(e)) return DEGRADED_METADATA;
+    throw e;
+  }
   if (landing) {
     const url = `${SITE_URL}/events/${landing.series.canonicalSlug}`;
+    // OPE-589 — the hub is served, but the canonical is the hero occurrence's
+    // /year page, agreeing with the sitemap (John, 2026-09-30).
+    const canonical = `${SITE_URL}${seriesHubCanonicalPath(
+      landing.series.canonicalSlug,
+      landing.occurrences,
+      new Date(),
+      landing.series.editionMode
+    )}`;
     const title = `${landing.series.name} — Meet Me at the Fair`;
     const description =
       landing.series.description ??
@@ -281,7 +313,7 @@ export async function buildEventMetadata(slug: string, asOccurrence = false): Pr
     return {
       title,
       description,
-      alternates: { canonical: url },
+      alternates: { canonical },
       openGraph: {
         title,
         description,
@@ -294,7 +326,14 @@ export async function buildEventMetadata(slug: string, asOccurrence = false): Pr
     };
   }
 
-  const event = await getEvent(slug);
+  let event: Awaited<ReturnType<typeof getEvent>>;
+  try {
+    event = await getEvent(slug);
+  } catch (e) {
+    // OPE-790 rework — a D1 blip that survived the retry: noindex, not a crash.
+    if (isD1PlatformFault(e)) return DEGRADED_METADATA;
+    throw e;
+  }
 
   if (!event) {
     // MIG4 — notFound() here renders the canonical global 404 page
@@ -318,12 +357,15 @@ export async function buildEventMetadata(slug: string, asOccurrence = false): Pr
   // (/events/<series>/<year>), regardless of which URL served it, so the legacy
   // event slug never competes as a duplicate. Standalone events (every event
   // until backfill) keep their own self-canonical.
-  const occYear =
-    event.series && event.startDate ? new Date(event.startDate).getUTCFullYear() : null;
-  const url =
-    event.series && occYear
-      ? `${SITE_URL}/events/${event.series.canonicalSlug}/${occYear}`
-      : `https://meetmeatthefair.com/events/${event.slug}`;
+  const occPath = event.series
+    ? occurrencePath(event.series.canonicalSlug, event.startDate, {
+        editionMode: event.series.editionMode,
+        editionKey: event.editionKey,
+      })
+    : null;
+  const url = occPath
+    ? `${SITE_URL}${occPath}`
+    : `https://meetmeatthefair.com/events/${event.slug}`;
 
   return {
     title,

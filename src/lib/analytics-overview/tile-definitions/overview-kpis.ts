@@ -61,9 +61,9 @@ export const OVERVIEW_KPI_TILES = {
     window:
       "Fixed 7 days ending 48h ago (GA4 finalization lag); ignores the window selector. GA4 cached 10 min.",
     caveats:
-      "OPE-1165: clicks record their traffic source from the day it shipped. Until 21 days of attributed clicks exist the rate shows 'not measured' and the badge is INDETERMINATE (out of the action queue); the footer then counts clicks from all sources. Attribution is per browser tab (utm → referrer → direct), close to but not identical with GA4's 30-minute session. No bot filter on clicks. The 8%/5% thresholds were set on the old all-source basis and will be restated from the first 4 weeks of data.",
+      "OPE-1165: clicks record their traffic source from the day it shipped. Until 21 days of attributed clicks exist the rate shows 'not measured' and the badge is INDETERMINATE (out of the action queue); the footer then counts clicks from all sources. Attribution is per browser tab (utm → referrer → direct), close to but not identical with GA4's 30-minute session. No bot filter on clicks. Thresholds reset 2026-09-30 (OPE-265, John) from 8%/5% to 4.5%/3%: no 28- or 90-day window had reached 8%. Since OPE-265 the event-page button also falls back to the organizer source page when there is no ticket URL; those clicks count here and carry ctaSource=source_url.",
     thresholds:
-      "Badge: green at 8% or more, red below 5%, amber between. STALE if GA4 data is over 96h old, or if the badge recompute stopped over 1h ago. Red or stale enters the action queue as P0.",
+      "Badge: green at 4.5% or more, red below 3%, amber between. STALE if GA4 data is over 96h old, or if the badge recompute stopped over 1h ago. Red or stale enters the action queue as P0.",
   },
   "overview.account-engagement": {
     measures:
@@ -84,6 +84,16 @@ export const OVERVIEW_KPI_TILES = {
       "DuckDuckGo hosts are not counted (duckduckgo.com is search; noai.duckduckgo.com has AI off). Bing Copilot chat arrives as www.bing.com and is not counted. Only hostnames on the list count.",
     thresholds:
       "Display-only colour, not in the KPI state machine or action queue: green at 10 or more, amber 5 to 9, red below 5.",
+  },
+  "overview.contact-scorecard": {
+    measures:
+      "OPE-1511 — share of contact emails (mail from a non-rejected promoter contact, one per email, not per intent row) that got a human reply within 1 New York business day, with the prior window beside it. The footer adds coverage, their reply rate to our outreach, and leakage counts.",
+    source:
+      "D1 promoter-contacts table, `inbound_emails`, `email_send_ledger` (reply:manual* / operator:outbound), `promoter_outreach_attempts`, `support_obligations`. The same computation as the MCP tool get_contact_scorecard, whose description lists every query.",
+    window:
+      "Fixed 28 days rolling from now, compared with the 28 days before. Ignores the window selector. Live D1 read.",
+    caveats:
+      "A FLOOR: replies sent from Gmail never reach email_send_ledger, so an email John answered from Gmail counts as unanswered here. Business days skip weekends and US federal holidays. Rates show — on an empty denominator, never 0%.",
   },
   "overview.facebook-traffic": {
     measures:

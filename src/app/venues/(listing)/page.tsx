@@ -8,6 +8,7 @@ import { auth } from "@/lib/auth";
 import { VenuesView } from "@/components/venues/venues-view";
 import { logError } from "@/lib/logger";
 import { containsCI } from "@/lib/db/contains-ci";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ItemListTracker } from "@/components/analytics/ItemListTracker";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
@@ -105,12 +106,15 @@ async function getVenues(searchParams: SearchParams, favoriteUserId?: string) {
     // resulting *1000 made the filter `seconds >= ms` which is always
     // false. Result: every venue card showed event_count = 0 sitewide
     // until PR #161 corrected it.
+    // OPE-1396 (DUP5) — the shared upcomingEndPredicate, not a raw
+    // `end_date >= unixepoch('now')`: the raw form dropped NULL-end events and
+    // events on their last day, which the venue detail page still lists.
     const eventCountSubquery = sql<number>`(
       SELECT COUNT(*) FROM events
       WHERE events.venue_id = venues.id
       AND events.status IN ('APPROVED', 'TENTATIVE')
       AND events.lifecycle_status NOT IN ('CANCELLED', 'NO_SHOW')
-      AND events.end_date >= unixepoch('now')
+      AND ${upcomingEndPredicate(new Date())}
     )`;
 
     if (searchParams.missingGoogle === "true") {

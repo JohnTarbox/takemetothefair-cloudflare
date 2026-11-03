@@ -2,93 +2,36 @@ import { extractMetadata } from "@/lib/url-import/html-parser";
 import { parseJsonLd } from "./parser";
 import type { FetchSchemaOrgResult, SchemaOrgStatus } from "./types";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
+import {
+  guardedFetch,
+  isGuardedFetchError,
+  GUARDED_HTML_MAX_BYTES,
+} from "@takemetothefair/site-fetch";
 
-const FETCH_TIMEOUT = 15000; // 15 seconds
+const FETCH_TIMEOUT = 15000; // 15 seconds — headers AND body
 
-/**
- * SSRF protection: block internal/private hostnames and IPs
- * Pattern from /api/admin/import-url/fetch/route.ts
- */
-function isInternalUrl(urlString: string): boolean {
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(urlString);
-    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-      return true;
-    }
-  } catch {
-    return true;
-  }
-
-  const hostname = parsedUrl.hostname.toLowerCase();
-
-  // Block internal hostnames
-  if (
-    hostname === "localhost" ||
-    hostname === "[::1]" ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".internal")
-  ) {
-    return true;
-  }
-
-  // Block private/reserved IP ranges
-  const ipMatch = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-  if (ipMatch) {
-    const [, a, b] = ipMatch.map(Number);
-    if (
-      a === 127 || // 127.0.0.0/8
-      a === 10 || // 10.0.0.0/8
-      (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12
-      (a === 192 && b === 168) || // 192.168.0.0/16
-      (a === 169 && b === 254) || // 169.254.0.0/16
-      a === 0 // 0.0.0.0/8
-    ) {
-      return true;
-    }
-  }
-
-  // Block IPv6 private ranges
-  if (hostname.startsWith("[fc") || hostname.startsWith("[fd") || hostname.startsWith("[fe80")) {
-    return true;
-  }
-
-  return false;
+function failure(error: string): FetchSchemaOrgResult {
+  return { success: false, data: null, rawJsonLd: null, status: "error", error };
 }
 
 /**
  * Fetch a URL and extract schema.org Event JSON-LD
+ *
+ * OPE-1370 (SSRF6) — this had a third, ad-hoc host validator (it missed
+ * `localhost.`, `[::7f00:1]` and every encoded-IPv4 form), checked the first
+ * hop only, and read the body uncapped. It now uses `guardedFetch`: the shared
+ * guard on every redirect hop and a GUARDED_HTML_MAX_BYTES streaming cap.
  */
 export async function fetchSchemaOrg(url: string): Promise<FetchSchemaOrgResult> {
   // Validate URL
   if (!url || typeof url !== "string") {
-    return {
-      success: false,
-      data: null,
-      rawJsonLd: null,
-      status: "error",
-      error: "URL is required",
-    };
-  }
-
-  // SSRF protection
-  if (isInternalUrl(url)) {
-    return {
-      success: false,
-      data: null,
-      rawJsonLd: null,
-      status: "error",
-      error: "Internal URLs are not allowed",
-    };
+    return failure("URL is required");
   }
 
   try {
-    // Fetch with timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
-
-    const response = await fetch(url, {
-      signal: controller.signal,
+    const response = await guardedFetch(url, {
+      maxBytes: GUARDED_HTML_MAX_BYTES,
+      timeoutMs: FETCH_TIMEOUT,
       headers: {
         "User-Agent": SCRAPER_USER_AGENT,
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -96,27 +39,15 @@ export async function fetchSchemaOrg(url: string): Promise<FetchSchemaOrgResult>
       },
     });
 
-    clearTimeout(timeoutId);
-
     if (!response.ok) {
-      return {
-        success: false,
-        data: null,
-        rawJsonLd: null,
-        status: "error",
-        error: `Failed to fetch page (${response.status})`,
-      };
+      response.cancel();
+      return failure(`Failed to fetch page (${response.status})`);
     }
 
     const contentType = response.headers.get("content-type") || "";
     if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
-      return {
-        success: false,
-        data: null,
-        rawJsonLd: null,
-        status: "error",
-        error: "URL does not point to an HTML page",
-      };
+      response.cancel();
+      return failure("URL does not point to an HTML page");
     }
 
     const html = await response.text();
@@ -145,23 +76,21 @@ export async function fetchSchemaOrg(url: string): Promise<FetchSchemaOrgResult>
       error: parseResult.error,
     };
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      return {
-        success: false,
-        data: null,
-        rawJsonLd: null,
-        status: "error",
-        error: "Page took too long to load",
-      };
+    if (isGuardedFetchError(error)) {
+      switch (error.code) {
+        case "invalid_url":
+        case "blocked_protocol":
+        case "blocked_host":
+          return failure("Internal URLs are not allowed");
+        case "timeout":
+          return failure("Page took too long to load");
+        case "too_large":
+          return failure("Page is too large to fetch");
+        default:
+          return failure(error.message);
+      }
     }
-
-    return {
-      success: false,
-      data: null,
-      rawJsonLd: null,
-      status: "error",
-      error: error instanceof Error ? error.message : "Failed to fetch page",
-    };
+    return failure(error instanceof Error ? error.message : "Failed to fetch page");
   }
 }
 

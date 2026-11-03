@@ -1,0 +1,16 @@
+-- OPE-1397 (EXP5) — request_samples.kind.
+--
+-- request_samples (0130) held only the A9 5% public-page sample. It now also
+-- records every /admin* request that carries an `RSC` or
+-- `Next-Router-State-Tree` header and NO session cookie — the shape of the
+-- OPE-1365 layout-bypass probe — so one can be found after the fact. Those
+-- rows store path, timestamp, CF country and ASN only (no headers, no IP).
+--
+-- `kind` keeps the two populations apart: the A9 bot-fingerprint read
+-- (/api/admin/request-samples) groups by UA/ASN and must not count admin
+-- probes, which carry no UA. Existing rows are all A9 samples → 'page'.
+--
+-- Schema-only (ADD COLUMN with a constant default); a no-op on an empty
+-- request_samples and safe on a fresh CI database (0130 creates the table).
+-- Retention is unchanged: the MCP daily cron prunes by timestamp, both kinds.
+ALTER TABLE request_samples ADD COLUMN kind TEXT NOT NULL DEFAULT 'page';

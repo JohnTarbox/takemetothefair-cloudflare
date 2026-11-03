@@ -5,7 +5,7 @@
  * parent row (`intent='multi'`) plus one synthesized child per intent, and
  * starts an independent workflow for each child. Each child then composed and
  * sent its own acknowledgement, so a two-topic email drew two replies:
- * ewelford@paradisecityarts.com received two `correction-ack`s seconds apart on
+ * reeddesk@paradisecityarts.com received two `correction-ack`s seconds apart on
  * 2026-08-17, for one message, while a human was mid-correspondence with her.
  *
  * The children are a ROUTING artefact. The person sent one email and should get
@@ -78,6 +78,9 @@ export const FANOUT_REPLY_RANK: Record<EmailIntent, number> = {
   // Photos actually landed somewhere — a countable outcome, above the
   // acknowledgement-only intents below.
   photo_intake: 65,
+  // OPE-1265 — never replies; ranks at the floor so a list issue can never be
+  // the child that speaks for a fan-out.
+  list_subscription: 0,
   vendor_inquiry: 60,
   source_suggestion: 50,
   press: 40,
@@ -86,6 +89,8 @@ export const FANOUT_REPLY_RANK: Record<EmailIntent, number> = {
   unknown: 10,
   spam: 0,
   multi: 0,
+  // OPE-328 — gemba sends no reply at all, so it never leads a fan-out reply.
+  gemba_observation: 0,
 };
 
 export interface FanoutSibling {

@@ -14,14 +14,15 @@ import {
   ParkingSquare,
   PawPrint,
 } from "lucide-react";
-import { venuePetPolicyDisplay } from "@takemetothefair/utils";
+import { venuePetPolicyDisplay, safeHref } from "@takemetothefair/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, events, promoters } from "@/lib/db/schema";
-import { eq, and, gte, inArray } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
@@ -38,7 +39,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
-import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, OG_EVENT } from "@/lib/cdn-image";
 import { indexableVenueWhere, loadVenueHistoryPublic } from "@/lib/venues/venue-history-public";
 import {
   createFootnotes,
@@ -46,6 +47,11 @@ import {
   FormerVenueFacts,
   Sources,
 } from "@/components/venues/venue-history";
+import {
+  GOOGLE_ACCESSIBILITY_LABELS,
+  GOOGLE_PARKING_LABELS,
+  googleAmenityPhrases,
+} from "@/lib/venues/google-amenities";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -92,7 +98,7 @@ async function getVenue(slug: string) {
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
       .where(
-        and(eq(events.venueId, venue.id), isPublicEventStatus(), gte(events.endDate, new Date()))
+        and(eq(events.venueId, venue.id), isPublicEventStatus(), upcomingEndPredicate(new Date()))
       )
       .orderBy(events.startDate)
       .limit(6);
@@ -235,6 +241,8 @@ export default async function VenueDetailPage({ params }: Props) {
   // A pin only for real coordinates — a FORMER venue never gets a centroid or
   // an address-search link built from a blank address.
   const showMapLink = !venue.isFormer || (venue.latitude != null && venue.longitude != null);
+  // OPE-1368 — stored URLs render through safeHref (http/https only).
+  const websiteHref = safeHref(venue.website);
 
   return (
     <>
@@ -303,17 +311,12 @@ export default async function VenueDetailPage({ params }: Props) {
                 // Pattern is reusable per [[project_img1_smart_crop_hero]] —
                 // applied here without changes to the helper signatures.
                 const heroWidths = [400, 640, 800, 1200, 1600, 1942];
-                const heroSrcSet = heroWidths
-                  .map((w) =>
-                    cdnImage(venue.imageUrl!, {
-                      width: w,
-                      format: "auto",
-                      quality: 80,
-                      onerror: "redirect",
-                    })
-                  )
-                  .map((url, i) => `${url} ${heroWidths[i]}w`)
-                  .join(", ");
+                const heroSrcSet = cdnSrcSet(venue.imageUrl, heroWidths, (w) => ({
+                  width: w,
+                  format: "auto",
+                  quality: 80,
+                  onerror: "redirect",
+                }));
                 const heroSrc = cdnImage(venue.imageUrl, {
                   width: 1600,
                   format: "auto",
@@ -417,74 +420,46 @@ export default async function VenueDetailPage({ params }: Props) {
             })()}
 
             {(() => {
-              if (!venue.accessibility) return null;
-              const LABELS: Record<string, string> = {
-                wheelchairAccessibleParking: "Wheelchair accessible parking",
-                wheelchairAccessibleEntrance: "Wheelchair accessible entrance",
-                wheelchairAccessibleRestroom: "Wheelchair accessible restroom",
-                wheelchairAccessibleSeating: "Wheelchair accessible seating",
-              };
-              try {
-                const data = JSON.parse(venue.accessibility);
-                const features = Object.entries(data)
-                  .filter(([, v]) => v === true)
-                  .map(([k]) => LABELS[k] || k.replace(/([A-Z])/g, " $1").trim());
-                if (features.length === 0) return null;
-                return (
-                  <div>
-                    <h2 className="text-xl font-semibold text-foreground mb-3 flex items-center gap-2">
-                      <Accessibility className="w-5 h-5" />
-                      Accessibility
-                    </h2>
-                    <div className="flex flex-wrap gap-2">
-                      {features.map((feature) => (
-                        <Badge key={feature} variant="info">
-                          {feature}
-                        </Badge>
-                      ))}
-                    </div>
+              const features = googleAmenityPhrases(
+                venue.accessibility,
+                GOOGLE_ACCESSIBILITY_LABELS
+              );
+              if (features.length === 0) return null;
+              return (
+                <div>
+                  <h2 className="text-xl font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <Accessibility className="w-5 h-5" />
+                    Accessibility
+                  </h2>
+                  <div className="flex flex-wrap gap-2">
+                    {features.map((feature) => (
+                      <Badge key={feature} variant="info">
+                        {feature}
+                      </Badge>
+                    ))}
                   </div>
-                );
-              } catch {
-                return null;
-              }
+                </div>
+              );
             })()}
 
             {(() => {
-              if (!venue.parking) return null;
-              const LABELS: Record<string, string> = {
-                freeParkingLot: "Free parking lot",
-                paidParkingLot: "Paid parking lot",
-                freeStreetParking: "Free street parking",
-                paidStreetParking: "Paid street parking",
-                valetParking: "Valet parking",
-                freeGarageParking: "Free garage parking",
-                paidGarageParking: "Paid garage parking",
-              };
-              try {
-                const data = JSON.parse(venue.parking);
-                const options = Object.entries(data)
-                  .filter(([, v]) => v === true)
-                  .map(([k]) => LABELS[k] || k.replace(/([A-Z])/g, " $1").trim());
-                if (options.length === 0) return null;
-                return (
-                  <div>
-                    <h2 className="text-xl font-semibold text-foreground mb-3 flex items-center gap-2">
-                      <ParkingSquare className="w-5 h-5" />
-                      Parking
-                    </h2>
-                    <div className="flex flex-wrap gap-2">
-                      {options.map((option) => (
-                        <Badge key={option} variant="info">
-                          {option}
-                        </Badge>
-                      ))}
-                    </div>
+              const options = googleAmenityPhrases(venue.parking, GOOGLE_PARKING_LABELS);
+              if (options.length === 0) return null;
+              return (
+                <div>
+                  <h2 className="text-xl font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <ParkingSquare className="w-5 h-5" />
+                    Parking
+                  </h2>
+                  <div className="flex flex-wrap gap-2">
+                    {options.map((option) => (
+                      <Badge key={option} variant="info">
+                        {option}
+                      </Badge>
+                    ))}
                   </div>
-                );
-              } catch {
-                return null;
-              }
+                </div>
+              );
             })()}
 
             {venue.events.length > 0 && (
@@ -586,12 +561,12 @@ export default async function VenueDetailPage({ params }: Props) {
                       {venue.contactEmail}
                     </TrackedActionLink>
                   )}
-                  {venue.website && (
+                  {websiteHref && (
                     <TrackedActionLink
                       event="outbound_website_click"
                       entityType="VENUE"
                       entitySlug={venue.slug}
-                      href={venue.website}
+                      href={websiteHref}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-3 text-foreground hover:text-navy"

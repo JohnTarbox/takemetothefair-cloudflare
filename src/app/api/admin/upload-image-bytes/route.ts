@@ -39,6 +39,7 @@ import { logError } from "@/lib/logger";
 import {
   runUploadPipeline,
   PIPELINE_ALLOWED_TYPES,
+  describeRefusedDeclaredType,
   PIPELINE_MAX_BYTES,
   type PipelineTargetType,
   type PipelineImageRole,
@@ -123,10 +124,7 @@ export async function POST(request: NextRequest) {
 
   const declaredType = file.type || "application/octet-stream";
   if (!PIPELINE_ALLOWED_TYPES.has(declaredType)) {
-    return NextResponse.json(
-      { error: `Unsupported content_type "${declaredType}". Allowed: jpg/png/webp/svg.` },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: describeRefusedDeclaredType(declaredType) }, { status: 400 });
   }
 
   // Verify target row exists before doing the R2 put.

@@ -229,4 +229,41 @@ describe("expandEventDates", () => {
     );
     expect(out.length).toBeLessThanOrEqual(60);
   });
+
+  // OPE-1354 — the walk is clipped to the photo date +/- 1 day before the cap,
+  // so a long range can't be cut off before it reaches the photo.
+  it("expands around a date deep inside a long range (past the 60-day cap)", () => {
+    const out = expandEventDates(
+      [],
+      new Date("2026-06-05T12:00:00Z"),
+      new Date("2026-10-02T12:00:00Z"),
+      "2026-09-04"
+    );
+    expect(out).toEqual(["2026-09-03", "2026-09-04", "2026-09-05"]);
+  });
+
+  it("the around-window never extends past the event's own range", () => {
+    expect(
+      expandEventDates(
+        [],
+        new Date("2026-10-04T00:00:00Z"),
+        new Date("2026-10-05T00:00:00Z"),
+        "2026-10-05"
+      )
+    ).toEqual(["2026-10-04", "2026-10-05"]);
+    expect(
+      expandEventDates(
+        [],
+        new Date("2026-06-05T00:00:00Z"),
+        new Date("2026-08-28T00:00:00Z"),
+        "2026-09-04"
+      )
+    ).toEqual([]);
+  });
+
+  it("event_days stay authoritative even with an around-date", () => {
+    expect(
+      expandEventDates(["2026-09-04"], new Date("2026-06-05"), new Date("2026-10-02"), "2026-09-05")
+    ).toEqual(["2026-09-04"]);
+  });
 });

@@ -22,11 +22,21 @@ const SCHEMA_SQL = `
     categories TEXT,
     tags TEXT,
     primary_audience TEXT NOT NULL DEFAULT 'PUBLIC',
-    public_access TEXT NOT NULL DEFAULT 'OPEN'
+    public_access TEXT NOT NULL DEFAULT 'OPEN',
+    edition_mode TEXT NOT NULL DEFAULT 'annual'
+  );
+  CREATE TABLE event_review_flags (
+    id TEXT PRIMARY KEY, event_id TEXT NOT NULL, reason TEXT NOT NULL,
+    raised_at INTEGER NOT NULL, raised_by TEXT, cleared_at INTEGER, cleared_by TEXT, note TEXT
   );
   CREATE TABLE events (
     id TEXT PRIMARY KEY,
     series_id TEXT,
+    -- OPE-1327 — mirrors prod (status NOT NULL DEFAULT 'DRAFT'): the sibling
+    -- query now excludes REJECTED rows and merge tombstones.
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    merged_into TEXT,
+    edition_key TEXT,
     slug TEXT NOT NULL,
     start_date INTEGER,
     end_date INTEGER,
@@ -45,6 +55,7 @@ const SCHEMA_SQL = `
     open_time TEXT,
     close_time TEXT,
     close_time_unpublished INTEGER NOT NULL DEFAULT 0,
+    hours_unpublished INTEGER NOT NULL DEFAULT 0,
     notes TEXT,
     internal_notes TEXT,
     closed INTEGER DEFAULT 0,

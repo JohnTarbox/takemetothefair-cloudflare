@@ -81,8 +81,20 @@ describe("dark capability reporting (OPE-368 item 4)", () => {
   it("treats an UNSET flag as dark, not as healthy", () => {
     // The failure mode is a capability nobody knows is off. An unset flag is
     // the most silent version of that, so it must not read as fine.
+    //
+    // OPE-1394 — the ONE exception is a default-OPEN flag, read by its
+    // consumer's own rule: AUTO_REPLY_ENABLED is `!== "false"` in
+    // mcp-server/src/email-gates.ts, so unset really is ON. Reporting it dark
+    // would be the ENRICHMENT_DRY_RUN mistake in reverse.
+    const DEFAULT_OPEN = new Set(["AUTO_REPLY_ENABLED"]);
     const states = resolveCapabilityFlags({});
-    expect(states.every((s) => s.dark)).toBe(true);
+    expect(states.filter((s) => !DEFAULT_OPEN.has(s.name)).every((s) => s.dark)).toBe(true);
+    expect(states.find((s) => s.name === "AUTO_REPLY_ENABLED")?.dark).toBe(false);
+    expect(
+      resolveCapabilityFlags({ AUTO_REPLY_ENABLED: "false" }).find(
+        (s) => s.name === "AUTO_REPLY_ENABLED"
+      )?.dark
+    ).toBe(true);
   });
 
   it("reads ENRICHMENT_DRY_RUN by the consumer's OWN rule, not a restatement", () => {

@@ -278,3 +278,90 @@ export const AVATAR_SM = {
   gravity: "face",
   format: "auto",
 } satisfies CdnImageOpts;
+
+// ---------- Responsive srcset (OPE-1080) ----------
+
+/**
+ * Largest width any srcset candidate may request. The user's image rules cap
+ * normal photos at ~1600–2048: Cloudflare will not upscale past the source,
+ * and every extra width is a separately billed unique transformation.
+ */
+export const MAX_SRCSET_WIDTH = 2048;
+
+/** 3:2 thumbnail ladder for grid tiles (cards / gallery). */
+export const THUMB_WIDTHS = [400, 800, 1200] as const;
+
+/**
+ * True when `cdnImage(src, {width: w})` returns a DIFFERENT URL for different
+ * `w` — i.e. a width-descriptor srcset built from it would be honest.
+ *
+ * False for foreign hotlinks (passed through unchanged), already-transformed
+ * `/cdn-cgi/image/` URLs (returned unchanged, so every width is the same
+ * derivative), relative / data: / blob: URLs. A `#rot=` fragment (OPE-686) is
+ * ignored for the decision.
+ */
+export function cdnVariesByWidth(src: string | null | undefined): boolean {
+  if (!src) return false;
+  const bare = src.split("#")[0];
+  if (bare.includes("/cdn-cgi/image/")) return false;
+  if (TRANSFORMABLE_PREFIXES.some((p) => bare.startsWith(p))) return true;
+  return isGoogleUserContent(bare);
+}
+
+/**
+ * OPE-1080 — build a width-descriptor `srcset` whose candidate URLs TRACK
+ * their descriptors, or return `undefined` when they cannot.
+ *
+ * The defect this exists to prevent: a srcset of N descriptors that all point
+ * at the same URL (the gallery shipped 9 candidates, 384w…3840w, every one a
+ * `width=600` derivative; hotlinked card images shipped 4 copies of the bare
+ * third-party URL). The browser is told N resolutions exist and is handed one.
+ *
+ * - `optsFor(w)` must put `w` in `width` (enforced: a mismatch throws, so a
+ *   caller that hard-codes the width fails loudly in tests, not silently in
+ *   prod).
+ * - Widths above {@link MAX_SRCSET_WIDTH} are rejected (cost control).
+ * - When the source cannot be resized per width (foreign host, pre-transformed
+ *   URL), returns `undefined`: ship a single honest `src` and no srcset.
+ */
+export function cdnSrcSet(
+  src: string | null | undefined,
+  widths: readonly number[],
+  optsFor: (w: number) => CdnImageOpts
+): string | undefined {
+  if (!src || !cdnVariesByWidth(src)) return undefined;
+  const parts: string[] = [];
+  for (const w of widths) {
+    if (w > MAX_SRCSET_WIDTH) {
+      throw new Error(`cdnSrcSet: width ${w} exceeds MAX_SRCSET_WIDTH ${MAX_SRCSET_WIDTH}`);
+    }
+    const opts = optsFor(w);
+    if (opts.width !== w) {
+      throw new Error(`cdnSrcSet: optsFor(${w}) returned width=${opts.width}`);
+    }
+    parts.push(`${cdnImage(src, opts)} ${w}w`);
+  }
+  if (new Set(parts.map((p) => p.slice(0, p.lastIndexOf(" ")))).size < 2) return undefined;
+  return parts.join(", ");
+}
+
+/**
+ * Options for a 3:2 `fit=cover` thumbnail at width `w` — the responsive form
+ * of {@link CARD_THUMB}. Height tracks width (`round(w*2/3)`) so every
+ * candidate is the same crop at a different resolution.
+ */
+export function thumbOpts(
+  w: number,
+  extra: Pick<CdnImageOpts, "rotate" | "gravity"> = {}
+): CdnImageOpts {
+  return {
+    width: w,
+    height: Math.round((w * 2) / 3),
+    fit: "cover",
+    gravity: extra.gravity ?? "auto",
+    format: "auto",
+    quality: 80,
+    onerror: "redirect",
+    ...(extra.rotate ? { rotate: extra.rotate } : {}),
+  };
+}

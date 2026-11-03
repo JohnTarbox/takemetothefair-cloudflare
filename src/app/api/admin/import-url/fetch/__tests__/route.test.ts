@@ -98,6 +98,28 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
     vi.clearAllMocks();
   });
 
+  // OPE-1370 (SSRF5) — this route takes email-supplied URLs. The first hop is
+  // checked here; the redirect is what points inward, and it used to be
+  // followed unchecked. It must be refused, and NOT handed to Browser Rendering.
+  it("refuses a public URL that redirects to [::7f00:1], without escalating", async () => {
+    const seen: string[] = [];
+    global.fetch = vi.fn(async (input: Request | URL | string) => {
+      const u = String(input instanceof Request ? input.url : input);
+      seen.push(u);
+      return u === "https://example.com/event"
+        ? new Response(null, { status: 302, headers: { location: "http://[::7f00:1]/" } })
+        : new Response("<html><body>internal</body></html>", {
+            status: 200,
+            headers: { "content-type": "text/html" },
+          });
+    }) as unknown as typeof fetch;
+
+    const res = await GET(makeRequest("https://example.com/event"), noParams);
+    const body = (await res.json()) as { success: boolean; fetchMethod?: string };
+    expect(body).toMatchObject({ success: false, fetchMethod: "failed" });
+    expect(seen).toEqual(["https://example.com/event"]);
+  });
+
   it("returns fetchMethod='standard' when initial fetch succeeds", async () => {
     global.fetch = vi.fn(
       async () =>
@@ -429,5 +451,58 @@ describe("GET /api/admin/import-url/fetch — OPE-837 link discovery", () => {
     expect(body.links).toHaveLength(1);
     expect(body.links[0].url).toBe("https://example.com/vendors");
     expect(body.links.some((l) => l.url.includes("someone-else.org"))).toBe(false);
+  });
+});
+
+/**
+ * OPE-1250 — a share.google link redirects to the article. Its relative nav
+ * must resolve against where the redirect LANDED (37da2bf5 fetched
+ * `share.google/news/…`), and the route reports that URL so the pipeline can
+ * store it as source_url.
+ */
+describe("GET /api/admin/import-url/fetch — OPE-1250 post-redirect page URL", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("resolves anchors against, and reports, the URL the redirect landed on", async () => {
+    const landed = "https://wgme.com/news/local/cumberland-fair-returns";
+    // OPE-1370 — redirects are followed manually (every hop SSRF-checked), so
+    // the redirect is a real 301 here rather than a runtime-set `Response.url`.
+    global.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === landed
+        ? new Response("<html><body>ok</body></html>", { status: 200 })
+        : new Response(null, { status: 301, headers: { location: landed } })
+    ) as unknown as typeof fetch;
+    const { extractAnchors } = await import("@/lib/url-import/html-parser");
+    vi.mocked(extractAnchors).mockReturnValue([
+      { url: "https://wgme.com/news/local", text: "Local" },
+      { url: "https://share.google/news/local", text: "wrong base" },
+    ]);
+
+    const res = await GET(makeRequest("https://share.google/dep4eDy9xPosZHWTH"), noParams);
+    const body = (await res.json()) as {
+      success: boolean;
+      finalUrl?: string;
+      links: Array<{ url: string }>;
+    };
+
+    expect(body.success).toBe(true);
+    expect(body.finalUrl).toBe(landed);
+    expect(vi.mocked(extractAnchors).mock.calls[0][1]).toBe(landed);
+    // Same-site is judged against the landed site, not share.google.
+    expect(body.links.map((l) => l.url)).toEqual(["https://wgme.com/news/local"]);
+  });
+
+  it("control: no redirect → no finalUrl, anchors resolve against the requested URL", async () => {
+    global.fetch = vi.fn(
+      async () => new Response("<html><body>ok</body></html>", { status: 200 })
+    ) as unknown as typeof fetch;
+    const { extractAnchors } = await import("@/lib/url-import/html-parser");
+    vi.mocked(extractAnchors).mockReturnValue([]);
+    const res = await GET(makeRequest("https://example.com/ok"), noParams);
+    const body = (await res.json()) as { finalUrl?: string };
+    expect(body.finalUrl).toBeUndefined();
+    expect(vi.mocked(extractAnchors).mock.calls[0][1]).toBe("https://example.com/ok");
   });
 });

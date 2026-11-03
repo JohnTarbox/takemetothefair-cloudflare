@@ -19,6 +19,9 @@ const reply = (over: Record<string, unknown> = {}) => ({
     confidence: 1,
     rationale: "banner on the stall",
     identifiable_minor: false,
+    // OPE-240 — the same mock answers the separate presence question too, as a
+    // real stall photo does. The refusal side is pinned in photo-presence-ope240.
+    mounted_on: "vendor_table_or_tent",
     ...over,
   }),
 });
@@ -274,5 +277,31 @@ describe("runBoothPipeline — auto-write (Milestone B)", () => {
     );
     expect(res.autoWritten).toEqual([]);
     expect(res.staged).toBe(1); // banner-behind-another-booth safety preserved
+  });
+
+  it('OPE-1486 — with the committed "false", a confidence-1.0 booth on a seeded event STAGES and writes nothing', async () => {
+    // The event exists and the presence check passes, so the flag is the only
+    // thing between this photo and a public vendor. This is the 10-10 Columbus
+    // Weekend case run with the value the gate is now committed at.
+    const { db } = createTestDb();
+    await seedEmail(db as unknown as Db);
+    await seedEventE1(db as unknown as Db);
+    const res = await runBoothPipeline(
+      { ...enabledAW(reply()), PHOTO_AUTOWRITE_ENABLED: "false" },
+      db as unknown as Db,
+      "ie1",
+      "e1",
+      photos
+    );
+    expect(res.autoWritten).toEqual([]);
+    expect(res.staged).toBe(1);
+    const { vendors } = await import("../src/schema.js");
+    expect(db.select().from(vendors).all()).toHaveLength(0);
+    const [proposal] = db
+      .select()
+      .from(adminActions)
+      .where(eq(adminActions.action, BOOTH_PROPOSED_ACTION))
+      .all();
+    expect(JSON.parse(proposal.payloadJson as string).would_auto_write).toBe(true);
   });
 });

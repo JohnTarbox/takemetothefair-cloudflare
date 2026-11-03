@@ -1,4 +1,5 @@
 import { SITE_URL } from "@takemetothefair/constants";
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 
 /**
  * OPE-631 — Google maps breadcrumb `item` to `@id` and REQUIRES an absolute URL.
@@ -53,7 +54,7 @@ export function BreadcrumbSchema({ items }: BreadcrumbSchemaProps) {
       // venue/vendor/blog titles are first-party but operator-entered) can't break
       // out of the JSON-LD block. Mirrors the same defense in the series/event
       // JSON-LD emitters; hardening it here covers all ~30 BreadcrumbSchema callers.
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema).replace(/</g, "\\u003c") }}
+      dangerouslySetInnerHTML={{ __html: safeJsonLd(schema) }}
     />
   );
 }

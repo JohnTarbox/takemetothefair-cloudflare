@@ -1,17 +1,20 @@
 import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import { Calendar, ArrowLeft, Tag, User, Pencil, Link2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts, users, events, venues } from "@/lib/db/schema";
-import { eq, and, ne, desc, or, like, sql } from "drizzle-orm";
+import { eq, and, ne, desc, or, sql } from "drizzle-orm";
+import { containsCI } from "@/lib/db/contains-ci";
+import { logError } from "@/lib/logger";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
 import { MarkdownContent } from "@/components/blog/markdown-content";
+import { extractEventSlugs, resolveEventHrefs } from "@/lib/blog/event-guides";
 import { ShareButtons } from "@/components/ShareButtons";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
@@ -31,7 +34,7 @@ import { formatAuthorName, unsafeSlug } from "@/lib/utils";
 import { TableOfContents } from "@/components/blog/table-of-contents";
 import { getEntitiesLinkedFromPost } from "@/lib/content-links-query";
 import type { Metadata } from "next";
-import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, OG_EVENT } from "@/lib/cdn-image";
 
 export const revalidate = 300;
 
@@ -95,13 +98,16 @@ async function getRecentPosts(excludeId: string) {
 async function getRelatedEvents(tags: string[], categories: string[]) {
   try {
     const db = getCloudflareDb();
-    // Build search terms from tags and categories
-    const searchTerms = [...tags, ...categories].filter(Boolean);
+    // Build search terms from tags and categories. Capped at 40 terms (2 bound
+    // params each) so the statement stays under D1's 100-param cap (OPE-1376).
+    const searchTerms = [...tags, ...categories].filter(Boolean).slice(0, 40);
     if (searchTerms.length === 0) return [];
 
-    // Match events whose name or categories overlap with blog tags
+    // Match events whose name or categories overlap with blog tags.
+    // OPE-1376: containsCI (instr), not LIKE — a tag over ~48 chars tripped
+    // D1's 50-char LIKE-pattern cap and silently emptied this block.
     const searchConditions = searchTerms.map((term) =>
-      or(like(events.name, `%${term}%`), like(events.categories, `%${term}%`))
+      or(containsCI(events.name, term), containsCI(events.categories, term))
     );
 
     const results = await db
@@ -126,7 +132,13 @@ async function getRelatedEvents(tags: string[], categories: string[]) {
       .limit(3);
 
     return results;
-  } catch {
+  } catch (e) {
+    await logError(getCloudflareDb(), {
+      message: "Error fetching related events for blog post",
+      error: e,
+      source: "app/blog/[slug]/page.tsx:getRelatedEvents",
+      context: { termCount: tags.length + categories.length },
+    });
     return [];
   }
 }
@@ -195,6 +207,13 @@ export default async function BlogPostPage({ params }: Props) {
     notFound();
   }
 
+  // OPE-1188 — event links in the body point at the slug that was current when
+  // the post was written; resolve each to its canonical /events/<series>/<year>
+  // so a reader (and a crawler) lands without a 301 hop. One batched lookup.
+  const eventHrefMap = Object.fromEntries(
+    await resolveEventHrefs(getCloudflareDb(), extractEventSlugs(post.body))
+  );
+
   // Coarse popularity signal for homepage ranking (src/lib/blog/homepage-ranking.ts).
   // Mirrors events/vendors detail pages: incremented inside the ISR-cached render,
   // so it counts regenerations, not raw views — a RELATIVE signal, fine for ranking.
@@ -221,6 +240,14 @@ export default async function BlogPostPage({ params }: Props) {
   ]);
   const hasLinkedEntities =
     linkedEntities.events.length + linkedEntities.vendors.length + linkedEntities.venues.length > 0;
+  // OPE-1188 follow-up — the sidebar cards ("Mentioned in this post", "Related
+  // Events") interpolated `/events/<slug>` too, so a series occurrence cost a
+  // 301 hop there after the body was fixed. Same resolver, one batched lookup.
+  const sidebarHrefMap = await resolveEventHrefs(getCloudflareDb(), [
+    ...linkedEntities.events.map((e) => e.slug),
+    ...relatedEvents.map((e) => e.slug),
+  ]);
+  const eventHref = (slug: string) => sidebarHrefMap.get(`/events/${slug}`) ?? `/events/${slug}`;
   const parsedRecentPosts = recentPosts.map((p) => ({
     ...p,
     authorName: formatAuthorName(p.authorName),
@@ -336,17 +363,12 @@ export default async function BlogPostPage({ params }: Props) {
               // content at edges; object-contain + blurred backdrop
               // preserves the whole image regardless of source AR.
               const heroWidths = [400, 640, 800, 1200, 1600, 1942];
-              const heroSrcSet = heroWidths
-                .map((w) =>
-                  cdnImage(post.featuredImageUrl!, {
-                    width: w,
-                    format: "auto",
-                    quality: 80,
-                    onerror: "redirect",
-                  })
-                )
-                .map((url, i) => `${url} ${heroWidths[i]}w`)
-                .join(", ");
+              const heroSrcSet = cdnSrcSet(post.featuredImageUrl, heroWidths, (w) => ({
+                width: w,
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              }));
               const heroSrc = cdnImage(post.featuredImageUrl, {
                 width: 1600,
                 format: "auto",
@@ -395,7 +417,7 @@ export default async function BlogPostPage({ params }: Props) {
               docs/bc2-ga4-custom-dimensions.md for the GA4 Admin
               registration step that surfaces source_slug/target_type/
               target_slug as custom dimensions. */}
-          <MarkdownContent content={post.body} sourceSlug={post.slug} />
+          <MarkdownContent content={post.body} sourceSlug={post.slug} eventHrefMap={eventHrefMap} />
 
           {/* Tags */}
           {tags.length > 0 && (
@@ -488,7 +510,7 @@ export default async function BlogPostPage({ params }: Props) {
                       {linkedEntities.events.map((e) => (
                         <li key={`e-${e.slug}`}>
                           <Link
-                            href={`/events/${e.slug}`}
+                            href={eventHref(e.slug)}
                             className="text-sm text-royal hover:text-navy hover:underline"
                           >
                             {e.name}
@@ -562,7 +584,7 @@ export default async function BlogPostPage({ params }: Props) {
             {relatedEvents.map((event) => (
               <Link
                 key={event.id}
-                href={`/events/${event.slug}`}
+                href={eventHref(event.slug)}
                 className="flex gap-4 p-4 bg-card rounded-lg border border-border hover:border-royal hover:shadow-sm transition-all group"
               >
                 {event.imageUrl && (

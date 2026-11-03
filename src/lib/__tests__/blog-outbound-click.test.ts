@@ -167,3 +167,31 @@ describe("classifyBlogOutboundLink", () => {
     });
   });
 });
+
+describe("OPE-1298 — the /for-vendors claim CTA", () => {
+  it("classifies /for-vendors → VENDOR_CLAIM, keeping the full href", () => {
+    expect(classifyBlogOutboundLink("/for-vendors")).toEqual({
+      targetType: "VENDOR_CLAIM",
+      targetSlug: "/for-vendors",
+    });
+    expect(classifyBlogOutboundLink("/for-vendors?utm_source=blog")).toEqual({
+      targetType: "VENDOR_CLAIM",
+      targetSlug: "/for-vendors?utm_source=blog",
+    });
+  });
+
+  it("an absolute same-site URL classifies the same way", () => {
+    expect(classifyBlogOutboundLink("https://meetmeatthefair.com/for-vendors")?.targetType).toBe(
+      "VENDOR_CLAIM"
+    );
+  });
+
+  it("does not over-match a lookalike path", () => {
+    expect(classifyBlogOutboundLink("/for-vendorsxyz")).toBeNull();
+  });
+
+  it("NO REGRESSION: the directory and detail CTAs classify exactly as before", () => {
+    expect(classifyBlogOutboundLink("/vendors?state=ME")?.targetType).toBe("VENDOR_DIRECTORY");
+    expect(classifyBlogOutboundLink("/vendors/acme")?.targetType).toBe("VENDOR");
+  });
+});

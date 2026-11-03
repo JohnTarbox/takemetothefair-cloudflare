@@ -16,7 +16,8 @@ import {
 import type { Db } from "../src/db.js";
 import type { HandlerCtx } from "../src/email-handlers/types.js";
 import type { InboundEmail } from "@takemetothefair/db-schema";
-import { createTestDb } from "./setup-db.js";
+import { createTestDb, CapturingMcpServer } from "./setup-db.js";
+import { registerResolveHeldPhotosTool } from "../src/tools/admin-resolve-held-photos.js";
 import { events, promoters, inboundEmails } from "../src/schema.js";
 import { eq } from "drizzle-orm";
 
@@ -367,5 +368,89 @@ describe("resolveHeldPhotoEmail — status reconciliation (OPE-551)", () => {
     await resolveHeldPhotoEmail(env, d, row(id), "evt-waterford");
 
     expect((await statusOf(d, id)).error).toContain("pattern too complex");
+  });
+});
+
+/**
+ * OPE-1079 side finding — `resolve_held_photos` does not flip `reply_kind`.
+ *
+ * After the 2026-09-18 rescue the four New Portland rows still read
+ * `photo-intake-unresolved`; only `resulting_event_id` and `photos_stored=1`
+ * changed. The question was whether a second run (or a later drain that
+ * selects by reply_kind) would re-attach and duplicate gallery rows — which
+ * nobody could test live, because gallery photos cannot be deleted over MCP.
+ *
+ * Proven here through the TOOL, end to end, on the row exactly as the first
+ * run leaves it in the DB (not a hand-built row): the re-run uploads nothing,
+ * even when it names a different event, and the reply→resolve lookup no
+ * longer sees the row as a held parent. No code change was needed: the guard
+ * is `alreadyAttached()` (photos_stored > 0) plus `findHeldPhotoParents`'
+ * `resulting_event_id IS NULL`; reply_kind is never the idempotency key.
+ */
+describe("resolve_held_photos re-run on an already-resolved email is a no-op (OPE-1079)", () => {
+  async function invokeTool(server: CapturingMcpServer, args: Record<string, unknown>) {
+    const res = (await server.invoke("resolve_held_photos", args)) as {
+      content: Array<{ text: string }>;
+      isError?: boolean;
+    };
+    expect(res.isError).toBeFalsy();
+    return JSON.parse(res.content[0].text) as {
+      totalAttached: number;
+      results: Array<{ id: string; skipped?: boolean; reason?: string; attached?: number }>;
+    };
+  }
+
+  it("second run attaches nothing, reply_kind unchanged, and the row is no longer a held parent", async () => {
+    const { db } = createTestDb();
+    const d = db as unknown as Db;
+    await seedEvent(d);
+    await d.insert(events).values({
+      id: "evt-other",
+      name: "Some Other Fair",
+      slug: "some-other-fair" as never,
+      promoterId: "p1",
+      status: "APPROVED",
+      startDate: new Date("2026-07-17T00:00:00Z"),
+      endDate: new Date("2026-07-19T00:00:00Z"),
+    } as never);
+    const id = await seedHeldParent(d, {
+      attachmentRefs: imageRefsJson([
+        "inbound-attachments/g1/a.jpg",
+        "inbound-attachments/g1/b.jpg",
+      ]),
+      attachmentCount: 2,
+    });
+    const { env, uploads } = mockAttachEnv();
+    const server = new CapturingMcpServer();
+    registerResolveHeldPhotosTool(server as never, d, { role: "ADMIN" } as never, env as never);
+
+    const first = await invokeTool(server, { email_ids: [id], event_id: "evt-waterford" });
+    expect(first.totalAttached).toBe(2);
+    expect(uploads).toHaveLength(2);
+
+    const [afterFirst] = await d.select().from(inboundEmails).where(eq(inboundEmails.id, id));
+    expect(afterFirst).toMatchObject({
+      replyKind: "photo-intake-unresolved", // the side finding — still not flipped
+      resultingEventId: "evt-waterford",
+      photosStored: 2,
+    });
+
+    const again = await invokeTool(server, { email_ids: [id], event_id: "evt-waterford" });
+    expect(again.totalAttached).toBe(0);
+    expect(again.results[0]).toMatchObject({ skipped: true, reason: "already-resolved" });
+
+    // Naming a DIFFERENT event must not move or duplicate the photos either.
+    const elsewhere = await invokeTool(server, { email_ids: [id], event_id: "evt-other" });
+    expect(elsewhere.totalAttached).toBe(0);
+    expect(elsewhere.results[0]).toMatchObject({ skipped: true, reason: "already-resolved" });
+
+    expect(uploads).toHaveLength(2); // nothing after the first run
+
+    const [afterAll] = await d.select().from(inboundEmails).where(eq(inboundEmails.id, id));
+    expect(afterAll.resultingEventId).toBe("evt-waterford");
+    expect(afterAll.photosStored).toBe(2);
+
+    // A later reply threading to it finds no held parent → no re-attach path.
+    expect(await findHeldPhotoParents(d, [MSG_A], SENDER)).toEqual([]);
   });
 });

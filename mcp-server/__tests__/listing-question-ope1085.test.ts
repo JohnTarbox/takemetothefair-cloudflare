@@ -190,7 +190,7 @@ describe("OPE-1085 — the handler branch", () => {
     id: "fbd5b1fc",
     subject: SUBJ,
     bodyTextExcerpt: COREY_FBD5B1FC,
-    fromAddress: "cjlutzen71@gmail.com",
+    fromAddress: "userviolet@gmail.com",
     receivedAt: 1758300006,
   };
 
@@ -225,7 +225,7 @@ describe("OPE-1085 — the handler branch", () => {
       id: "f4a99ffb",
       subject: "Incorrect Listing",
       bodyTextExcerpt: PARADISE_F4A99FFB,
-      fromAddress: "ewelford@paradisecityarts.com",
+      fromAddress: "reeddesk@paradisecityarts.com",
       receivedAt: 1755100000,
     };
     // Tier 2 does a SELECT; the mocked db has no select, so assert on the

@@ -9,22 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatDateRange } from "@/lib/utils";
 import { pluralize } from "@/lib/text";
+import type { EventVendorsPanelRow } from "@/lib/admin/event-vendors-panel-row";
 
-interface EventWithVendorCount {
-  id: string;
-  name: string;
-  slug: string;
-  startDate: Date | null;
-  endDate: Date | null;
-  venue: {
-    city: string | null;
-    state: string | null;
-  } | null;
-  vendorCount: number;
-}
-
+// OPE-1397: the server projects to exactly this shape (no full events rows).
 interface EventVendorsPanelProps {
-  events: EventWithVendorCount[];
+  events: EventVendorsPanelRow[];
 }
 
 export function EventVendorsPanel({ events }: EventVendorsPanelProps) {

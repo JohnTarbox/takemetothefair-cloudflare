@@ -22,13 +22,22 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
+import { annotateForReview } from "../enrichment/structured-data-check.js";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
-import type { AnyColumn } from "drizzle-orm";
 import { computePromoterEnrichment, isPlaceholderDescription } from "@takemetothefair/constants";
-import { adminActions, events, promoterEnrichmentCandidates, promoters } from "../schema.js";
+import {
+  adminActions,
+  events,
+  promoterAppliableGapSql,
+  promoterEnrichmentCandidates,
+  promoters,
+} from "../schema.js";
+import { upcomingEndPredicate } from "@takemetothefair/db-schema";
 import { jsonContent, logEnrichment, publicUrlFor, triggerIndexNow } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 
 interface Env {
   MAIN_APP?: { fetch: typeof fetch };
@@ -92,7 +101,7 @@ export function registerPromoterEnrichmentReviewTools(
   // on the right column; this gives the interactive lane the same guarantee.
   server.tool(
     "list_promoter_enrichment_queue",
-    "Select the next batch of promoters to research for enrichment — the ENTITY queue (promoters.enrichment_status), not the staged-candidate queue. Filters to promoters with a website that still need enrichment and have not been ATTEMPTED within `stale_after_days`. Default order: never-attempted first, then longest-neglected, then upcoming approved-event count. `order_by: \"gap\"` orders instead by APPLIABLE gap — how many of the five auto-appliable fields (description, contact_email, contact_phone, social_links, hero; NOT logo, which always stages) are empty — and each row reports `appliable_gap`. EXHAUSTED promoters (OPE-962: three consecutive attempts found nothing to stage) are never selected. Use this instead of hand-writing the selection: the recency filter keys on enrichment_attempted_at ('when did we last look'), NOT last_enriched_at ('when did we last write a field'), and the latter is NULL for most of the queue. Read-only. Admin only.",
+    "Select the next batch of promoters to research for enrichment — the ENTITY queue (promoters.enrichment_status), not the staged-candidate queue. Filters to promoters with a website that still need enrichment and have not been ATTEMPTED within `stale_after_days`. Default order: never-attempted first, then longest-neglected, then upcoming approved-event count. `order_by: \"gap\"` orders instead by APPLIABLE gap — how many of the five auto-appliable fields (description, contact_email, contact_phone, social_links, hero; NOT logo, which always stages) are empty — and each row reports `appliable_gap`. EXHAUSTED promoters (OPE-1279: two consecutive live attempts applied nothing and staged nothing new) are never selected. Use this instead of hand-writing the selection: the recency filter keys on enrichment_attempted_at ('when did we last look'), NOT last_enriched_at ('when did we last write a field'), and the latter is NULL for most of the queue. Read-only. Admin only.",
     {
       stale_after_days: z
         .number()
@@ -131,30 +140,12 @@ export function registerPromoterEnrichmentReviewTools(
         SELECT COUNT(*) FROM ${events}
          WHERE ${events.promoterId} = ${promoters.id}
            AND ${events.status} = 'APPROVED'
-           AND ${events.endDate} >= unixepoch()
+           AND ${upcomingEndPredicate(new Date())}
       )`;
 
-      // OPE-962 — the fields a render can actually APPLY. `logo` is excluded on
-      // purpose: its rule agreement is 66.7%, so it always stages for review and
-      // a logo-only gap is not work the drain can finish. The description test
-      // mirrors isPlaceholderDescription (@takemetothefair/constants): blank, or
-      // the auto-generated "…is an event organizer" boilerplate.
-      const empty = (col: AnyColumn) =>
-        sql`(CASE WHEN ${col} IS NULL OR TRIM(${col}) = '' THEN 1 ELSE 0 END)`;
-      const gap = sql<number>`(
-        (CASE WHEN ${promoters.description} IS NULL OR TRIM(${promoters.description}) = ''
-              OR LOWER(TRIM(${promoters.description})) IN ('event organizer', 'event organizer.')
-              OR (LENGTH(TRIM(${promoters.description})) < 60
-                  AND LOWER(${promoters.description}) LIKE '%is an event organizer%')
-         THEN 1 ELSE 0 END)
-        + ${empty(promoters.contactEmail)}
-        + ${empty(promoters.contactPhone)}
-        + (CASE WHEN ${promoters.socialLinks} IS NULL
-                  OR TRIM(${promoters.socialLinks}) IN ('', '[]', '{}')
-                  OR LOWER(TRIM(${promoters.socialLinks})) = 'null'
-           THEN 1 ELSE 0 END)
-        + ${empty(promoters.heroImageUrl)}
-      )`;
+      // OPE-962 — the fields a render can actually APPLY (logo excluded); the
+      // definition is shared with the coverage route (OPE-1279).
+      const gap = promoterAppliableGapSql();
 
       const rows = await db
         .select({
@@ -167,6 +158,7 @@ export function registerPromoterEnrichmentReviewTools(
           lastEnrichedAt: promoters.lastEnrichedAt,
           upcomingEvents: upcoming,
           appliableGap: gap,
+          emptyAttempts: promoters.enrichmentEmptyAttempts,
         })
         .from(promoters)
         .where(
@@ -220,6 +212,8 @@ export function registerPromoterEnrichmentReviewTools(
               last_enriched_at: r.lastEnrichedAt ? new Date(r.lastEnrichedAt).toISOString() : null,
               upcoming_approved_events: Number(r.upcomingEvents ?? 0),
               appliable_gap: Number(r.appliableGap ?? 0),
+              // OPE-1279 — consecutive empty live attempts; EXHAUSTED at the threshold.
+              empty_attempts: Number(r.emptyAttempts ?? 0),
             })),
           }),
         ],
@@ -230,7 +224,7 @@ export function registerPromoterEnrichmentReviewTools(
   // --- list_promoter_enrichment_candidates --------------------------------
   server.tool(
     "list_promoter_enrichment_candidates",
-    "List staged promoter pre-extraction proposals from promoter_enrichment_candidates for review. Filter by decision (default 'pending'), flag status, promoter, field, or minimum confidence. Each row carries the proposed field/value, the promoter's value at proposal time, source URL, extraction method, confidence, and any safety flags. Also returns a summary of totals by decision and a clean-vs-flagged breakdown of the pending queue. Read-only. Admin only.",
+    "List staged promoter pre-extraction proposals from promoter_enrichment_candidates for review. Filter by decision (default 'pending'), flag status, promoter, field, or minimum confidence. Each row carries the proposed field/value, the promoter's value at proposal time, source URL, extraction method, confidence, and any safety flags. Also returns a summary of totals by decision and a clean-vs-flagged breakdown of the pending queue. Read-only. Admin only. OPE-1269 — REVIEW EVIDENCE: a row with extraction_method=\"jsonld\" was read from the page's JSON-LD (<script type=application/ld+json>), which a browser does not render and text/markdown fetch tools strip, so checking the visible page is NOT evidence for or against it. Pass verify_structured_data: true to re-read each source_url (first 25 rows) and get structured_data_check: found | not_found | no_structured_data | fetch_failed | not_applicable. fetch_failed means we could not look — never treat it as not_found.",
     {
       decision: z
         .enum(["pending", "approved", "rejected", "auto_merged", "reverted", "all"])
@@ -253,6 +247,13 @@ export function registerPromoterEnrichmentReviewTools(
         .optional()
         .describe("Only proposals at or above this confidence (0–1)."),
       limit: z.number().int().min(1).max(200).optional().default(50),
+      verify_structured_data: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "OPE-1269 — re-fetch each row's source_url (first 25) and report whether the proposed value is in its JSON-LD. Use before deciding any extraction_method='jsonld' row."
+        ),
     },
     async (params) => {
       const decision = params.decision ?? "pending";
@@ -330,22 +331,26 @@ export function registerPromoterEnrichmentReviewTools(
               pending_clean: Number(pendingClean),
               pending_flagged: Number(pendingFlagged),
             },
-            candidates: rows.map((r) => ({
-              id: r.id,
-              promoter_id: r.promoterId,
-              company_name: r.companyName,
-              field: r.field,
-              current_value: r.currentValue,
-              proposed_value: r.proposedValue,
-              extraction_method: r.extractionMethod,
-              fetch_method: r.fetchMethod,
-              confidence: r.confidence,
-              flags: JSON.parse(r.flags) as string[],
-              source_url: r.sourceUrl,
-              decision: r.decision,
-              job_run_id: r.jobRunId,
-              created_at: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
-            })),
+            candidates: await annotateForReview(
+              rows.map((r) => ({
+                id: r.id,
+                promoter_id: r.promoterId,
+                company_name: r.companyName,
+                field: r.field,
+                current_value: r.currentValue,
+                proposed_value: r.proposedValue,
+                extraction_method: r.extractionMethod,
+                fetch_method: r.fetchMethod,
+                confidence: r.confidence,
+                flags: JSON.parse(r.flags) as string[],
+                source_url: r.sourceUrl,
+                decision: r.decision,
+                job_run_id: r.jobRunId,
+                created_at: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+              })),
+              params.verify_structured_data ?? false,
+              { userAgent: SCRAPER_USER_AGENT }
+            ),
           }),
         ],
       };
@@ -720,7 +725,14 @@ async function writeAudit(
       }),
       createdAt: new Date(),
     });
-  } catch {
+  } catch (error) {
     /* audit is non-critical — never fail the review on an audit-write hiccup */
+    await logAuditWriteFailure(db, {
+      source: "mcp:tool:review_promoter_enrichment_candidate",
+      action: "promoter.enrichment_review",
+      targetType: "promoter",
+      targetId: cand.promoterId,
+      error,
+    });
   }
 }

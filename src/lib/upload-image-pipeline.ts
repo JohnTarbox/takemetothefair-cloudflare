@@ -38,7 +38,13 @@ import { recordMutation } from "@/lib/audit/record-mutation";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { sha256Hex } from "@takemetothefair/db-schema";
 import {
+  identifyUnsupportedImageFormat,
+  unsupportedImageFormatForMime,
+  unsupportedImageMessage,
+} from "@takemetothefair/utils";
+import {
   stripExifFromJpeg,
+  readJpegOrientation,
   transformViaCloudflare,
   ImageTransformError,
   SOFT_SIZE_LIMIT_BYTES,
@@ -225,6 +231,9 @@ export interface Phase2bMeta {
   height: number | null;
   duration_ms: number | null;
   compression_ratio: number | null;
+  /** OPE-1338 — the EXIF Orientation applied as pixel rotation in Phase 2b
+   *  (null when none was needed or the source carried no tag). */
+  orientation_applied: number | null;
 }
 
 export interface PipelineResponseBody {
@@ -267,6 +276,54 @@ function extensionFor(contentType: string): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * OPE-1550 — the refusal for bytes that are no accepted format. Names the format
+ * when it is one we recognise (JPEG XL, AVIF, HEIC, TIFF, BMP) so the person
+ * uploading knows what to do; falls back to the generic text otherwise.
+ * Exported for the two legacy admin routes that now sniff too.
+ */
+export function describeRefusedImageBytes(bytes: Uint8Array): string {
+  const known = identifyUnsupportedImageFormat(bytes);
+  return known
+    ? unsupportedImageMessage(known)
+    : "File bytes don't match any supported image format";
+}
+
+/**
+ * The byte-level gate: the bytes must be an accepted format AND the format the
+ * caller declared. Returns the refusal text, or null when the bytes are fine.
+ *
+ * OPE-1550 — extracted so the two legacy admin routes
+ * (`/api/admin/events/[id]/upload-image`, `/api/admin/vendors/[id]/upload-logo`)
+ * run the same check. They used to trust the browser's `file.type` alone, so a
+ * JPEG XL file renamed `.jpg` (browsers type a file by its extension) was stored
+ * as `image/jpeg` — a 200 for an object that Cloudflare's transform can't read
+ * and most browsers can't draw. `upload_event_image` forwards a fetched URL's
+ * Content-Type to the first of those routes, so a mislabelled remote JXL took
+ * the same path.
+ */
+export function validateImageBytes(bytes: Uint8Array, declaredType: string): string | null {
+  const detected = detectMagicBytes(bytes);
+  if (!detected) return describeRefusedImageBytes(bytes);
+  const norm = (t: string) => (t === "image/jpg" ? "image/jpeg" : t);
+  if (norm(detected) !== norm(declaredType)) {
+    return `Content-type mismatch: declared "${declaredType}" but bytes look like "${detected}".`;
+  }
+  return null;
+}
+
+/**
+ * OPE-1550 — the refusal for a DECLARED type outside PIPELINE_ALLOWED_TYPES,
+ * shared by every route that checks the declared type before reading bytes.
+ * Names the format when it's a known image type ("image/jxl" → JPEG XL).
+ */
+export function describeRefusedDeclaredType(declaredType: string): string {
+  const known = unsupportedImageFormatForMime(declaredType);
+  return known
+    ? unsupportedImageMessage(known)
+    : `Unsupported content_type "${declaredType || "unknown"}". Allowed: jpg/png/webp/svg.`;
 }
 
 /** Magic-byte sniff. Returns the detected content type or null if the
@@ -325,23 +382,9 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
     args;
   let bytes = args.bytes;
 
-  const detected = detectMagicBytes(bytes);
-  if (!detected) {
-    return {
-      ok: false,
-      status: 400,
-      body: { error: "File bytes don't match any supported image format" },
-    };
-  }
-  const norm = (t: string) => (t === "image/jpg" ? "image/jpeg" : t);
-  if (norm(detected) !== norm(declaredType)) {
-    return {
-      ok: false,
-      status: 400,
-      body: {
-        error: `Content-type mismatch: declared "${declaredType}" but bytes look like "${detected}".`,
-      },
-    };
+  const byteError = validateImageBytes(bytes, declaredType);
+  if (byteError) {
+    return { ok: false, status: 400, body: { error: byteError } };
   }
 
   const ext = extensionFor(declaredType);
@@ -367,13 +410,20 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
   // Phase 2a EXIF strip (JPEG only)
   let bytesRemovedByExifStrip = 0;
   let exifSegmentsStripped = 0;
+  // OPE-1338 — the orientation the photo had BEFORE the strip removes it.
+  // Null unless the strip actually removed the EXIF, so Phase 2b only rotates
+  // explicitly when `cf.image` can no longer see the tag (otherwise it would
+  // auto-orient AND rotate: twice).
+  let orientationToApply: number | null = null;
   if (declaredType === "image/jpeg" || declaredType === "image/jpg") {
+    const sourceOrientation = readJpegOrientation(bytes);
     const stripResult = stripExifFromJpeg(bytes);
     const stripped = new Uint8Array(stripResult.bytes.length);
     stripped.set(stripResult.bytes);
     bytes = stripped;
     bytesRemovedByExifStrip = stripResult.bytesRemoved;
     exifSegmentsStripped = stripResult.segmentsStripped;
+    if (stripResult.segmentsStripped > 0) orientationToApply = sourceOrientation;
   }
 
   const { keyPrefix, fileKind } = resolved.target;
@@ -431,7 +481,9 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
   if (!skipPhase2bReason) {
     try {
       const originalUrl = `${CDN_BASE}/${originalKey}`;
-      const transform = await transformViaCloudflare(originalUrl);
+      const transform = await transformViaCloudflare(originalUrl, {
+        orientation: orientationToApply,
+      });
 
       await bucket.put(webpKey, transform.bytes, {
         httpMetadata: { contentType: "image/webp" },
@@ -695,6 +747,10 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
         height: phase2bHeight,
         duration_ms: phase2bDurationMs,
         compression_ratio: compressionRatio,
+        orientation_applied:
+          phase2bStatus === "applied" && orientationToApply !== null && orientationToApply !== 1
+            ? orientationToApply
+            : null,
       },
     },
   };

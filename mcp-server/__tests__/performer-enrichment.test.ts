@@ -265,12 +265,12 @@ describe("processPerformerEnrichmentJob", () => {
     const id = await insertPerformer(db, {
       name: "Half Filled",
       website: "https://halffilled.com",
-      contactEmail: "existing@halffilled.com",
+      contactEmail: "fir1desk@halffilled.com",
     });
     const html = jsonLd({
       "@type": "Person",
       telephone: "(207) 555-2222",
-      email: "scraped@halffilled.com",
+      email: "ginkgo1desk@halffilled.com",
     });
     restore = mockSite(html);
 

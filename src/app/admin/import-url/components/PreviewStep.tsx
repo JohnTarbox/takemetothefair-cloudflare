@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ExtractedEventData, ExtractedEvent, VenueOption } from "@/lib/url-import/types";
 import type { Venue } from "../use-import-wizard";
 import { formatDateForDisplay, formatTimeForDisplay } from "../utils";
+import { safeHref } from "@takemetothefair/utils";
 
 interface PreviewStepProps {
   eventsToImport: ExtractedEvent[];
@@ -233,7 +234,7 @@ function SourceLink({ url }: { url: string }) {
     <p className="text-xs text-muted-foreground">
       Source:{" "}
       <a
-        href={url}
+        href={safeHref(url)}
         target="_blank"
         rel="noopener noreferrer"
         className="text-royal hover:underline"

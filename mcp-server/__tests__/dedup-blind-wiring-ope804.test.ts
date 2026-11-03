@@ -58,7 +58,8 @@ const ENV: HandlerEnv = {
 
 const EXTRACTED = {
   url: "",
-  event: { name: "CraftFest Cotuit 2026", startDate: undefined },
+  // OPE-1253 — dated: the email lane refuses a dateless create.
+  event: { name: "CraftFest Cotuit 2026", startDate: "2026-10-10" },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 } as any;
 

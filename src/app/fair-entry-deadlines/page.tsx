@@ -9,19 +9,17 @@
  * by no reader. An event page can tell you WHERE to go; only an index can tell
  * you whether you are IN TIME.
  *
- * ⚠️ Gated behind ENTRY_DEADLINES_INDEX, default OFF. New customer-facing
- * surface — OPE-738 STOP-gates it on John's approval, so the route 404s until
- * the flag is flipped in wrangler.toml. See src/lib/flags.ts.
+ * Public since 2026-09-02 (John approved publishing, OPE-738). The
+ * ENTRY_DEADLINES_INDEX gate that 404'd this route while OFF was pinned "true"
+ * and retired in OPE-1394; taking the page down is now a code change.
  */
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
 import { CalendarClock } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { EntryDeadlineBrowser } from "@/components/applications/EntryDeadlineBrowser";
 import { listEntryDeadlines } from "@/lib/applications/list-entry-deadlines";
-import { isEntryDeadlinesIndexEnabled } from "@/lib/flags";
 
 const TITLE = "Fair Entry Deadlines | Meet Me at the Fair";
 const DESCRIPTION =
@@ -69,8 +67,6 @@ async function getRows() {
 }
 
 export default async function FairEntryDeadlinesPage() {
-  if (!isEntryDeadlinesIndexEnabled()) notFound();
-
   const rows = await getRows();
 
   return (

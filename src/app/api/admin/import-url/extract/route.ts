@@ -3,12 +3,19 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareAi } from "@/lib/cloudflare";
-import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
+import {
+  extractMultipleEvents,
+  INTERACTIVE_AI_EXTRACT_TIMEOUT_MS,
+  UNATTENDED_AI_EXTRACT_TIMEOUT_MS,
+  UNATTENDED_EXTRACT_CALLERS,
+} from "@/lib/url-import/ai-extractor";
 import { tryExtractFromJsonLd } from "@/lib/url-import/jsonld-to-event";
 import type { PageMetadata, ExtractedEvent } from "@/lib/url-import/types";
 import { expandCadence } from "@/lib/url-import/cadence-expander";
 import { composeDeterministicExtract } from "@/lib/url-import/deterministic/compose";
 import { logError } from "@/lib/logger";
+import { AI_EXTRACTION_OK_MESSAGE } from "@/lib/url-import/extract-telemetry";
+import { withVisitorFacts } from "@/lib/url-import/visitor-facts";
 
 const extractRequestSchema = z.object({
   content: z.string().min(1, "Content is required"),
@@ -44,11 +51,15 @@ const extractRequestSchema = z.object({
   // template ("Every other Saturday beginning 4/11/2026"). Capped at
   // 8KB before reaching the prompt — same budget as content.
   emailBody: z.string().max(8000).optional(),
+  // OPE-1316 — who asked (the MCP Worker names itself: email-workflow,
+  // holdout-sampler, photo-intake). Recorded on the timing rows below; an
+  // admin session with no caller is recorded as "admin".
+  caller: z.string().max(40).optional(),
 });
 
 // Accept admin session OR X-Internal-Key (MCP Worker email handler), via
 // withAuthorized — constant-time, replacing a prior timing-unsafe `===`.
-export const POST = withAuthorized(async ({ request, db }) => {
+export const POST = withAuthorized(async ({ request, db, userId }) => {
   try {
     const body = await request.json();
     const validation = extractRequestSchema.safeParse(body);
@@ -61,6 +72,8 @@ export const POST = withAuthorized(async ({ request, db }) => {
     }
 
     const { content, url, metadata, emailBody } = validation.data;
+    // OPE-1316 — an internal-key caller names itself; a session is the admin import.
+    const caller = validation.data.caller ?? (userId ? "admin" : "internal-unnamed");
 
     // JSON-LD priority extraction: if the fetched page emitted complete-
     // enough schema.org Event node(s), skip the AI call entirely and return
@@ -106,7 +119,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
       if (eventsFromJsonLd.length > 0) {
         return NextResponse.json({
           success: true,
-          events: eventsFromJsonLd,
+          events: withVisitorFacts(eventsFromJsonLd, content),
           confidence: confidenceMap,
           count: eventsFromJsonLd.length,
           extractionMethod: "json-ld",
@@ -142,7 +155,12 @@ export const POST = withAuthorized(async ({ request, db }) => {
         ai,
         content,
         (metadata || {}) as PageMetadata,
-        emailBody
+        emailBody,
+        // OPE-1316 Ask 2 — 90 s for the callers nobody is waiting on (email
+        // workflow, free-text, holdout sampler); 20 s for the admin import.
+        UNATTENDED_EXTRACT_CALLERS.has(caller)
+          ? UNATTENDED_AI_EXTRACT_TIMEOUT_MS
+          : INTERACTIVE_AI_EXTRACT_TIMEOUT_MS
       ));
     } catch (aiError) {
       aiFailure = aiError instanceof Error ? aiError.message : String(aiError);
@@ -161,6 +179,29 @@ export const POST = withAuthorized(async ({ request, db }) => {
           contentLength: content.length,
           hasMetadataTitle: Boolean((metadata as PageMetadata | undefined)?.title),
           url,
+          caller,
+        },
+        request,
+      });
+    }
+
+    // OPE-1316 Ask 1 — time the SUCCESSES too. Until now only failures logged
+    // `elapsedMs`, so the 20 s limit could only be judged against the calls
+    // that broke it: no latency distribution existed to size a new one against
+    // (OPE-1089's lesson — decide a timeout on the tail, which needs the body).
+    // `info`, one row per AI answer; `eventsReturned` beside `elapsedMs` is what
+    // showed the slow pages were the ones writing many sub-events.
+    if (!aiFailure) {
+      await logError(db, {
+        level: "info",
+        message: AI_EXTRACTION_OK_MESSAGE,
+        source: "api/admin/import-url/extract",
+        context: {
+          elapsedMs: Date.now() - aiStartedAt,
+          contentLength: content.length,
+          eventsReturned: events.length,
+          url,
+          caller,
         },
         request,
       });
@@ -233,7 +274,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
       if (salvaged.events.length > 0) {
         return NextResponse.json({
           success: true,
-          events: salvaged.events,
+          events: withVisitorFacts(salvaged.events, content),
           confidence: salvaged.confidence,
           count: salvaged.events.length,
           extractionMethod: "thin",
@@ -262,6 +303,9 @@ export const POST = withAuthorized(async ({ request, db }) => {
           error:
             "Could not extract event data from this page — the extractor timed out and no " +
             "usable title or date could be recovered. Retrying is unlikely to help; please add the event manually.",
+          // OPE-1249 — machine-readable cause for the email pipeline, which
+          // otherwise records a post-fetch AI timeout as a fetch failure.
+          aiFailure,
         },
         { status: 200 }
       );
@@ -269,7 +313,9 @@ export const POST = withAuthorized(async ({ request, db }) => {
 
     return NextResponse.json({
       success: true,
-      events,
+      // OPE-1484 — verbatim parking / accessibility / pet sentences for the
+      // enrich-on-match stager. Proposal input only; nothing here is written.
+      events: withVisitorFacts(events, content),
       confidence,
       count: events.length,
       extractionMethod: "ai",

@@ -46,43 +46,16 @@ import {
   isSweepActionable,
   type SweepVerdict,
 } from "@/lib/goodwill/domain-takeover";
-import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
+import { probe } from "@/lib/goodwill/url-probe";
 import { logError } from "@/lib/logger";
 
 const DEFAULT_CHUNK = 50;
 const MAX_CHUNK = 100;
-const FETCH_TIMEOUT_MS = 10_000;
 /** "Recent": a wrong link keeps being shared for a while after the event. */
 const LOOKBACK_DAYS = 30;
 /** "Upcoming": far enough to catch a wrong link before the season it matters. */
 const LOOKAHEAD_DAYS = 120;
 const SOURCE_FIELD = "events.source_url@source-agreement";
-
-interface Probe {
-  reachedOrigin: boolean;
-  status: number | null;
-  html: string | null;
-  finalUrl: string | null;
-}
-
-async function probe(url: string): Promise<Probe> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": SCRAPER_USER_AGENT },
-      signal: controller.signal,
-      redirect: "follow",
-    });
-    const body = await res.text().catch(() => "");
-    const html = (res.ok ? body : body.slice(0, 300_000)) || null;
-    return { reachedOrigin: true, status: res.status, html, finalUrl: res.url || null };
-  } catch {
-    return { reachedOrigin: false, status: null, html: null, finalUrl: null };
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 interface Candidate {
   url: string;
@@ -204,7 +177,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             entityName: first.name,
             aliases: [...cand.events.map((e) => e.name), ...cand.events.map((e) => e.promoterName)],
             requestedUrl: cand.url,
-            finalUrl: p.finalUrl,
+            finalUrl: p.finalUrl ?? null,
           })
         : null;
 
@@ -271,14 +244,18 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (verdict === "domain_takeover") result.domain_takeover += 1;
       if (isSweepActionable(verdict, isActionable)) result.actionable += 1;
       if (verdict === "domain_takeover") {
-        result.takeovers.push({ url: cand.url, finalUrl: p.finalUrl, signals: takeover!.signals });
+        result.takeovers.push({
+          url: cand.url,
+          finalUrl: p.finalUrl ?? null,
+          signals: takeover!.signals,
+        });
         await logError(db, {
           level: "warn",
           message: `event source_url looks taken over: ${cand.url}`,
           source: "url-health:domain-takeover",
           context: {
             url: cand.url,
-            finalUrl: p.finalUrl,
+            finalUrl: p.finalUrl ?? null,
             events: cand.events.map((e) => e.slug),
             signals: takeover!.signals,
             detail: takeover!.detail,

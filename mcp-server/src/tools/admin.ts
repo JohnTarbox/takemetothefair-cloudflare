@@ -10,14 +10,15 @@ import {
   promoters,
   users,
   eventDays,
-  vendorSlugHistory,
-  eventSlugHistory,
-  promoterSlugHistory,
-  venueSlugHistory,
+  eventInternalNotes,
   adminActions,
   eventDataCitations,
   eventDuplicateDismissals,
   containsCI,
+  raiseEventReviewFlag,
+  clearEventReviewFlag,
+  unknownHoursCountSql,
+  shouldRaiseHoursFlag,
 } from "../schema.js";
 import {
   formatDateRange,
@@ -25,8 +26,6 @@ import {
   jsonContent,
   createSlug,
   appendSlugSegment,
-  unsafeSlug,
-  type Slug,
   parseLocation,
   sanitizeProse,
   decodeHtmlEntities,
@@ -38,8 +37,13 @@ import {
 import {
   citationSupersedeScope,
   dayHoursUnknown,
+  repointInboundEmailsToKeeper,
   rosterResearchTargetWhere,
+  planSlugRename,
+  SlugCollisionExhaustedError,
+  type SlugRenamePlan,
 } from "@takemetothefair/db-schema";
+import { accessNotesProseReason } from "../access-notes-guard.js";
 import {
   fetchImageWithFallback,
   findPromoterDuplicates,
@@ -48,6 +52,11 @@ import {
   readInboundAttachmentAsResponse,
   checkImageUrl,
 } from "@takemetothefair/utils";
+import {
+  guardedFetch,
+  isGuardedFetchError,
+  type GuardedResponse,
+} from "@takemetothefair/site-fetch";
 
 /**
  * OPE-1112 — `logo_url` must point at an image, on every writer.
@@ -74,8 +83,12 @@ import {
   rejectReasonRequired,
 } from "@takemetothefair/constants";
 import { emitExtractionFault } from "../faults/extraction-emitter.js";
-import { recordSlugRename } from "../slug-history.js";
-import { geocodeNewVenueViaMainApp } from "../venues/geocode-new.js";
+import {
+  geocodeNewVenueViaMainApp,
+  recordNewVenueGeocodeRefusal,
+  type NewVenueGeocodeVerdict,
+} from "../venues/geocode-new.js";
+import { flagVenuePinIfFarFromTown } from "../venues/pin-sanity.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import {
   EVENT_STATUS_ENUM,
@@ -107,10 +120,13 @@ import {
   reclassifySourceOnEdit,
   assertIngestionMethod,
   nextGateFlags,
-  buildPlaceholderEmail,
+  freePlaceholderEmail,
   validateVenueLifecycle,
   checkFormerVenue,
   gateDatesConfirmed,
+  organizerHostsFrom,
+  changedScraperSyncedFields,
+  shouldDisableScraperSync,
 } from "@takemetothefair/utils";
 import {
   eventOutboxStatements,
@@ -152,6 +168,14 @@ import {
   writeEventPetCitation,
   writeVenuePetCitation,
 } from "./pet-friendly.js";
+import {
+  ACCESSIBILITY_NOTES_PARAM,
+  PARKING_NOTES_PARAM,
+  VISITOR_NOTE_EVIDENCE_PARAM,
+  VISITOR_NOTE_FIELDS,
+  visitorNoteParamError,
+  writeEventVisitorNoteCitation,
+} from "./visitor-notes.js";
 import { registerEnrichmentReviewTools } from "./admin-enrichment-review.js";
 import { registerPromoterEnrichmentReviewTools } from "./admin-promoter-enrichment-review.js";
 import { registerPerformerEnrichmentReviewTools } from "./admin-performer-enrichment-review.js";
@@ -162,6 +186,7 @@ import { registerBingSitemapResubmitTool } from "./admin-bing-sitemap-resubmit.j
 import { registerReplyToInboundEmailTool } from "./reply-to-inbound-email.js";
 import { registerGscMilestoneIngestTool } from "./admin-gsc-milestone-ingest.js";
 import { registerPerformerTools } from "./admin-performers.js";
+import { registerEventReviewFlagTools } from "./admin-review-flags.js";
 import { registerPerformerDiscoveryTools } from "./admin-performer-discovery.js";
 import { registerPerformerClaimTools } from "./performer-claim-approval.js";
 import { registerPerformerHealthTool } from "./admin-performer-health.js";
@@ -170,6 +195,9 @@ import { registerAdminClaimApprovalTool } from "./admin-claim-approval.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
 import { registerSeriesBackfillTools } from "./admin-series-backfill.js";
 import { registerCreateOccurrenceTool } from "./admin-create-occurrence.js";
+import { registerSeriesEditionModeTool } from "./admin-series-edition-mode.js";
+import { registerUpdateSeriesTool } from "./admin-update-series.js";
+import { registerPromoterContactTools } from "./admin-promoter-contacts.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
 import { registerRequestImageUploadSlotTool } from "./request-image-upload-slot.js";
@@ -209,6 +237,10 @@ import { registerLogVendorOutreachTool } from "./admin-log-vendor-outreach.js";
 import { registerClaimCorroborateTool } from "./admin-claim-corroborate.js";
 import { registerPhotoProposalTools } from "./admin-photo-proposals.js";
 import { registerHeroProposalTools } from "./admin-hero-proposals.js";
+import { eventDaysOutsideRange } from "../events/event-days-range.js";
+import { registerExhibitorProposalTools } from "./admin-exhibitor-proposals.js";
+import { registerGembaTools } from "./admin-gemba.js";
+import { registerListSubscriptionTools } from "./admin-list-subscriptions.js";
 import { registerCategoryCleanupTool } from "./admin-category-cleanup.js";
 import { registerPropagateHoursTool } from "./admin-propagate-hours.js";
 import {
@@ -292,6 +324,26 @@ function petFriendlyParamError(
 }
 
 /**
+ * OPE-1256 — "the organizer publishes no hours for this day" is a claim about a
+ * source too: refuse it alongside any time, or without notes saying where.
+ */
+function hoursUnpublishedError(args: {
+  hoursUnpublished: boolean;
+  openTime: string | null;
+  closeTime: string | null;
+  internalNotes: string | null;
+}): string | null {
+  if (!args.hoursUnpublished) return null;
+  if (args.openTime || args.closeTime) {
+    return "hours_unpublished=true contradicts an open_time/close_time — clear them (pass null) when the organizer publishes no hours.";
+  }
+  if (!args.internalNotes?.trim()) {
+    return "hours_unpublished=true needs internal_notes saying where you looked (the organizer page and what it says), so the finding can be checked later.";
+  }
+  return null;
+}
+
+/**
  * OPE-1069 — "the organizer publishes no closing time" is a claim about a
  * source, so it needs one: refuse it alongside a close time (a contradiction)
  * or without notes saying where the writer looked.
@@ -309,6 +361,33 @@ function closeTimeUnpublishedError(args: {
     return "close_time_unpublished=true needs internal_notes saying where you looked (the organizer page and what it says), so the finding can be checked later.";
   }
   return null;
+}
+
+/**
+ * OPE-767 — the hours axis of `flagged_for_review`, both directions, as one
+ * reason. Raises `missing_hours` while any day lacks hours; clears ONLY that
+ * reason once none do (every other active reason keeps the flag up). Same rule
+ * as the app side (`src/lib/events/hours-review-flag.ts`), from the same
+ * shared `unknownHoursCountSql` / `shouldRaiseHoursFlag`.
+ */
+async function syncHoursReason(db: Db, eventId: string): Promise<"raised" | "cleared" | "none"> {
+  const [counts] = await db
+    .select({ daysChecked: sql<number>`count(*)`, unknownDays: unknownHoursCountSql() })
+    .from(eventDays)
+    .where(eq(eventDays.eventId, eventId));
+  const observed = {
+    daysChecked: Number(counts?.daysChecked ?? 0),
+    unknownDays: Number(counts?.unknownDays ?? 0),
+  };
+  if (shouldRaiseHoursFlag(observed)) {
+    await raiseEventReviewFlag(db, eventId, "missing_hours");
+    return "raised";
+  }
+  if (observed.daysChecked > 0 && observed.unknownDays === 0) {
+    await clearEventReviewFlag(db, eventId, "missing_hours", "hours-axis");
+    return "cleared";
+  }
+  return "none";
 }
 
 export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
@@ -352,6 +431,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   });
   registerGscMilestoneIngestTool(server, auth, env);
   registerPerformerTools(server, db, auth);
+  registerEventReviewFlagTools(server, db, auth);
   // OPE-116 (2/3) — discovery harvest (event_schema_org) + dedup sweep.
   registerPerformerDiscoveryTools(server, db, auth);
   // OPE-116 (3/3) — performer claim approval + enhanced-profile activation.
@@ -395,6 +475,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   // EH3 P3.1 — create_occurrence (new dated edition under a series).
   registerCreateOccurrenceTool(server, auth, env);
+
+  // OPE-1327 — set_series_edition_mode (flag + edition keys, atomically; dry-run default).
+  registerSeriesEditionModeTool(server, db, auth);
+  // OPE-1541 — update_series (fields + slug with its history row, atomically; dry-run default).
+  registerUpdateSeriesTool(server, db, auth);
+
+  // OPE-1330 — promoter contacts: list / upsert / set status (admin only, audit-logged).
+  registerPromoterContactTools(server, db, auth);
 
   // Read-only recommendations feed — same data as /admin/analytics ▸
   // Recommendations. Adds get_recommendations, get_recommendation_rule.
@@ -479,6 +567,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerPhotoProposalTools(server, db, auth);
   // OPE-227 — the photo flywheel's hero proposals: list + approve/reject.
   registerHeroProposalTools(server, db, auth, env);
+  // OPE-1139 — staged self-announced exhibitors: list + approve/reject.
+  registerExhibitorProposalTools(server, db, auth);
+  // OPE-328 — gemba@ queue: agents post observations to the Linear anchor.
+  registerGembaTools(server, db, auth);
+  // OPE-1265 — promoter mailing-list subscription registry.
+  registerListSubscriptionTools(server, db, auth);
   // OPE-1058 — the operator handle on the one-time category rewrite.
   registerCategoryCleanupTool(server, auth, env);
   // OPE-1078 — carry a sourced day's hours to a recurring market's siblings.
@@ -996,6 +1090,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         createdAt: new Date(),
       });
 
+      // OPE-1352 — the inbound email that produced this row now names the
+      // keeper, not the rejected duplicate. Shared with the app's flag-queue
+      // reject and mergeEvents; it writes its own admin_actions row per inbound.
+      const inboundRepoint = rejectedAsDuplicateOf
+        ? await repointInboundEmailsToKeeper(db, {
+            loserId: event.id,
+            keeperId: rejectedAsDuplicateOf,
+            reason: "rejected_as_duplicate_of",
+            actorUserId: auth.userId,
+          })
+        : null;
+
       // IndexNow: distinguish first-publish from the TENTATIVE→APPROVED
       // upgrade — both transitions matter to the analytics tab. A bare
       // public-bucket guard misses TENTATIVE→APPROVED because both are public.
@@ -1051,6 +1157,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           jsonContent({
             updated: true,
             event: { id: event.id, name: event.name, previousStatus, newStatus: params.status },
+            ...(inboundRepoint && inboundRepoint.repointed.length > 0
+              ? {
+                  inbound_emails_repointed: {
+                    to_event_id: inboundRepoint.keeperId,
+                    inbound_email_ids: inboundRepoint.repointed,
+                  },
+                }
+              : {}),
             // OPE-1114 — approved with a reviewer note still in the public copy.
             ...(approvalMarker
               ? {
@@ -1135,6 +1249,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe("Indoor/outdoor designation"),
       pet_friendly: PET_FRIENDLY_PARAM,
       pet_friendly_evidence: PET_FRIENDLY_EVIDENCE_PARAM,
+      parking_notes: PARKING_NOTES_PARAM,
+      parking_notes_evidence: VISITOR_NOTE_EVIDENCE_PARAM,
+      accessibility_notes: ACCESSIBILITY_NOTES_PARAM,
+      accessibility_notes_evidence: VISITOR_NOTE_EVIDENCE_PARAM,
       estimated_attendance: z.number().int().optional().describe("Expected attendance count"),
       event_scale: z
         .enum(["SMALL", "MEDIUM", "LARGE", "MAJOR"])
@@ -1169,7 +1287,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .transform(sanitizeProse)
         .optional()
         .describe(
-          "Free-text nuance the audience+access pair can't hold (e.g. 'Members + public for the Saturday plant sale 9am-1pm')."
+          "PUBLIC visitor copy, rendered verbatim on the event page for EVERY event (OPE-1151): admission by category, accessibility, who may attend (e.g. 'Seniors 62+ $10; first floor is fully accessible'). Do NOT put sweep findings, venue checks, source citations or ticket refs here — use internal_notes. Prose-shaped values are refused."
+        ),
+      internal_notes: z
+        .string()
+        .max(4000)
+        .optional()
+        .describe(
+          "OPE-1151 — PRIVATE operator/analyst notes for this event (sweep findings, venue checks, 'verify …', source citations). Never rendered. REPLACES the stored note; read the current one from get_event_details_admin and append to it yourself. Empty string clears it."
         ),
       registration_required: z
         .boolean()
@@ -1281,6 +1406,37 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
+      // OPE-1481 — the same rule for the organizer's parking / accessibility
+      // notes: no verbatim citation, no value. Refused before any write.
+      for (const field of VISITOR_NOTE_FIELDS) {
+        const refusal = visitorNoteParamError(
+          field,
+          params[field],
+          params[`${field}_evidence` as const]
+        );
+        if (refusal) {
+          return {
+            content: [jsonContent({ error: `${field}_evidence_required`, message: refusal })],
+            isError: true,
+          };
+        }
+      }
+
+      // OPE-1151 — access_notes now renders publicly on every event. Refuse
+      // the shapes analyst prose took in it BEFORE any row is written.
+      const accessNotesProse = accessNotesProseReason(params.access_notes);
+      if (accessNotesProse) {
+        return {
+          content: [
+            jsonContent({
+              error: "access_notes_looks_internal",
+              message: `access_notes is published verbatim on the event page, and this value looks like ${accessNotesProse}. Put it in internal_notes (private), and keep access_notes to what a visitor needs.`,
+            }),
+          ],
+          isError: true,
+        };
+      }
+
       // Load URL domain classifications once so the ticket_url / application_url
       // transforms below can gate against known-aggregator domains.
       // See mcp-server/src/url-classification.ts.
@@ -1324,6 +1480,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "indoor_outdoor", column: "indoorOutdoor" },
         // OPE-1061 — evidence is checked above and cited below.
         { param: "pet_friendly", column: "petFriendly" },
+        // OPE-1481 — evidence is checked above and cited below.
+        { param: "parking_notes", column: "parkingNotes" },
+        { param: "accessibility_notes", column: "accessibilityNotes" },
         { param: "estimated_attendance", column: "estimatedAttendance" },
         { param: "event_scale", column: "eventScale" },
         {
@@ -1440,7 +1599,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
-      if (requestedFields.length === 0 && venueRequestedFields.length === 0) {
+      if (
+        requestedFields.length === 0 &&
+        venueRequestedFields.length === 0 &&
+        params.internal_notes === undefined
+      ) {
         return {
           content: [
             {
@@ -1527,6 +1690,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // its closure (the drizzle/0333 trigger enforces it too; this makes the
       // refusal readable). Inside the closure's uncertainty window: flag.
       let formerVenueWarning: string | undefined;
+      let raiseFormerVenueFlag = false;
       if (
         updates.venueId !== undefined ||
         updates.startDate !== undefined ||
@@ -1551,7 +1715,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           };
         }
         if (verdict.kind === "flag") {
-          updates.flaggedForReview = 1;
+          raiseFormerVenueFlag = true;
           formerVenueWarning = verdict.reason;
         }
       }
@@ -1579,8 +1743,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
               eq(eventDataCitations.state, "active")
             )
           );
+        // OPE-1231 — the event's own promoter's site counts as the organizer.
+        const promoterSite = await db
+          .select({ website: promoters.website })
+          .from(events)
+          .innerJoin(promoters, eq(promoters.id, events.promoterId))
+          .where(eq(events.id, params.event_id))
+          .limit(1);
         const gate = gateDatesConfirmed({
           requested: true,
+          organizerHosts: organizerHostsFrom(promoterSite.map((p) => p.website)),
           citations: existingCitations,
           callSource:
             params.citation && updates.startDate !== undefined
@@ -1601,10 +1773,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // Mirrors the tri-case slug resolution below, so a name edit that lands
       // on the SAME slug is not blocked — only a write that would actually
       // move the URL is.
+      // OPE-1390 — a name-derived slug follows a name CHANGE only; re-sending
+      // the current name must not walk a suffixed slug (`…-1` → `…-2`).
       const prospectiveSlug =
         params.slug !== undefined
           ? createSlug(params.slug)
-          : params.name !== undefined
+          : params.name !== undefined && params.name !== event.name
             ? createSlug(params.name)
             : null;
       const tombstoneReason = mergedTombstoneBlockReason(event, {
@@ -1633,52 +1807,31 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
-      // Resolve final slug. Tri-case mirror of update_vendor (admin.ts ~L2344):
+      // Resolve final slug. Tri-case mirror of update_vendor:
       //   - explicit `slug` param wins; auto-regen from name is suppressed
-      //   - name alone → derive from name
+      //   - name alone (and actually changed) → derive from name
       //   - neither → no slug change
-      // Always run through createSlug for the canonical Slug brand (PR #120
-      // three-layer defense), then collision-check with the appendSlugSegment
-      // suffix loop. Bail with a clear error after 20 collisions instead of
-      // looping forever.
-      const explicitSlug = params.slug;
-      const slugSeed =
-        explicitSlug !== undefined
-          ? createSlug(explicitSlug)
-          : params.name !== undefined
-            ? createSlug(params.name)
-            : null;
-      if (slugSeed && slugSeed !== event.slug) {
-        let finalSlug: Slug = slugSeed;
-        let suffix = 0;
-        while (true) {
-          const candidate: Slug = suffix > 0 ? appendSlugSegment(slugSeed, suffix) : slugSeed;
-          const existing = await db
-            .select({ id: events.id })
-            .from(events)
-            .where(eq(events.slug, candidate))
-            .limit(1);
-          if (existing.length === 0 || existing[0].id === event.id) {
-            finalSlug = candidate;
-            break;
-          }
-          suffix++;
-          if (suffix > 20) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "Too many slug collisions. Try a more unique slug.",
-                },
-              ],
-              isError: true,
-            };
-          }
-        }
-        if (finalSlug !== event.slug) {
-          updates.slug = finalSlug;
-        }
+      // OPE-1390 (DUP3) — the shared resolver (OPE-1373) replaces this tool's
+      // own collision loop, and its event_slug_history INSERT now commits in
+      // the SAME batch as the events UPDATE below. It used to be a separate
+      // insert after the update, inside a try/catch that only logged — so a
+      // failed insert left a renamed event whose old URL 404'd.
+      let slugRename: SlugRenamePlan | null = null;
+      try {
+        slugRename = await planSlugRename(db, "event", {
+          entityId: event.id,
+          currentSlug: event.slug,
+          seed: prospectiveSlug,
+          changedBy: auth.userId,
+        });
+      } catch (err) {
+        if (!(err instanceof SlugCollisionExhaustedError)) throw err;
+        return {
+          content: [{ type: "text", text: "Too many slug collisions. Try a more unique slug." }],
+          isError: true,
+        };
       }
+      if (slugRename) updates.slug = slugRename.nextSlug;
 
       // Always set updatedAt
       updates.updatedAt = new Date();
@@ -1982,6 +2135,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         updates.publicEndDate = publicEndDate;
       }
 
+      // OPE-1393 (CLB5) — a hand edit to a field the scraper sync writes turns
+      // sync off, or the next sync silently reverts it. An explicit
+      // `sync_enabled` in the same call always wins.
+      const syncLockFields = changedScraperSyncedFields(event, updates);
+      const syncDisabledByEdit = shouldDisableScraperSync({
+        currentSyncEnabled: event.syncEnabled,
+        explicitSyncEnabled: params.sync_enabled,
+        changedFields: syncLockFields,
+      });
+      if (syncDisabledByEdit) updates.syncEnabled = false;
+
       // Execute event update (skip if only venue fields provided)
       if (requestedFields.length > 0) {
         // SYN1 — outbox row + version bump in the SAME batch as the UPDATE so a
@@ -2000,16 +2164,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             ? (updates.venueId as string | null)
             : event.venueId) as string | null,
         });
-        if (syndicationStmts.length > 0) {
+        // OPE-1390 — the slug-history INSERT rides in this batch too.
+        const eventWriteStmts = [
+          ...(slugRename ? [slugRename.historyInsert] : []),
+          ...syndicationStmts,
+        ];
+        if (eventWriteStmts.length > 0) {
           await db.batch([
             db.update(events).set(updates).where(eq(events.id, event.id)),
-            ...syndicationStmts,
+            ...eventWriteStmts,
           ] as unknown as Parameters<typeof db.batch>[0]);
-          await enqueueSyndicationChange(env, { entityType: "event", entityId: event.id });
         } else {
           await db.update(events).set(updates).where(eq(events.id, event.id));
         }
+        if (syndicationStmts.length > 0) {
+          await enqueueSyndicationChange(env, { entityType: "event", entityId: event.id });
+        }
         await recomputeEventCompleteness(db, event.id);
+        // OPE-767 — after the write lands, recorded as a reason.
+        if (raiseFormerVenueFlag) await raiseEventReviewFlag(db, event.id, "former_venue");
 
         // OPE-472 rework — LATE series attach, when a venue arrives after the
         // event was created.
@@ -2086,7 +2259,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             actorUserId: auth.userId,
             targetType: "event",
             targetId: event.id,
-            payloadJson: JSON.stringify({ fields: requestedFields, source: "mcp" }),
+            payloadJson: JSON.stringify({
+              fields: requestedFields,
+              source: "mcp",
+              ...(syncDisabledByEdit ? { sync_disabled_by_edit: syncLockFields } : {}),
+            }),
             createdAt: new Date(),
           });
         } catch (err) {
@@ -2096,27 +2273,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           );
         }
 
-        // Record slug rename in event_slug_history so the main app's
-        // middleware 301-redirects the old URL. Mirrors the admin route at
-        // src/app/api/admin/events/[id]/route.ts (drizzle/0061). Non-fatal
-        // on insert error — the rename has already succeeded above.
-        if (typeof updates.slug === "string" && updates.slug !== event.slug) {
-          const renamedFrom = event.slug;
-          const renamedTo = unsafeSlug(updates.slug);
-          try {
-            await db.insert(eventSlugHistory).values({
-              eventId: event.id,
-              oldSlug: renamedFrom,
-              newSlug: renamedTo,
-              changedAt: new Date(),
-              changedBy: auth.userId,
-            });
-          } catch (err) {
-            console.error(
-              `[MCP/update_event] failed to write event_slug_history row for ${event.id} (${event.slug} → ${updates.slug}):`,
-              err
-            );
-          }
+        // The event_slug_history row for a rename was written in the same
+        // batch as the UPDATE above (OPE-1390), so by here it has committed.
+        if (slugRename) {
+          const renamedFrom = slugRename.previousSlug;
+          const renamedTo = slugRename.nextSlug;
 
           // K43 / A3.3 — slug-change auto-repair. This Worker can't import the
           // main app's content-links lib, so fire the repair endpoint over
@@ -2338,50 +2499,38 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           }
         }
 
-        // If venue_name changed, regenerate slug
+        // If venue_name changed, regenerate slug.
+        // OPE-1373 — shared resolver (the old loop here `break`-ed out after 20
+        // collisions and wrote the still-taken candidate anyway); its history
+        // INSERT commits in the same batch as the venue UPDATE below.
+        let venueSlugRename: SlugRenamePlan | null = null;
         if (venueUpdates.name !== undefined) {
-          const baseSlug = createSlug(venueUpdates.name as string);
-          let finalSlug = baseSlug;
-          let suffix = 0;
-          while (true) {
-            const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
-            const existing = await db
-              .select({ id: venues.id })
-              .from(venues)
-              .where(eq(venues.slug, candidate))
-              .limit(1);
-            if (existing.length === 0 || existing[0].id === venue.id) {
-              finalSlug = candidate;
-              break;
-            }
-            suffix++;
-            if (suffix > 20) break;
+          venueSlugRename = await planSlugRename(db, "venue", {
+            entityId: venue.id,
+            currentSlug: venue.slug,
+            seed: createSlug(venueUpdates.name as string),
+            changedBy: auth.userId,
+          });
+          if (venueSlugRename) {
+            venueUpdates.slug = venueSlugRename.nextSlug;
+            venuePreviousValues.slug = venue.slug;
+            venueNewValues.slug = venueSlugRename.nextSlug;
           }
-          venueUpdates.slug = finalSlug;
-          venuePreviousValues.slug = venue.slug;
-          venueNewValues.slug = finalSlug;
         }
 
         venueUpdates.updatedAt = new Date();
-        await db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id));
         // OPE-495 — the venue can be renamed as a SIDE EFFECT of update_event,
         // which the comment below already calls the least expected way a
         // published venue changes. It owes a redirect exactly like a direct
         // update_venue does, and is the easiest of the three to forget.
-        await recordSlugRename({
-          label: "update_event:venue",
-          entityId: venue.id,
-          previousSlug: venue.slug,
-          nextSlug: venueUpdates.slug as string | undefined,
-          write: (oldSlug, newSlug) =>
-            db.insert(venueSlugHistory).values({
-              venueId: venue.id,
-              oldSlug,
-              newSlug,
-              changedAt: new Date(),
-              changedBy: auth.userId,
-            }),
-        });
+        if (venueSlugRename) {
+          await db.batch([
+            db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id)),
+            venueSlugRename.historyInsert,
+          ]);
+        } else {
+          await db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id));
+        }
         // OPE-433 scope 5 — a venue edited as a SIDE EFFECT of an event update.
         // This is the least expected way a published venue changes, so it is
         // the one most worth naming.
@@ -2404,10 +2553,39 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
+      // OPE-1151 — private notes live in their own table (never on the events
+      // row, which public surfaces serialize whole). Replace semantics; an
+      // empty string clears.
+      let internalNotesUpdated: { previous: string | null; next: string | null } | null = null;
+      if (params.internal_notes !== undefined) {
+        const [prior] = await db
+          .select({ notes: eventInternalNotes.notes })
+          .from(eventInternalNotes)
+          .where(eq(eventInternalNotes.eventId, event.id))
+          .limit(1);
+        const next = params.internal_notes.trim();
+        if (next) {
+          const now = new Date();
+          await db
+            .insert(eventInternalNotes)
+            .values({ eventId: event.id, notes: next, createdAt: now, updatedAt: now })
+            .onConflictDoUpdate({
+              target: eventInternalNotes.eventId,
+              set: { notes: next, updatedAt: now },
+            });
+        } else {
+          await db.delete(eventInternalNotes).where(eq(eventInternalNotes.eventId, event.id));
+        }
+        internalNotesUpdated = { previous: prior?.notes ?? null, next: next || null };
+      }
+
       const result: Record<string, unknown> = {
         updated: true,
         event: { id: event.id, name: updates.name ?? event.name },
       };
+      if (internalNotesUpdated) {
+        result.internalNotesUpdated = internalNotesUpdated;
+      }
       if (requestedFields.length > 0) {
         result.fieldsUpdated = requestedFields;
         result.previousValues = previousValues;
@@ -2415,6 +2593,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (venueUpdateResult) {
         result.venueUpdated = venueUpdateResult;
+      }
+      if (syncDisabledByEdit) {
+        result.syncDisabled = {
+          fields: syncLockFields,
+          note: "Scraper sync turned off so the next sync cannot revert this edit. Pass sync_enabled: true to turn it back on.",
+        };
       }
       if (params.pet_friendly !== undefined) {
         // OPE-1061 — the evidence citation, after the column write (same order
@@ -2426,6 +2610,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           evidence: params.pet_friendly_evidence,
           userId: auth.userId ?? null,
         });
+      }
+      // OPE-1481 — the notes' evidence, after the column write (never a
+      // citation without the value it supports).
+      for (const field of VISITOR_NOTE_FIELDS) {
+        const value = params[field];
+        if (value === undefined) continue;
+        const citationId = await writeEventVisitorNoteCitation(db, {
+          eventId: event.id,
+          field,
+          value,
+          evidence: params[`${field}_evidence` as const],
+          userId: auth.userId ?? null,
+        });
+        result[`${field}CitationId`] = citationId;
       }
       if (citationsInserted.length > 0) {
         result.citationsInserted = citationsInserted;
@@ -2480,6 +2678,37 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           `A citation was supplied but NO citation row was recorded for: ${citationIgnoredFor.join(", ")}. ` +
           `These fields are not citation-tracked by update_event (or were cleared). ` +
           `Record their provenance with create_event_citation if it matters — do not report them as cited.`;
+      }
+      // OPE-1219 — a date move that strands event_days outside the new range
+      // (Peabody: header Oct 4, day list Sep 27). Warn, never block: whether the
+      // days move with the dates is a separate call (update_event_day).
+      if (params.start_date !== undefined || params.end_date !== undefined) {
+        try {
+          const [row] = await db
+            .select({ startDate: events.startDate, endDate: events.endDate })
+            .from(events)
+            .where(eq(events.id, params.event_id))
+            .limit(1);
+          const dayRows = await db
+            .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
+            .from(eventDays)
+            .where(eq(eventDays.eventId, params.event_id));
+          const stranded = eventDaysOutsideRange(
+            dayRows,
+            row?.startDate ?? null,
+            row?.endDate ?? null
+          );
+          if (stranded.length > 0) {
+            warnings.event_days_outside_dates = stranded;
+            warnings.event_days_outside_dates_message =
+              `This date change left ${stranded.length} event_days row(s) outside the event's dates ` +
+              `(${stranded.join(", ")}). The page will list days the event no longer runs. Move or ` +
+              `delete them with update_event_day / delete_event_day. If this was a postponement, ` +
+              `record it with update_event_lifecycle RESCHEDULED and previous_start_date.`;
+          }
+        } catch {
+          // Advisory only: a failed read must not turn a successful update into an error.
+        }
       }
       if (Object.keys(warnings).length > 0) {
         result.warnings = warnings;
@@ -2562,23 +2791,24 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           isError: true,
         };
       }
-      let imageResponse: Response;
+      const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
+      let imageResponse: Response | GuardedResponse;
       try {
-        const fetched = await fetchImageWithFallback(async (userAgent) => {
-          if (ownedKey && env.VENDOR_ASSETS) {
-            return readInboundAttachmentAsResponse(env.VENDOR_ASSETS, ownedKey);
-          }
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 15_000);
-          try {
-            return await fetch(params.image_url, {
+        const fetched = await fetchImageWithFallback<Response | GuardedResponse>(
+          async (userAgent) => {
+            if (ownedKey && env.VENDOR_ASSETS) {
+              return readInboundAttachmentAsResponse(env.VENDOR_ASSETS, ownedKey);
+            }
+            // OPE-1370 (SSRF6) — guardedFetch: the SSRF guard on every redirect
+            // hop (there was none), the body stopped at the 5 MB cap instead of
+            // buffered whole, and the 15s timeout covering the body too.
+            return guardedFetch(params.image_url, {
+              maxBytes: MAX_SOURCE_BYTES,
+              timeoutMs: 15_000,
               headers: imageFetchHeaders(userAgent),
-              signal: controller.signal,
             });
-          } finally {
-            clearTimeout(timeout);
           }
-        });
+        );
         if (!fetched.ok) {
           return {
             content: [
@@ -2604,10 +2834,34 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const contentType = imageResponse.headers.get("Content-Type") ?? "application/octet-stream";
-      const bytes = await imageResponse.arrayBuffer();
+      let bytes: ArrayBuffer;
+      try {
+        bytes = await imageResponse.arrayBuffer();
+      } catch (err) {
+        if (isGuardedFetchError(err) && err.code === "too_large") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Source image is over 5 MB — max 5 MB. Resize or pick a smaller variant.",
+              },
+            ],
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to fetch source image: ${err instanceof Error ? err.message : "unknown error"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
       // Mirror the main-app endpoint's 5MB cap so we surface a clearer error
       // here rather than letting the multipart POST fail with HTTP 400.
-      if (bytes.byteLength > 5 * 1024 * 1024) {
+      if (bytes.byteLength > MAX_SOURCE_BYTES) {
         return {
           content: [
             {
@@ -3222,7 +3476,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // OPE-835 — capped to RFC 5321's 64-octet local part. 12 of 7,105
       // vendor slugs cross it (longest local part 102), and the address
       // Cloudflare rejects is generated here.
-      const placeholderEmail = buildPlaceholderEmail("pending+", finalSlug);
+      // OPE-1223 — a FREE address: a tombstone's owner row can still hold the
+      // one this slug would give (the slug was renamed on merge, the email not).
+      const placeholderEmail = await freePlaceholderEmail("pending+", finalSlug, async (email) => {
+        const taken = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.email, email))
+          .limit(1);
+        return taken.length > 0;
+      });
       const userId = crypto.randomUUID();
 
       await db.insert(users).values({
@@ -3870,33 +4133,26 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         return { content: [jsonContent(lifecycle.error)], isError: true };
       }
 
-      // If name changed, regenerate slug with collision check
+      // If name changed, regenerate slug with collision check.
+      // OPE-1373 — shared resolver; its history INSERT commits in the same batch
+      // as the UPDATE below, so the rename and its 301 land together.
+      let slugRename: SlugRenamePlan | null = null;
       if (params.name !== undefined) {
-        const baseSlug = createSlug(params.name);
-        let finalSlug = baseSlug;
-        let suffix = 0;
-        while (true) {
-          const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
-          const existing = await db
-            .select({ id: venues.id })
-            .from(venues)
-            .where(eq(venues.slug, candidate))
-            .limit(1);
-          if (existing.length === 0 || existing[0].id === venue.id) {
-            finalSlug = candidate;
-            break;
-          }
-          suffix++;
-          if (suffix > 20) {
-            return {
-              content: [
-                { type: "text", text: "Too many slug collisions. Try a more unique name." },
-              ],
-              isError: true,
-            };
-          }
+        try {
+          slugRename = await planSlugRename(db, "venue", {
+            entityId: venue.id,
+            currentSlug: venue.slug,
+            seed: createSlug(params.name),
+            changedBy: auth.userId,
+          });
+        } catch (err) {
+          if (!(err instanceof SlugCollisionExhaustedError)) throw err;
+          return {
+            content: [{ type: "text", text: "Too many slug collisions. Try a more unique name." }],
+            isError: true,
+          };
         }
-        updates.slug = finalSlug;
+        if (slugRename) updates.slug = slugRename.nextSlug;
       }
 
       updates.updatedAt = new Date();
@@ -3931,29 +4187,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (venueSyndicationStmts.length > 0) {
         await db.batch([
           db.update(venues).set(updates).where(eq(venues.id, venue.id)),
+          ...(slugRename ? [slugRename.historyInsert] : []),
           ...venueSyndicationStmts,
         ] as unknown as Parameters<typeof db.batch>[0]);
         await enqueueSyndicationChange(env, { entityType: "venue", entityId: venue.id });
+      } else if (slugRename) {
+        // OPE-495/OPE-1373 — the venue_slug_history row commits WITH the rename.
+        await db.batch([
+          db.update(venues).set(updates).where(eq(venues.id, venue.id)),
+          slugRename.historyInsert,
+        ]);
       } else {
         await db.update(venues).set(updates).where(eq(venues.id, venue.id));
       }
-
-      // OPE-495 — same defect as update_promoter, same fix. venue_slug_history
-      // also held zero MCP-written rows before this.
-      await recordSlugRename({
-        label: "update_venue",
-        entityId: venue.id,
-        previousSlug: venue.slug,
-        nextSlug: updates.slug as string | undefined,
-        write: (oldSlug, newSlug) =>
-          db.insert(venueSlugHistory).values({
-            venueId: venue.id,
-            oldSlug,
-            newSlug,
-            changedAt: new Date(),
-            changedBy: auth.userId,
-          }),
-      });
 
       // OPE-433 scope 5 — `update_venue` over MCP. An agent holding the admin
       // token can change a published venue, and before this there was nothing
@@ -3971,6 +4217,27 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         after: updates,
         note: "mcp update_venue",
       });
+
+      // OPE-1079 — a pin far from its own town silently breaks GPS photo
+      // matching. Flag (admin_actions + warning), never block: this is also
+      // the path a human uses to CORRECT a pin.
+      let pinWarning: string | null = null;
+      if (params.latitude !== undefined || params.longitude !== undefined) {
+        const lat = (updates.latitude as number | null | undefined) ?? venue.latitude;
+        const lng = (updates.longitude as number | null | undefined) ?? venue.longitude;
+        if (typeof lat === "number" && typeof lng === "number") {
+          const flagged = await flagVenuePinIfFarFromTown(db, {
+            venueId: venue.id,
+            city: (updates.city as string | undefined) ?? venue.city,
+            state: (updates.state as string | undefined) ?? venue.state,
+            lat,
+            lng,
+            source: "mcp:update_venue",
+            actorUserId: auth.userId ?? null,
+          });
+          pinWarning = flagged?.warning ?? null;
+        }
+      }
 
       // IndexNow: distinguish first-publish (INACTIVE→ACTIVE) from material
       // edits on already-ACTIVE venues so analytics can attribute pings.
@@ -4036,6 +4303,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             ...(petFriendlyCitationId !== undefined
               ? { pet_friendly_citation_id: petFriendlyCitationId }
               : {}),
+            ...(pinWarning ? { pin_warning: pinWarning } : {}),
           }),
         ],
       };
@@ -4280,8 +4548,41 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // OPE-1180 — never for a FORMER venue: with no real address the geocoder
       // can only offer a city centroid, which is exactly the fabricated
       // "Montpelier Fairgrounds" pin. A FORMER site is placed by hand or not at all.
-      if (!isFormer && (params.latitude == null || params.longitude == null)) {
-        await geocodeNewVenueViaMainApp(env, venueId);
+      //
+      // OPE-408 (10-04) — the verdict is RETURNED and a refusal RECORDED. It used
+      // to be discarded: `dd7c30cb` was refused, the session never saw it, and
+      // an event created there 20s later lost seven on-site photos the next day.
+      let geocode: NewVenueGeocodeVerdict;
+      if (isFormer) {
+        geocode = {
+          pinned: params.latitude != null && params.longitude != null,
+          status: "skipped-former",
+          reason: "FORMER venues are never auto-geocoded (OPE-1180)",
+          candidate: null,
+        };
+      } else if (params.latitude != null && params.longitude != null) {
+        geocode = { pinned: true, status: "caller-supplied", reason: null, candidate: null };
+        // OPE-1079 — a caller-supplied pin gets the same town sanity check
+        // the geocoder's does. Flag only.
+        const flagged = await flagVenuePinIfFarFromTown(db, {
+          venueId,
+          city: params.city,
+          state: params.state,
+          lat: params.latitude,
+          lng: params.longitude,
+          source: "mcp:create_venue",
+          actorUserId: auth.userId ?? null,
+        });
+        if (flagged) geocode.pinWarning = flagged.warning;
+      } else {
+        geocode = await geocodeNewVenueViaMainApp(env, venueId);
+        await recordNewVenueGeocodeRefusal(
+          db,
+          venueId,
+          geocode,
+          "mcp:create_venue",
+          auth.userId ?? null
+        );
       }
 
       return {
@@ -4293,6 +4594,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             name: params.name,
             location: `${params.city}, ${params.state.toUpperCase()}`,
             status: params.status,
+            geocode,
+            ...(geocode.pinWarning ? { pin_warning: geocode.pinWarning } : {}),
+            ...(geocode.pinned || isFormer
+              ? {}
+              : {
+                  warning:
+                    `Venue saved WITHOUT a map pin (${geocode.status}: ${geocode.reason}). ` +
+                    "Photo intake matches by GPS, so on-site photos cannot attach to events here until it is pinned. " +
+                    (geocode.candidate
+                      ? `Google's candidate: "${geocode.candidate}" — if that is this venue, run venues_geocode with force: true.`
+                      : "Correct the address, or set latitude/longitude with update_venue."),
+                }),
           }),
         ],
       };
@@ -4826,34 +5139,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             ? createSlug(params.business_name)
             : null;
 
-      if (slugSeed && slugSeed !== vendor.slug) {
-        let finalSlug = slugSeed;
-        let suffix = 0;
-        while (true) {
-          const candidate = suffix > 0 ? appendSlugSegment(slugSeed, suffix) : slugSeed;
-          const existing = await db
-            .select({ id: vendors.id })
-            .from(vendors)
-            .where(eq(vendors.slug, candidate))
-            .limit(1);
-          if (existing.length === 0 || existing[0].id === vendor.id) {
-            finalSlug = candidate;
-            break;
-          }
-          suffix++;
-          if (suffix > 20) {
-            return {
-              content: [
-                { type: "text", text: "Too many slug collisions. Try a more unique name." },
-              ],
-              isError: true,
-            };
-          }
-        }
-        if (finalSlug !== vendor.slug) {
-          updates.slug = finalSlug;
-        }
+      // OPE-1373 — shared resolver; history INSERT batched with the UPDATE.
+      let slugRename: SlugRenamePlan | null = null;
+      try {
+        slugRename = await planSlugRename(db, "vendor", {
+          entityId: vendor.id,
+          currentSlug: vendor.slug,
+          seed: slugSeed,
+          changedBy: auth.userId,
+        });
+      } catch (err) {
+        if (!(err instanceof SlugCollisionExhaustedError)) throw err;
+        return {
+          content: [{ type: "text", text: "Too many slug collisions. Try a more unique name." }],
+          isError: true,
+        };
       }
+      if (slugRename) updates.slug = slugRename.nextSlug;
 
       updates.updatedAt = new Date();
 
@@ -4871,7 +5173,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
-      await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
+      // Slug change: the old→new vendor_slug_history row (301s on /vendors/[slug])
+      // commits in the same batch as the rename.
+      if (slugRename) {
+        await db.batch([
+          db.update(vendors).set(updates).where(eq(vendors.id, vendor.id)),
+          slugRename.historyInsert,
+        ]);
+      } else {
+        await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
+      }
 
       await recomputeVendorCompleteness(db, vendor.id);
 
@@ -4884,17 +5195,6 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         fieldsChanged: Object.keys(updates).filter((k) => k !== "updatedAt"),
         notes: "MCP update_vendor",
       });
-
-      // Slug change: record the old→new mapping for 301 redirects on /vendors/[slug].
-      if (updates.slug && updates.slug !== vendor.slug) {
-        await db.insert(vendorSlugHistory).values({
-          vendorId: vendor.id,
-          oldSlug: vendor.slug,
-          newSlug: unsafeSlug(updates.slug as string),
-          changedAt: new Date(),
-          changedBy: auth.userId,
-        });
-      }
 
       // IndexNow: ping when fields rendered on the public vendor page change.
       // The material list now includes Enhanced Profile fields (round-3) since
@@ -5007,39 +5307,40 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       // Custom slug handling — same shape as update_vendor's slug logic.
-      let slugChanged: { from: Slug; to: Slug } | null = null;
+      // OPE-1373 — shared resolver; history INSERT batched with the UPDATE.
+      let slugRename: SlugRenamePlan | null = null;
       if (params.custom_slug && params.custom_slug !== vendor.slug) {
-        const slugSeed = createSlug(params.custom_slug);
-        let finalSlug = slugSeed;
-        let suffix = 0;
-        while (true) {
-          const candidate = suffix > 0 ? appendSlugSegment(slugSeed, suffix) : slugSeed;
-          const existing = await db
-            .select({ id: vendors.id })
-            .from(vendors)
-            .where(eq(vendors.slug, candidate))
-            .limit(1);
-          if (existing.length === 0 || existing[0].id === vendor.id) {
-            finalSlug = candidate;
-            break;
-          }
-          suffix++;
-          if (suffix > 20) {
-            return {
-              content: [
-                { type: "text", text: "Too many slug collisions on the requested custom slug." },
-              ],
-              isError: true,
-            };
-          }
+        try {
+          slugRename = await planSlugRename(db, "vendor", {
+            entityId: vendor.id,
+            currentSlug: vendor.slug,
+            seed: createSlug(params.custom_slug),
+            changedBy: auth.userId,
+            changedAt: now,
+          });
+        } catch (err) {
+          if (!(err instanceof SlugCollisionExhaustedError)) throw err;
+          return {
+            content: [
+              { type: "text", text: "Too many slug collisions on the requested custom slug." },
+            ],
+            isError: true,
+          };
         }
-        if (finalSlug !== vendor.slug) {
-          updates.slug = finalSlug;
-          slugChanged = { from: vendor.slug, to: finalSlug };
-        }
+        if (slugRename) updates.slug = slugRename.nextSlug;
       }
+      const slugChanged = slugRename
+        ? { from: slugRename.previousSlug, to: slugRename.nextSlug }
+        : null;
 
-      await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
+      if (slugRename) {
+        await db.batch([
+          db.update(vendors).set(updates).where(eq(vendors.id, vendor.id)),
+          slugRename.historyInsert,
+        ]);
+      } else {
+        await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
+      }
 
       await recomputeVendorCompleteness(db, vendor.id);
 
@@ -5052,16 +5353,6 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         fieldsChanged: Object.keys(updates).filter((k) => k !== "updatedAt"),
         notes: "MCP update_vendor_status",
       });
-
-      if (slugChanged) {
-        await db.insert(vendorSlugHistory).values({
-          vendorId: vendor.id,
-          oldSlug: slugChanged.from,
-          newSlug: slugChanged.to,
-          changedAt: now,
-          changedBy: auth.userId,
-        });
-      }
 
       // Audit log row — captures the lifecycle transition for later analysis.
       await db.insert(adminActions).values({
@@ -5244,7 +5535,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // Create placeholder user (promoters table has userId FK)
       // OPE-835 — 19 of 747 promoter slugs produce a local part over 64
       // octets (longest 80), which Cloudflare rejects outright.
-      const placeholderEmail = buildPlaceholderEmail("pending+promoter-", finalSlug);
+      // OPE-1223 — a FREE address: a tombstone's owner row can still hold the
+      // one this slug would give (the slug was renamed on merge, the email not).
+      const placeholderEmail = await freePlaceholderEmail(
+        "pending+promoter-",
+        finalSlug,
+        async (email) => {
+          const taken = await db
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.email, email))
+            .limit(1);
+          return taken.length > 0;
+        }
+      );
       const userId = crypto.randomUUID();
 
       await db.insert(users).values({
@@ -5435,6 +5739,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .url()
         .optional()
         .describe("OPE-979: the page that shows the status, e.g. the closure notice."),
+      // OPE-1279 — the human re-queue path for EXHAUSTED.
+      requeue_enrichment: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1279: true moves this promoter back into the enrichment queue — an EXHAUSTED (or BLOCKED/IN_PROGRESS) promoter becomes NEEDS_ENRICHMENT unless its coverage is complete (ENRICHED) or it has no website (NO_SOURCE); resets the empty-attempt counter and clears enrichment_attempted_at so the next drain/nightly run picks it first. Use when the site changed, an extractor rule changed (e.g. OPE-249 hardening), or a human wants it re-tried. A website change does this automatically. May be the only field in the call."
+        ),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -5512,6 +5823,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
+      // OPE-1279 — a re-queue is a request on its own; it writes no fieldMap column.
+      const requeue = params.requeue_enrichment === true;
+      if (requeue) requestedFields.push("requeue_enrichment");
+
       if (requestedFields.length === 0) {
         return {
           content: [
@@ -5544,33 +5859,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (params.operating_status !== undefined) updates.operatingStatusVerifiedAt = new Date();
 
-      // If name changed, regenerate slug
+      // If name changed, regenerate slug.
+      // OPE-1373 — shared resolver; history INSERT batched with the UPDATE.
+      let slugRename: SlugRenamePlan | null = null;
       if (params.name !== undefined) {
-        const baseSlug = createSlug(params.name);
-        let finalSlug = baseSlug;
-        let suffix = 0;
-        while (true) {
-          const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
-          const existing = await db
-            .select({ id: promoters.id })
-            .from(promoters)
-            .where(eq(promoters.slug, candidate))
-            .limit(1);
-          if (existing.length === 0 || existing[0].id === promoter.id) {
-            finalSlug = candidate;
-            break;
-          }
-          suffix++;
-          if (suffix > 20) {
-            return {
-              content: [
-                { type: "text", text: "Too many slug collisions. Try a more unique name." },
-              ],
-              isError: true,
-            };
-          }
+        try {
+          slugRename = await planSlugRename(db, "promoter", {
+            entityId: promoter.id,
+            currentSlug: promoter.slug,
+            seed: createSlug(params.name),
+            changedBy: auth.userId,
+          });
+        } catch (err) {
+          if (!(err instanceof SlugCollisionExhaustedError)) throw err;
+          return {
+            content: [{ type: "text", text: "Too many slug collisions. Try a more unique name." }],
+            isError: true,
+          };
         }
-        updates.slug = finalSlug;
+        if (slugRename) updates.slug = slugRename.nextSlug;
       }
 
       updates.updatedAt = new Date();
@@ -5613,33 +5920,32 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         },
         // OPE-962 — a NEW website re-opens a promoter that exhausted the old one:
         // EXHAUSTED is a fact about a site, not about the organizer.
-        websiteChanged ? null : promoter.enrichmentStatus
+        // OPE-1279 — an explicit re-queue drops the sticky state the same way.
+        websiteChanged || requeue ? null : promoter.enrichmentStatus
       );
       updates.enrichmentStatus = enrichment.status;
       updates.enrichmentCoverage = enrichment.coverageJson;
-      if (websiteChanged) updates.enrichmentZeroYieldStreak = 0;
-
-      await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
+      if (websiteChanged || requeue) {
+        updates.enrichmentZeroYieldStreak = 0;
+        updates.enrichmentEmptyAttempts = 0;
+      }
+      if (requeue) {
+        updates.enrichmentAttemptedAt = null;
+        updates.enrichmentBlockedReason = null;
+      }
 
       // OPE-495 — record the rename so /promoters/<old-slug> keeps 301-ing.
-      // `update_promoter` regenerates the slug from `name` through the same
-      // collision loop update_event uses, but never wrote the history row, so
-      // every MCP rename silently orphaned a live URL. Verified in prod: all 10
-      // promoter_slug_history rows were admin-UI writes; not one came from MCP.
-      await recordSlugRename({
-        label: "update_promoter",
-        entityId: promoter.id,
-        previousSlug: promoter.slug,
-        nextSlug: updates.slug as string | undefined,
-        write: (oldSlug, newSlug) =>
-          db.insert(promoterSlugHistory).values({
-            promoterId: promoter.id,
-            oldSlug,
-            newSlug,
-            changedAt: new Date(),
-            changedBy: auth.userId,
-          }),
-      });
+      // OPE-1373 — the promoter_slug_history row now commits in the SAME batch
+      // as the rename (was a fail-soft insert after it), so a rename can no
+      // longer land without its redirect.
+      if (slugRename) {
+        await db.batch([
+          db.update(promoters).set(updates).where(eq(promoters.id, promoter.id)),
+          slugRename.historyInsert,
+        ]);
+      } else {
+        await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
+      }
 
       const newValues: Record<string, unknown> = {};
       for (const field of requestedFields) {
@@ -5652,8 +5958,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // IndexNow: ping the canonical promoter URL on update. Include the
       // prior slug too if the name change generated a new slug, so engines
       // can crawl-and-redirect from the old URL. Mirrors the main-app PATCH
-      // /api/admin/promoters/[id] hook.
-      if (env) {
+      // /api/admin/promoters/[id] hook. A re-queue alone changes nothing public.
+      const requeueOnly = requestedFields.length === 1 && requeue;
+      if (env && !requeueOnly) {
         const newSlug = (updates.slug as string | undefined) ?? promoter.slug;
         const indexNowUrls: string[] = [publicUrlFor("promoters", newSlug)];
         if (updates.slug && updates.slug !== promoter.slug) {
@@ -5677,6 +5984,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             fieldsUpdated: requestedFields,
             previousValues,
             newValues,
+            // OPE-1279 — so a re-queue (or a website change) shows where it landed.
+            enrichmentStatus: updates.enrichmentStatus,
           }),
         ],
       };
@@ -5760,6 +6069,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .optional()
         .describe(
           "OPE-1069: true when you LOOKED at the organizer's own site and it publishes no closing time. Leave close_time empty; the day then does NOT raise flagged_for_review and renders 'no published closing time'. Requires internal_notes saying where you looked. Omit (not false) when you simply have not found it — that is the research gap the flag exists for."
+        ),
+      hours_unpublished: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1256: true when you LOOKED at the organizer's own site and it publishes NO hours for this day at all. Leave open_time/close_time empty; the day then stops counting as 'hours unknown' and the missing-hours review reason can clear. Requires internal_notes saying where you looked. Omit (not false) when you simply have not found them."
         ),
       internal_notes: z
         .string()
@@ -5847,7 +6162,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         return { content: [{ type: "text", text: unpublishedRefusal }], isError: true };
       }
       // OPE-1069 — the SHARED per-row rule, not an inline copy of it.
-      const hoursUnknown = dayHoursUnknown({ openTime, closeTime, closeTimeUnpublished });
+      const hoursUnpublished = params.hours_unpublished === true;
+      const hoursRefusal = hoursUnpublishedError({
+        hoursUnpublished,
+        openTime,
+        closeTime,
+        internalNotes: params.internal_notes ?? null,
+      });
+      if (hoursRefusal) {
+        return { content: [{ type: "text", text: hoursRefusal }], isError: true };
+      }
+      const hoursUnknown = dayHoursUnknown({
+        openTime,
+        closeTime,
+        closeTimeUnpublished,
+        hoursUnpublished,
+      });
 
       if (existingDay.length > 0) {
         // Idempotent no-op: the day already exists. Editing it is
@@ -5899,6 +6229,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           notes: params.notes ?? null,
           internalNotes: params.internal_notes ?? null,
           closeTimeUnpublished: closeTimeUnpublished ? 1 : 0,
+          hoursUnpublished: hoursUnpublished ? 1 : 0,
           vendorOnly: vendorOnlyFlag,
           // F2: per-day image; DB defaults take over when omitted.
           ...(params.image_url !== undefined && { imageUrl: params.image_url }),
@@ -5934,9 +6265,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           ...publicDatesFromDaysSet(params.event_id),
           updatedAt: new Date(),
           ...discontinuousUpdate,
-          ...(hoursUnknown ? { flaggedForReview: 1 } : {}),
         })
         .where(eq(events.id, params.event_id));
+      // OPE-767 — the hours axis, recorded as its own reason, both directions.
+      await syncHoursReason(db, params.event_id);
 
       return {
         content: [
@@ -5991,6 +6323,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .optional()
         .describe(
           "OPE-1069: true when you LOOKED at the organizer's own site and it publishes no closing time. Leave close_time empty; the day then does NOT raise flagged_for_review and renders 'no published closing time'. Requires internal_notes saying where you looked. Omit (not false) when you simply have not found it — that is the research gap the flag exists for."
+        ),
+      hours_unpublished: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1256: true when you LOOKED at the organizer's own site and it publishes NO hours for this day at all. Leave open_time/close_time empty; the day then stops counting as 'hours unknown' and the missing-hours review reason can clear. Requires internal_notes saying where you looked. Omit (not false) when you simply have not found them."
         ),
       internal_notes: z
         .string()
@@ -6061,6 +6399,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         if (refusal) return { content: [{ type: "text", text: refusal }], isError: true };
         updates.closeTimeUnpublished = params.close_time_unpublished ? 1 : 0;
       }
+      // OPE-1256 — a published time supersedes "no hours published"; setting
+      // the finding needs provenance and no times.
+      if (typeof params.open_time === "string" || typeof params.close_time === "string")
+        updates.hoursUnpublished = 0;
+      if (params.hours_unpublished !== undefined) {
+        const [cur] = await db
+          .select({
+            openTime: eventDays.openTime,
+            closeTime: eventDays.closeTime,
+            internalNotes: eventDays.internalNotes,
+          })
+          .from(eventDays)
+          .where(eq(eventDays.id, params.day_id))
+          .limit(1);
+        const refusal = hoursUnpublishedError({
+          hoursUnpublished: params.hours_unpublished,
+          openTime: params.open_time !== undefined ? params.open_time : (cur?.openTime ?? null),
+          closeTime: params.close_time !== undefined ? params.close_time : (cur?.closeTime ?? null),
+          internalNotes: params.internal_notes ?? cur?.internalNotes ?? null,
+        });
+        if (refusal) return { content: [{ type: "text", text: refusal }], isError: true };
+        updates.hoursUnpublished = params.hours_unpublished ? 1 : 0;
+      }
       if (params.vendor_only !== undefined) updates.vendorOnly = params.vendor_only;
       // F2 — per-occurrence image. Same null-vs-undefined distinction
       // as the DQ4 time args.
@@ -6110,6 +6471,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (daySyndicationStmts.length > 0) {
         await enqueueSyndicationChange(env, { entityType: "event_day", entityId: params.day_id });
       }
+      // OPE-767 — filling in the last unknown day clears `missing_hours`
+      // (and only it); blanking one raises it. This tool's description always
+      // said it cleared the flag; until now nothing did.
+      const hoursAxis = await syncHoursReason(db, eventId);
 
       // OPE-433 scope 5 — one record for both branches: the syndication
       // fan-out changes how the write is issued, not what changed.
@@ -6128,6 +6493,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           jsonContent({
             updated: true,
             id: params.day_id,
+            // OPE-767 — what the hours axis did to the review flag.
+            hours_review_reason: hoursAxis,
             fieldsUpdated: Object.keys(updates),
           }),
         ],

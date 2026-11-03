@@ -40,7 +40,7 @@ beforeEach(() => {
   raw = new Database(":memory:");
   raw["exec"](`
     CREATE TABLE promoters (id TEXT PRIMARY KEY, company_name TEXT, slug TEXT, website TEXT, state TEXT, created_at INTEGER, updated_at INTEGER);
-    CREATE TABLE url_health_checks (id TEXT PRIMARY KEY, url TEXT NOT NULL, source_field TEXT NOT NULL, verdict TEXT NOT NULL, http_status INTEGER, signals TEXT, detail TEXT, checked_at INTEGER NOT NULL);
+    CREATE TABLE url_health_checks (id TEXT PRIMARY KEY, url TEXT NOT NULL, source_field TEXT NOT NULL, verdict TEXT NOT NULL, http_status INTEGER, signals TEXT, detail TEXT, body_bytes INTEGER, checked_at INTEGER NOT NULL);
     CREATE TABLE events (id TEXT PRIMARY KEY, source_url TEXT);
   `);
   db = drizzle(raw, { schema });

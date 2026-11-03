@@ -7,11 +7,13 @@
 // truth, so back/forward + direct links work) and `hydrateDay`, which lazily fetches
 // a single day's full events for the day popover when a dotted day is clicked.
 
-import { useCallback } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useRef } from "react";
 import { YearCalendar, type CalendarEvent, type CalendarTheme } from "@jonnyboats/calendar-react";
 import type { PresenceMap } from "@jonnyboats/calendar-core";
 import "@jonnyboats/calendar-react/styles";
+import { focusForMonth, focusForYear } from "@/lib/calendar/focus-date";
+import { renderSortedDayPopover, useCalendarNav } from "./calendar-nav";
+import { useCalendarDayLinks } from "./use-calendar-day-links";
 
 interface Props {
   presence: PresenceMap;
@@ -20,52 +22,34 @@ interface Props {
   now: string;
   displayTimeZone: string;
   theme: CalendarTheme;
+  /** OPE-1488 — the focus date (`date=`) and today (America/New_York). */
+  focusDate: string;
+  today: string;
 }
 
-export function CalendarYearClient({ presence, year, now, displayTimeZone, theme }: Props) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
-  // Build a `/events?...` URL preserving active filters; reset pagination.
-  const pushWith = useCallback(
-    (mutate: (p: URLSearchParams) => void) => {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("view", "calendar");
-      params.delete("page");
-      mutate(params);
-      router.push(`/events?${params.toString()}`);
-    },
-    [router, searchParams]
-  );
+export function CalendarYearClient({
+  presence,
+  year,
+  now,
+  displayTimeZone,
+  theme,
+  focusDate,
+  today,
+}: Props) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const { pushFocus, navigateToDay, switchView } = useCalendarNav(focusDate);
+  useCalendarDayLinks(rootRef, navigateToDay, switchView, { directYearCells: true });
 
   // Prev/next/Today → refetch presence for the new year (server re-renders).
   const onNavigateYear = useCallback(
-    (y: number) =>
-      pushWith((p) => {
-        p.set("cal_view", "year");
-        p.set("cal_year", String(y));
-      }),
-    [pushWith]
+    (y: number) => pushFocus(focusForYear(y, today), "year"),
+    [pushFocus, today]
   );
 
   // Month title click → Month view anchored to that month.
   const onNavigateToMonth = useCallback(
-    (monthAnchor: string) =>
-      pushWith((p) => {
-        p.set("cal_view", "month");
-        p.set("cal", monthAnchor.slice(0, 7));
-      }),
-    [pushWith]
-  );
-
-  // "View full day →" from the day popover → Month view at that day's month.
-  const onNavigateToDay = useCallback(
-    (date: string) =>
-      pushWith((p) => {
-        p.set("cal_view", "month");
-        p.set("cal", date.slice(0, 7));
-      }),
-    [pushWith]
+    (monthAnchor: string) => pushFocus(focusForMonth(monthAnchor.slice(0, 7), today), "month"),
+    [pushFocus, today]
   );
 
   // Dotted-day click → fetch that day's full events for the popover. Failure
@@ -84,7 +68,7 @@ export function CalendarYearClient({ presence, year, now, displayTimeZone, theme
   // (CSS in src/app/globals.css) — same treatment as Month, so the year grid
   // isn't pushed down by the full-width legend.
   return (
-    <div className="cal-legend-left">
+    <div className="cal-legend-left" ref={rootRef}>
       <YearCalendar
         presence={presence}
         year={year}
@@ -96,7 +80,10 @@ export function CalendarYearClient({ presence, year, now, displayTimeZone, theme
         hydrateDay={hydrateDay}
         onNavigateYear={onNavigateYear}
         onNavigateToMonth={onNavigateToMonth}
-        onNavigateToDay={onNavigateToDay}
+        // OPE-1488 — "View full day →" (and the popover title) open Day view for that
+        // date. It used to go to Month view at that day's month.
+        onNavigateToDay={navigateToDay}
+        renderDayPopover={renderSortedDayPopover}
       />
     </div>
   );

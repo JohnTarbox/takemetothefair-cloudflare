@@ -29,6 +29,10 @@ const WIRED: Array<[string, string[]]> = [
       "app/vendors/page.tsx:getFeaturedVendors",
     ],
   ],
+  // OPE-790 rework (John, 2026-10-04: "extend the retry to vendor detail pages";
+  // a performer page hit the same "Network connection lost" on 10-04).
+  ["src/app/vendors/[slug]/page.tsx", ["app/vendors/[slug]/page.tsx:getVendor"]],
+  ["src/app/performers/[slug]/page.tsx", ["app/performers/[slug]/page.tsx:getPerformer"]],
 ];
 
 describe("OPE-790 — every browse-surface fetcher in the acceptance is retry-wrapped", () => {
@@ -37,8 +41,8 @@ describe("OPE-790 — every browse-surface fetcher in the acceptance is retry-wr
   // The positive landmark for the assertions below: if this drops, the suite is
   // checking fewer fetchers than the acceptance names, and every "wired" pass
   // below would still be green.
-  it("examines exactly the five fetchers OPE-790 names", () => {
-    expect(cases).toHaveLength(5);
+  it("examines exactly the seven fetchers (OPE-790's five + the 10-04 rework's two)", () => {
+    expect(cases).toHaveLength(7);
   });
 
   it.each(cases)("%s wraps %s", (file, source) => {
@@ -58,4 +62,158 @@ describe("OPE-790 — every browse-surface fetcher in the acceptance is retry-wr
       expect(read(file)).toContain(`new FetchError("${source}"`);
     }
   );
+});
+
+/**
+ * OPE-790 rework — the view counter is NOT inside the retried read.
+ *
+ * It was: `getEventOnce` ran `UPDATE events SET view_count …` mid-read, and
+ * `getEvent` retries `getEventOnce`. A D1 timeout that committed and reported
+ * failure (the very class retried) could count a view twice; a failed COUNTER
+ * took the page down (both absorbed blips on 10-03/10-04 were this UPDATE); and
+ * because generateMetadata ALSO calls getEvent, every render counted twice —
+ * measured live 10-04: 2 requests moved a vendor's view_count by 4.
+ */
+const COUNTED: Array<[file: string, once: string, counter: string, table: string]> = [
+  ["src/app/events/[slug]/event-detail-data.ts", "getEventOnce", "countEventView", "events"],
+  ["src/app/vendors/[slug]/page.tsx", "getVendorOnce", "countVendorView", "vendors"],
+  ["src/app/performers/[slug]/page.tsx", "getPerformerOnce", "countPerformerView", "performers"],
+];
+
+/** The body of `async function <name>(` up to the next top-level closing brace. */
+function fnBody(src: string, name: string): string {
+  const start = src.indexOf(`async function ${name}(`);
+  expect(start, `${name} not found`).toBeGreaterThan(-1);
+  const end = src.indexOf("\n}\n", start);
+  return src.slice(start, end);
+}
+
+describe("OPE-790 rework — view counters live outside the retried read, once per render", () => {
+  it("examines all three detail pages (landmark)", () => {
+    expect(COUNTED).toHaveLength(3);
+  });
+
+  it.each(COUNTED)("%s: %s does not write view_count", (file, once, _c, table) => {
+    expect(fnBody(read(file), once)).not.toContain(`UPDATE ${table} SET view_count`);
+  });
+
+  it.each(COUNTED)("%s: the page calls %s exactly once, after the read", (file, _o, counter) => {
+    const page = file.endsWith("event-detail-data.ts")
+      ? read("src/app/events/[slug]/page.tsx")
+      : read(file);
+    const def = page.slice(page.indexOf("export default async function"));
+    expect(def.split(`${counter}(`).length - 1).toBe(1);
+  });
+
+  it.each(COUNTED)("%s: generateMetadata never counts a view", (file, _o, counter) => {
+    const src = read(file);
+    const meta = file.endsWith("event-detail-data.ts")
+      ? fnBody(src, "buildEventMetadata")
+      : src.slice(
+          src.indexOf("export async function generateMetadata"),
+          src.indexOf("export default async function")
+        );
+    expect(meta.length).toBeGreaterThan(0);
+    expect(meta).not.toContain(`${counter}(`);
+  });
+});
+
+/**
+ * OPE-790 rework (John, 2026-10-04) — a D1 platform blip that survives the retry
+ * renders an honest degraded panel, not the error boundary. Only a PLATFORM
+ * fault degrades: every catch re-throws anything else, so our own query defects
+ * stay loud.
+ */
+const DEGRADED_PAGES = [
+  "src/app/events/(listing)/page.tsx",
+  "src/app/events/[slug]/page.tsx",
+  "src/app/vendors/(listing)/page.tsx",
+  "src/app/vendors/[slug]/page.tsx",
+  "src/app/performers/[slug]/page.tsx",
+];
+
+describe("OPE-790 rework — degraded panel on a surviving platform blip, and only then", () => {
+  it.each(DEGRADED_PAGES)(
+    "%s renders DegradedPanel behind isD1PlatformFault and re-throws the rest",
+    (file) => {
+      // The PAGE component's branch — generateMetadata has its own (noindex) one.
+      const full = read(file);
+      const src = full.slice(full.indexOf("export default async function"));
+      const at = src.indexOf("if (isD1PlatformFault(e))");
+      expect(at, "no platform-fault branch").toBeGreaterThan(-1);
+      const branch = src.slice(at, at + 260);
+      expect(branch).toContain("<DegradedPanel");
+      expect(branch).toContain("throw e;");
+    }
+  );
+
+  it.each([
+    "src/app/events/[slug]/event-detail-data.ts",
+    "src/app/vendors/[slug]/page.tsx",
+    "src/app/performers/[slug]/page.tsx",
+  ])("%s: detail metadata returns noindex on a surviving blip", (file) => {
+    expect(read(file)).toContain("if (isD1PlatformFault(e)) return DEGRADED_METADATA;");
+  });
+});
+
+/**
+ * OPE-1301 — the routes OPE-790 did not claim, found on live D1 resets:
+ * /blog/tag/[tag] (2026-10-04 14:09Z, two pages on the error boundary while
+ * getEvents in the same second was absorbed), and the series lookups on the
+ * event page and /events/<slug>/<year> (2026-09-27). These fetchers have no
+ * catch at all — a surviving error propagates raw, so it can never be
+ * swallowed into an empty default (the REL1' concern the FetchError assertion
+ * above protects).
+ */
+const OPE1301: Array<[string, string]> = [
+  ["src/app/blog/tag/[tag]/page.tsx", "app/blog/tag/[tag]/page.tsx:getPostsByTagSlug"],
+  ["src/lib/series/get-series-landing.ts", "lib/series/get-series-landing.ts:getSeriesLanding"],
+  ["src/lib/series/get-occurrence.ts", "lib/series/get-occurrence.ts:resolveOccurrenceTarget"],
+];
+
+describe("OPE-1301 — the blog-tag and series reads are retry-wrapped and degrade", () => {
+  it("examines exactly the three reads (landmark)", () => {
+    expect(OPE1301).toHaveLength(3);
+  });
+
+  it.each(OPE1301)("%s wraps %s", (file, source) => {
+    expect(read(file)).toContain(`withD1ReadLogged("${source}"`);
+  });
+
+  it.each(["src/app/blog/tag/[tag]/page.tsx", "src/app/events/[slug]/[year]/page.tsx"])(
+    "%s: page renders DegradedPanel behind isD1PlatformFault and re-throws the rest",
+    (file) => {
+      const full = read(file);
+      const src = full.slice(full.indexOf("export default async function"));
+      const at = src.indexOf("if (isD1PlatformFault(e))");
+      expect(at, "no platform-fault branch").toBeGreaterThan(-1);
+      const branch = src.slice(at, at + 260);
+      expect(branch).toContain("<DegradedPanel");
+      expect(branch).toContain("throw e;");
+    }
+  );
+
+  it.each(["src/app/blog/tag/[tag]/page.tsx", "src/app/events/[slug]/[year]/page.tsx"])(
+    "%s: metadata returns noindex on a surviving blip",
+    (file) => {
+      expect(read(file)).toContain("if (isD1PlatformFault(e)) return DEGRADED_METADATA;");
+    }
+  );
+
+  it("the event page and its metadata degrade the series-landing read too (it precedes getEvent's try)", () => {
+    const page = read("src/app/events/[slug]/page.tsx");
+    const landingAt = page.indexOf("landing = asOccurrence ? null : await getSeriesLanding(slug);");
+    expect(landingAt).toBeGreaterThan(-1);
+    // The read sits inside a try whose catch degrades.
+    const before = page.slice(Math.max(0, landingAt - 80), landingAt);
+    expect(before).toContain("try {");
+    const after = page.slice(landingAt, landingAt + 300);
+    expect(after).toContain("<DegradedPanel");
+
+    const meta = read("src/app/events/[slug]/event-detail-data.ts");
+    const mAt = meta.indexOf("landing = asOccurrence ? null : await getSeriesLanding(slug);");
+    expect(mAt).toBeGreaterThan(-1);
+    expect(meta.slice(Math.max(0, mAt - 80), mAt)).toContain("try {");
+    expect(meta.slice(mAt, mAt + 200)).toContain("return DEGRADED_METADATA;");
+  });
 });

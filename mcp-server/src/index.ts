@@ -1,6 +1,9 @@
 import { opaqueErrorResponse } from "./error-response.js";
 import { lastGeocodeSweepCursor, sweepGeocodePages } from "./venues/geocode-sweep-pager.js";
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
+import { mcpOAuthProviderOptions } from "./oauth/provider-options";
+import { bindMcpSessionsToUser } from "./mcp-session-binding.js";
+import { guardClientRegistration } from "./oauth/register-throttle.js";
 import type { EmailGateEnv } from "./email-gates.js";
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -19,6 +22,10 @@ import { registerPromoterTools } from "./tools/promoter.js";
 import { registerAdminTools } from "./tools/admin.js";
 import { registerMarketPlayerTools } from "./tools/admin-market-players.js";
 import { registerInboundReadTools } from "./tools/admin-inbound-read.js";
+import {
+  registerDismissInboundTool,
+  type WorkflowInstanceBinding,
+} from "./tools/admin-dismiss-inbound.js";
 import { registerAdminEventReadTools } from "./tools/admin-event-read.js";
 import { registerAdminVendorReadTools } from "./tools/admin-vendor-read.js";
 import { registerAdminProblemReportTools } from "./tools/admin-problem-reports.js";
@@ -37,6 +44,7 @@ import { registerSendTestEmailTool } from "./tools/admin-send-test-email.js";
 import { registerSendPromoterEmailTool } from "./tools/admin-send-promoter-email.js";
 import { registerPromoterOutreachQueueTool } from "./tools/admin-promoter-outreach-queue.js";
 import { registerPromoterOutreachMetricsTool } from "./tools/admin-promoter-outreach-metrics.js";
+import { registerContactScorecardTool } from "./tools/admin-contact-scorecard.js";
 import { registerPromoterOutreachLifecycleTools } from "./tools/admin-promoter-outreach-lifecycle.js";
 import { registerPromoterReplyIngestTools } from "./tools/admin-promoter-reply-ingest.js";
 import { registerGalleryPhotoTools } from "./tools/admin-gallery-photos.js";
@@ -50,9 +58,13 @@ import { registerApiTokenTools } from "./tools/admin-api-tokens.js";
 // tool registered on the legacy path only. (A `GateEnv` alias used to exist to
 // keep the `as unknown as` cast short enough; OPE-950 removed the cast.)
 import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
-import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
+import { registerClaimReviewTools, type ClaimReviewEnv } from "./tools/admin-claim-review.js";
 import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
 import { registerReplayInboundAttachmentTool } from "./tools/admin-replay-inbound-attachment.js";
+import {
+  registerReplayInboundEmailTool,
+  type WorkflowCreateBinding,
+} from "./tools/admin-replay-inbound-email.js";
 import { registerReadEventPosterTool } from "./tools/read-event-poster.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { mainAppFetch } from "./main-app-fetch.js";
@@ -65,6 +77,7 @@ import {
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledNearDuplicateSweep } from "./near-duplicate-sweep-cron.js";
+import { runScheduledCiTriggerWatchdog } from "./ci-trigger-watchdog.js";
 import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
@@ -84,6 +97,7 @@ import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
 
 import { runInboundExceptionNotice } from "./inbound-exception-notice.js";
+import { runUnterminatedCrossingNotice } from "./inbound/unterminated-crossing-notice.js";
 import { runWeeklyInventoryNotice } from "./weekly-inventory-notice.js";
 import { runScheduledVendorCategoryWatch } from "./vendor-category-watch.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
@@ -91,9 +105,11 @@ import { runScheduledQueueRerank } from "./goodwill/queue-ranking.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
 import { runScheduledHoldoutSampling } from "./goodwill/holdout-sampling.js";
 import { logError } from "./logger.js";
+import { sequenceCronTasks, settleCronTasks } from "./cron-tasks.js";
 import { inboundEmails } from "./schema.js";
 import { eq, inArray } from "drizzle-orm";
 import { resolveHeldPhotoEmail } from "./photo/resolve-held-photos.js";
+import { ingestSnap, type SnapClientMeta } from "./photo/snap-intake.js";
 import type { SchemaOrgSyncParams } from "./workflows/schema-org-sync.js";
 import type { RecommendationsScanParams } from "./workflows/recommendations-scan.js";
 import type { EventDateDriftParams } from "./workflows/event-date-drift.js";
@@ -228,6 +244,15 @@ type Env = WorkerEnv &
     // outbound MCP email. Independent of the Slack webhook — set either,
     // both, or neither.
     ALERT_EMAIL_TECHNICAL?: string;
+    // OPE-366 — recipient for the unterminated-crossing E2 alarm (committed
+    // [vars]; John's 2026-09-30 ruling named john@pimboat.com).
+    UNTERMINATED_CROSSING_ALERT_EMAIL?: string;
+    // OPE-366 — hours a crossing may sit destination-less before it counts.
+    UNTERMINATED_CROSSING_AGE_HOURS?: string;
+    // OPE-1239 — optional read-only GitHub token for the CI-trigger watchdog.
+    // The repo is public, so the watchdog works without it; set it only to lift
+    // the shared unauthenticated rate limit (`wrangler secret put GITHUB_TOKEN`).
+    GITHUB_TOKEN?: string;
     // OPE-68 (2026-07-03) — shared vendor-assets R2 bucket (same bucket the main
     // app binds as VENDOR_ASSETS). The email() entrypoint persists inbound
     // poster/PDF attachment bytes here at receive-time; the inbound-email
@@ -383,6 +408,13 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerAdminProblemReportTools(this.server, db);
         // OPE-499 — inbound-correspondence read surface (input side of a submission).
         registerInboundReadTools(this.server, db, auth, this.env);
+        // OPE-1251 — the inbound lane's one WRITER, kept out of the read registrar.
+        registerDismissInboundTool(
+          this.server,
+          db,
+          auth,
+          this.env.INBOUND_EMAIL as unknown as WorkflowInstanceBinding | undefined
+        );
         // OPE-500 — read an event at ANY status (the public reader is APPROVED-only).
         registerAdminEventReadTools(this.server, db, auth);
         registerAdminVendorReadTools(this.server, db, auth);
@@ -411,6 +443,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerSendPromoterEmailTool(this.server, db, auth, this.env);
         registerPromoterOutreachQueueTool(this.server, db, auth);
         registerPromoterOutreachMetricsTool(this.server, db, auth);
+        registerContactScorecardTool(this.server, db, auth);
         registerPromoterOutreachLifecycleTools(this.server, db, auth);
         registerPromoterReplyIngestTools(this.server, db, auth);
         registerGalleryPhotoTools(this.server, auth, this.env);
@@ -422,7 +455,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // OPE-67 (2026-07-02) — claim tooling: create_claim_invite (cold invite)
         // + list_claims / approve_claim / reject_claim (review queue).
         registerCreateClaimInviteTool(this.server, db, auth, this.env);
-        registerClaimReviewTools(this.server, db, auth);
+        registerClaimReviewTools(this.server, db, auth, this.env as unknown as ClaimReviewEnv);
         // OPE-254 (2026-07-18) — resolve_held_photos (recover held photo batches).
         registerResolveHeldPhotosTool(this.server, db, auth, this.env);
         // OPE-469 (2026-08-18) — replay_inbound_attachment. Re-runs a RETAINED
@@ -430,6 +463,13 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // photo lane can be tested against the 87 stored originals instead of
         // by attending a fair.
         registerReplayInboundAttachmentTool(this.server, db, auth, this.env);
+        // OPE-954 — replay a failed submission with every send held.
+        registerReplayInboundEmailTool(
+          this.server,
+          db,
+          auth,
+          this.env.INBOUND_EMAIL as unknown as WorkflowCreateBinding | undefined
+        );
         registerReadEventPosterTool(this.server, db, auth, this.env);
         groups.admin = diff(before);
 
@@ -465,20 +505,16 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
 // ---------------------------------------------------------------------------
 // OAuth provider — handles /register, /authorize, /token, and routes /mcp to DO
 // ---------------------------------------------------------------------------
-const oauthProvider = new OAuthProvider({
-  apiHandlers: {
-    "/mcp": MeetMeAtTheFairMCP.serve("/mcp"),
-    "/sse": MeetMeAtTheFairMCP.serveSSE("/sse"),
-  },
-  defaultHandler: LoginHandler,
-  authorizeEndpoint: "/authorize",
-  tokenEndpoint: "/token",
-  clientRegistrationEndpoint: "/register",
-  // OPE-900 step 5 — S256 only. Live metadata already reads ["S256"], but only
-  // because 0.10.x flipped the library DEFAULT (0.3.3 advertised "plain" too);
-  // nothing here asked for it. Explicit, so a future release cannot re-enable it.
-  allowPlainPKCE: false,
-});
+const oauthProvider = new OAuthProvider<Env>(
+  mcpOAuthProviderOptions<Env>({
+    // OPE-1391 — the session's Durable Object is named under the OAuth user,
+    // so another user's token presenting this session id reaches a different
+    // (uninitialized) object → 404. Both transports; see mcp-session-binding.ts.
+    mcp: bindMcpSessionsToUser(MeetMeAtTheFairMCP.serve("/mcp")),
+    sse: bindMcpSessionsToUser(MeetMeAtTheFairMCP.serveSSE("/sse")),
+    login: LoginHandler,
+  })
+);
 
 // ---------------------------------------------------------------------------
 // CORS helpers (for legacy mmatf_ token requests)
@@ -540,8 +576,19 @@ async function handleLegacyMcpRequest(
       registerAdminTools(server, db, auth, env);
       registerAdminProblemReportTools(server, db);
       registerInboundReadTools(server, db, auth, env);
+      // OPE-1251 — the inbound lane's one WRITER, kept out of the read registrar.
+      registerDismissInboundTool(
+        server,
+        db,
+        auth,
+        env.INBOUND_EMAIL as unknown as WorkflowInstanceBinding | undefined
+      );
       registerAdminEventReadTools(server, db, auth);
       registerAdminVendorReadTools(server, db, auth);
+      // OPE-478 — John's ruling (2026-09-30): the mmatf_ admin token reaches the
+      // market-player and syndication tools too; they were left off by omission.
+      registerMarketPlayerTools(server, db, auth);
+      registerSyndicationTools(server, db, auth);
       registerMergeEntitiesTools(server, db, auth);
       registerMergeVendorTool(server, db, auth);
       registerVendorHierarchyTools(server, db, auth);
@@ -555,6 +602,7 @@ async function handleLegacyMcpRequest(
       registerSendPromoterEmailTool(server, db, auth, env);
       registerPromoterOutreachQueueTool(server, db, auth);
       registerPromoterOutreachMetricsTool(server, db, auth);
+      registerContactScorecardTool(server, db, auth);
       registerPromoterOutreachLifecycleTools(server, db, auth);
       registerPromoterReplyIngestTools(server, db, auth);
       registerGalleryPhotoTools(server, auth, env);
@@ -562,7 +610,7 @@ async function handleLegacyMcpRequest(
       registerSendGatesTool(server, db, auth, env);
       registerApiTokenTools(server, db, auth);
       registerCreateClaimInviteTool(server, db, auth, env);
-      registerClaimReviewTools(server, db, auth);
+      registerClaimReviewTools(server, db, auth, env as unknown as ClaimReviewEnv);
       registerResolveHeldPhotosTool(server, db, auth, env);
       // OPE-469 — MUST be registered here as well as in the OAuth path above.
       // This file has TWO registration lists: the McpAgent class (OAuth) and
@@ -571,6 +619,12 @@ async function handleLegacyMcpRequest(
       // is what happened on the first ship, and the `mmatf_` path is exactly the
       // one an agent uses for direct curl when the tool registry is frozen.
       registerReplayInboundAttachmentTool(server, db, auth, env);
+      registerReplayInboundEmailTool(
+        server,
+        db,
+        auth,
+        env.INBOUND_EMAIL as unknown as WorkflowCreateBinding | undefined
+      );
       registerReadEventPosterTool(server, db, auth, env);
       registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
@@ -1342,6 +1396,52 @@ async function handleInternalApi(request: Request, env: Env, url: URL): Promise<
     return jsonResponse({ eventId, totalAttached, totalFailed, results });
   }
 
+  // POST /api/admin/internal/snap-intake — OPE-1341. One photo from the phone
+  // capture page (/admin/snap), forwarded by the main app after it checked the
+  // ADMIN session. Multipart: `file`, `meta` (JSON SnapClientMeta), `actor`.
+  // Becomes an inbound row on the existing photo-intake Workflow; idempotent on
+  // the client's UUID, so a retried upload returns the same row.
+  if (url.pathname === "/api/admin/internal/snap-intake" && request.method === "POST") {
+    let form: FormData;
+    try {
+      form = await request.formData();
+    } catch {
+      return jsonResponse({ error: "expected multipart/form-data" }, 400);
+    }
+    const file = form.get("file");
+    const actor = form.get("actor");
+    if (!(file instanceof File) || typeof actor !== "string" || !actor.includes("@")) {
+      return jsonResponse({ error: "file and actor are required" }, 400);
+    }
+    let meta: SnapClientMeta;
+    try {
+      meta = JSON.parse(String(form.get("meta") ?? "")) as SnapClientMeta;
+    } catch {
+      return jsonResponse({ error: "meta must be JSON" }, 400);
+    }
+    if (!meta || typeof meta.clientId !== "string") {
+      return jsonResponse({ error: "meta.clientId is required" }, 400);
+    }
+    const result = await ingestSnap(env, getDb(env.DB), {
+      bytes: new Uint8Array(await file.arrayBuffer()),
+      contentType: file.type,
+      fileName: file.name,
+      meta,
+      actor,
+    });
+    if (!result.ok) return jsonResponse({ error: result.error }, result.status);
+    if (!result.deduped && !result.workflowStarted) {
+      await logError(env.DB, {
+        level: "warn",
+        source: "mcp:snap-intake",
+        message:
+          "snap stored but the workflow did not start; the stale-inbound sweep will retry it",
+        context: { rowId: result.rowId },
+      });
+    }
+    return jsonResponse(result, result.deduped ? 200 : 201);
+  }
+
   // POST /api/admin/internal/enqueue-email — proxy for Pages' enqueueEmail().
   if (url.pathname === "/api/admin/internal/enqueue-email" && request.method === "POST") {
     if (!env.EMAIL_JOBS) {
@@ -1677,22 +1777,30 @@ export default {
       // tenant. ~1 COUNT query + 1 small SELECT + (rarely) 1 UPSERT;
       // adds negligible load to the */10 fire. See page-error-canary.ts
       // for thresholds, debounce, and scope rationale.
+      // OPE-1374 — settleCronTasks, not Promise.all: every task is awaited and
+      // each rejection is logged by name (see cron-tasks.ts).
       ctx.waitUntil(
-        Promise.all([
-          runScheduledKpiRecompute(env),
-          runScheduledInboundEmailStaleSweep(env),
-          runScheduledPageErrorCanary(env),
+        settleCronTasks(env.DB, controller.cron, [
+          ["kpi-recompute", () => runScheduledKpiRecompute(env)],
+          ["inbound-email-stale-sweep", () => runScheduledInboundEmailStaleSweep(env)],
+          ["page-error-canary", () => runScheduledPageErrorCanary(env)],
+          // OPE-1239 — main's HEAD must have a push CI run (else it never deployed).
+          ["ci-trigger-watchdog", () => runScheduledCiTriggerWatchdog(env)],
         ]).then(() => undefined)
       );
       return;
     }
     if (controller.cron === "0 * * * *") {
       ctx.waitUntil(
-        Promise.all([
-          runScheduledPendingPingsFlush(env),
+        settleCronTasks(env.DB, controller.cron, [
+          ["pending-pings-flush", () => runScheduledPendingPingsFlush(env)],
           // OPE-93 — hourly render-fault emitter run (error_logs → fault_signatures).
-          runScheduledFaultCandidatesEmit(env),
-        ])
+          ["fault-candidates-emit", () => runScheduledFaultCandidatesEmit(env)],
+          // OPE-366 — E2 conditional push: email when a NEW membrane crossing
+          // has sat destination-less past the age threshold. The standing
+          // backlog stays in the Monday inventory. Failsoft (catches its own).
+          ["unterminated-crossing-notice", () => runUnterminatedCrossingNotice(env, getDb(env.DB))],
+        ]).then(() => undefined)
       );
       return;
     }
@@ -1817,29 +1925,42 @@ export default {
     // recovering per-chunk failures via step.do retry. The remaining
     // three are single-call sweeps via runMainAppSweep (low score in
     // docs/cloudflare-workflows-audit.md, left as-is).
+    //
+    // OPE-1374 — settleCronTasks, not Promise.all. Promise.all settled on the
+    // first rejection, so waitUntil's promise resolved while ~28 siblings were
+    // still in flight and the rejection was logged nowhere. Now every task is
+    // awaited and each rejection lands in error_logs as `mcp:schedule:<name>`.
     ctx.waitUntil(
-      Promise.all([
-        createWorkflowOrLog(env, "recommendations-scan", () =>
-          env.RECOMMENDATIONS_SCAN.create({
-            retention: { successRetention: "7 days", errorRetention: "7 days" },
-          })
-        ),
-        runScheduledGscSweep(env),
-        runScheduledBingInspectionSweep(env),
-        runScheduledSiteHealthRefresh(env),
-        runScheduledTimeToIndexSweep(env),
-        runScheduledGa4LivenessCheck(env),
-        runScheduledBingLivenessCheck(env),
+      settleCronTasks(env.DB, controller.cron, [
+        [
+          "recommendations-scan",
+          () =>
+            createWorkflowOrLog(env, "recommendations-scan", () =>
+              env.RECOMMENDATIONS_SCAN.create({
+                retention: { successRetention: "7 days", errorRetention: "7 days" },
+              })
+            ),
+        ],
+        ["gsc-sweep", () => runScheduledGscSweep(env)],
+        ["bing-inspection-sweep", () => runScheduledBingInspectionSweep(env)],
+        ["site-health-refresh", () => runScheduledSiteHealthRefresh(env)],
+        ["time-to-index-sweep", () => runScheduledTimeToIndexSweep(env)],
+        ["ga4-liveness-check", () => runScheduledGa4LivenessCheck(env)],
+        ["bing-liveness-check", () => runScheduledBingLivenessCheck(env)],
         // A12 (analyst 2026-06-26) — durable GSC+GA4 search-performance
         // time-series. Incremental daily upsert; first-run 16-month backfill
         // is driven out-of-band by scripts/gsc-backfill.ts. Failsoft via
         // runMainAppSweep (a sync failure logs, never crashes the batch).
-        runScheduledGscMetricsSync(env),
-        createWorkflowOrLog(env, "event-date-drift", () =>
-          env.EVENT_DATE_DRIFT.create({
-            retention: { successRetention: "7 days", errorRetention: "7 days" },
-          })
-        ),
+        ["gsc-metrics-sync", () => runScheduledGscMetricsSync(env)],
+        [
+          "event-date-drift",
+          () =>
+            createWorkflowOrLog(env, "event-date-drift", () =>
+              env.EVENT_DATE_DRIFT.create({
+                retention: { successRetention: "7 days", errorRetention: "7 days" },
+              })
+            ),
+        ],
         // A3 / PR-6 (2026-06-01 EVE) — daily Slack canary for dedup sweep
         // cluster count growth. Polls /api/admin/duplicates/sweep, snapshots
         // dedup_sweep_snapshots, alerts on RED (+1 day-over-day, always) or
@@ -1852,17 +1973,17 @@ export default {
         // the subject. Sequential within one Worker invocation — cheaper
         // than three separate cron registrations and the three sweeps
         // share the same internal-key auth round-trip cost.
-        runScheduledDedupSweepCanary(env, "events"),
-        runScheduledDedupSweepCanary(env, "venues"),
-        runScheduledDedupSweepCanary(env, "promoters"),
+        ["dedup-sweep-canary:events", () => runScheduledDedupSweepCanary(env, "events")],
+        ["dedup-sweep-canary:venues", () => runScheduledDedupSweepCanary(env, "venues")],
+        ["dedup-sweep-canary:promoters", () => runScheduledDedupSweepCanary(env, "promoters")],
         // OPE-1201 — daily near-duplicate CANDIDATE pass over existing events.
         // OPE-627's check only runs at insert, so rows that predate it (its own
         // PTTF / Scarborough fixtures) were never evaluated. Report-only: writes
         // possible_duplicate_of where NULL; the OPE-1117 queue is the reader.
-        runScheduledNearDuplicateSweep(env),
+        ["near-duplicate-sweep", () => runScheduledNearDuplicateSweep(env)],
         // OPE-1205 — a synced row whose source went quiet (> N days, tunable)
         // stops claiming confirmed dates unless a qualifying citation backs it.
-        runScheduledSyncStaleSweep(env),
+        ["sync-stale-sweep", () => runScheduledSyncStaleSweep(env)],
         // OPE-75 (2026-07-03) — CPI Move 1: daily stale-red canary. POSTs the
         // main-app scan endpoint, which rebuilds the §6.3 action queue, picks
         // the P0/P1 signals red past threshold (P0 > 24h, P1 > 72h), and
@@ -1870,7 +1991,7 @@ export default {
         // Turns the pull-only dashboard into a self-escalating loop so a red
         // signal can't sit silent for weeks (the IndexNow-dead-2-weeks case).
         // Failsoft by construction — logs + swallows, never throws.
-        runScheduledCpiStaleRedCanary(env),
+        ["cpi-stale-red-canary", () => runScheduledCpiStaleRedCanary(env)],
         // OPE-510 §3 (2026-08-28) — newsletter list-balance canary.
         //
         // Compares confirmed-and-active subscribers against members of any
@@ -1884,12 +2005,12 @@ export default {
         // the sibling notices' "quiet unless the count changed" debounce. This
         // is an invariant violation, not a backlog, and a steady count of 4 is
         // four people still receiving nothing. Failsoft; never throws.
-        runScheduledNewsletterListBalanceCanary(env),
+        ["newsletter-list-balance-canary", () => runScheduledNewsletterListBalanceCanary(env)],
         // OPE-951 (2026-09-13) — burst-cap self-test. The Workers Rate Limiting
         // binding it replaced was inert in production for its whole life while
         // every mocked test passed. This drives the REAL cap to a refusal once a
         // day and stamps a heartbeat only on a pass. Failsoft; never throws.
-        runScheduledBurstCapSelfTest(env),
+        ["burst-cap-self-test", () => runScheduledBurstCapSelfTest(env)],
         // OPE-599 (2026-08-28) — operator work queues with something waiting.
         //
         // A vendor's claim on his own listing sat PENDING for 36 DAYS in a
@@ -1900,7 +2021,7 @@ export default {
         // Silent when both queues are clear — an alert that fires daily
         // regardless becomes wallpaper, which is how the sibling canaries on
         // this rail stay useful.
-        runScheduledOperatorQueueNotice(env),
+        ["operator-queue-notice", () => runScheduledOperatorQueueNotice(env)],
         // OPE-225 (2026-07-20) — photo-coverage rails. Refreshes
         // image_coverage_state for every live entity (coverage by demand tier,
         // image_set_at first-observation, hotlink health) so the OPE-226
@@ -1911,14 +2032,21 @@ export default {
         // OPE-225 — coverage scan, THEN the rot sweep. Sequenced, not raced:
         // as siblings in this Promise.all the sweep ran first against an empty
         // table on day one and checked nothing (url_checked stayed 0). The
-        // sweep reads rows the scan writes, so it must follow it. Chained
+        // sweep reads rows the scan writes, so it must follow it. Sequenced
         // rather than merged so a sweep failure still cannot fail the scan.
-        runScheduledPhotoCoverageScan(env)
-          .then(() => runScheduledImageUrlHealthSweep(env))
-          // OPE-227 — hero proposals read the scan's fresh demand ranking, so
-          // they follow it too. Each runner swallows its own failure, so one
-          // stage cannot stop the next.
-          .then(() => runScheduledHeroProposals(env)),
+        // OPE-227 — hero proposals read the scan's fresh demand ranking, so
+        // they follow it too. OPE-1374 — sequenceCronTasks runs each stage even
+        // when the previous one rejected (a `.then` chain skipped the rest) and
+        // logs each rejection by name.
+        [
+          "photo-coverage-sequence",
+          () =>
+            sequenceCronTasks(env.DB, controller.cron, [
+              ["photo-coverage-scan", () => runScheduledPhotoCoverageScan(env)],
+              ["image-url-health-sweep", () => runScheduledImageUrlHealthSweep(env)],
+              ["hero-proposals", () => runScheduledHeroProposals(env)],
+            ]),
+        ],
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and
@@ -1927,8 +2055,8 @@ export default {
         // catches its own errors and returns a result struct so a
         // single bad row doesn't pull down the sibling crons. Pass the
         // wrapped Db directly per [[feedback_drizzle_d1_unit_test_inject_db]].
-        runScheduledStalePageRadar(getDb(env.DB)).then(() => undefined),
-        runScheduledSelfConsistencyCron(getDb(env.DB)).then(() => undefined),
+        ["stale-page-radar", () => runScheduledStalePageRadar(getDb(env.DB))],
+        ["self-consistency", () => runScheduledSelfConsistencyCron(getDb(env.DB))],
         // OPE-245 (2026-07-17) — GW1d outreach-queue rank safety net. The
         // ranker shipped in PR #317 but nothing on the capture path ever
         // called it, so all 6,121 open discrepancies were NULL-scored from
@@ -1937,22 +2065,26 @@ export default {
         // slips through so the all-NULL queue can't silently return. NOT a full
         // view-count refresh (GW1d defers that) — processes ≈0 rows/night once
         // write-time scoring holds. Cosmetic-failsoft like its siblings.
-        runScheduledQueueRerank(getDb(env.DB)).then(() => undefined),
+        ["queue-rerank", () => runScheduledQueueRerank(getDb(env.DB))],
         // GW1e (2026-06-02) — daily goodwill-health canary mirrors the
         // dedup-sweep-canary pattern from PR #306. Writes the snapshot,
         // dispatches RED on +1 open growth day-over-day, YELLOW on
         // >10% weighted-priority growth (72h-debounced).
-        runScheduledGoodwillHealthCanary(getDb(env.DB), {
-          slackWebhookUrl: env.SLACK_WEBHOOK_URL_TECHNICAL ?? null,
-          alertEmail: env.ALERT_EMAIL_TECHNICAL ?? null,
-          emailQueue: env.EMAIL_JOBS ?? null,
-        }).then(() => undefined),
+        [
+          "goodwill-health-canary",
+          () =>
+            runScheduledGoodwillHealthCanary(getDb(env.DB), {
+              slackWebhookUrl: env.SLACK_WEBHOOK_URL_TECHNICAL ?? null,
+              alertEmail: env.ALERT_EMAIL_TECHNICAL ?? null,
+              emailQueue: env.EMAIL_JOBS ?? null,
+            }),
+        ],
         // D — DQ3 safety-net (2026-06-06) — daily recompute of
         // completeness_score for rows touched in the last 24h. Catches
         // cache rot from ad-hoc D1 bulk-enrichment writes that bypass
         // recompute*Completeness. Cosmetic-failsoft: any per-row error
         // is swallowed inside the helper; the cron always resolves.
-        runScheduledCompletenessRecompute(getDb(env.DB)).then(() => undefined),
+        ["completeness-recompute", () => runScheduledCompletenessRecompute(getDb(env.DB))],
         // A5 (2026-06-08, REL3 sibling) — standing-failure detector.
         // Catches "same error_logs.source recurring across ≥3 distinct
         // days in 7-day window" — the persistence signal the page-error
@@ -1961,7 +2093,7 @@ export default {
         // mcp-server/src/standing-failure-canary.ts. Cosmetic-failsoft
         // by construction (the helper catches its own errors and only
         // logs).
-        runScheduledStandingFailureCanary(env),
+        ["standing-failure-canary", () => runScheduledStandingFailureCanary(env)],
         // K27 (2026-06-15) — daily OCCURRED auto-transition + recurring-event
         // rollover. Pass 1 flips past-end APPROVED events SCHEDULED→OCCURRED
         // (the transition that had no cron before K27) and rolls FREQ=YEARLY
@@ -1973,55 +2105,65 @@ export default {
         // Monday inventory (weekly-inventory-notice.ts): inventories answer
         // "how big is the backlog", which has a weekly rhythm, and daily sends
         // are how a channel stops being read. The sweep itself is unchanged.
-        runOccurredTransitionSweep(getDb(env.DB)).then(() => undefined),
+        ["occurred-transition-sweep", () => runOccurredTransitionSweep(getDb(env.DB))],
         // OPE-971 — request_samples retention on a schedule (was a 1% dice roll
         // on the middleware's write path). Stamps watchdog:request-sample-retention.
-        runRequestSampleRetention(getDb(env.DB)).then(() => undefined),
+        ["request-sample-retention", () => runRequestSampleRetention(getDb(env.DB))],
         // OPE-993 — error_logs + indexnow_submissions 30-day retention (were 1%
-        // dice rolls on their write paths). Each in its own try/catch so a
-        // throw — sync or async — cannot skip a sibling. Each stamps
+        // dice rolls on their write paths). Each is its own task, so a throw —
+        // sync or async — cannot skip a sibling (and is now logged to
+        // error_logs by name, OPE-1374). Each stamps
         // watchdog:<table>-retention ONLY on a successful run.
-        (async () => {
-          try {
-            await runErrorLogRetention(getDb(env.DB));
-          } catch (error) {
-            console.error("[cron] runErrorLogRetention threw", error);
-          }
-        })(),
-        (async () => {
-          try {
-            await runIndexNowSubmissionRetention(getDb(env.DB));
-          } catch (error) {
-            console.error("[cron] runIndexNowSubmissionRetention threw", error);
-          }
-        })(),
+        ["error-log-retention", () => runErrorLogRetention(getDb(env.DB))],
+        ["indexnow-submission-retention", () => runIndexNowSubmissionRetention(getDb(env.DB))],
         // OPE-17 (2026-06-29) — inbound-email exception rails. Reconciles
         // exception statuses (already-handled → salvaged; spam/unsubscribe →
         // reversible rejected) then notifies the operator when the human-triage
         // salvage queue is non-empty AND changed (≤1/day). Independent of the
         // occurred-sweep, so it runs as its own failsoft sibling here. See
         // mcp-server/src/inbound-exception-notice.ts.
-        runInboundExceptionNotice(env),
+        ["inbound-exception-notice", () => runInboundExceptionNotice(env)],
         // OPE-308 — ONE Monday inventory replacing the daily queue notices
         // (roster research + promoter enrichment + goodwill open count), with a
         // week-over-week delta. Self-gates to Monday, so it is safe to call on
         // the daily cron. Alarms are untouched and still push on condition.
         // OPE-1164 — the weekly vendor-category watch runs FIRST (Monday-gated,
         // once per Monday) so the inventory email can report its new values.
-        runScheduledVendorCategoryWatch(getDb(env.DB), (message, error) =>
-          logError(env.DB, { source: "mcp:schedule:vendor-category-watch", message, error })
-        ).then(() => runWeeklyInventoryNotice(env)),
+        // OPE-1374 — sequenced, NOT chained: a `.then` chain meant a rejection
+        // in the watch silently skipped Monday's inventory notice.
+        [
+          "vendor-category-watch+weekly-inventory",
+          () =>
+            sequenceCronTasks(env.DB, controller.cron, [
+              [
+                "vendor-category-watch",
+                () =>
+                  runScheduledVendorCategoryWatch(getDb(env.DB), (message, error) =>
+                    logError(env.DB, {
+                      source: "mcp:schedule:vendor-category-watch",
+                      message,
+                      error,
+                    })
+                  ),
+              ],
+              ["weekly-inventory-notice", () => runWeeklyInventoryNotice(env)],
+            ]),
+        ],
         // A3.2 / K43 (2026-06-25) — nightly blog-link integrity audit. Sweeps
         // every PUBLISHED post and reports internal /events,/vendors,/venues,
         // /blog links that no longer resolve (drift a slug rename/merge left
         // behind). Writes an error_logs warn on any drift so the standing-
         // failure / page-error canaries alert. Failsoft via runMainAppSweep.
-        runMainAppSweep(
-          env,
+        [
           "blog-link-audit",
-          "/api/admin/content-links/audit",
-          (r) => `affected=${r.posts_affected ?? "?"} unresolved=${r.unresolved_total ?? "?"}`
-        ),
+          () =>
+            runMainAppSweep(
+              env,
+              "blog-link-audit",
+              "/api/admin/content-links/audit",
+              (r) => `affected=${r.posts_affected ?? "?"} unresolved=${r.unresolved_total ?? "?"}`
+            ),
+        ],
       ]).then(() => undefined)
     );
   },
@@ -2078,6 +2220,11 @@ export default {
       const response = await handleInternalApi(request, env, url);
       if (response) return response;
     }
+
+    // OPE-1391 — dynamic client registration is unauthenticated and writes to
+    // OAUTH_KV; cap it per IP before the provider sees the request.
+    const registrationRefused = await guardClientRegistration(request, env);
+    if (registrationRefused) return registrationRefused;
 
     // Everything else goes through the OAuth provider
     try {

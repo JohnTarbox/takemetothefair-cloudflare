@@ -42,6 +42,8 @@ const SCHEMA_SQL = `
     location_match_km REAL,
     latitude REAL,
     longitude REAL,
+    geocode_refusals INTEGER NOT NULL DEFAULT 0,
+    geocode_last_refused_at INTEGER,
     capacity INTEGER,
     amenities TEXT DEFAULT '[]',
     contact_email TEXT,

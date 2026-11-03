@@ -54,10 +54,10 @@ ALTER TABLE inbound_emails ADD COLUMN dmarc_result TEXT;
 ALTER TABLE inbound_emails ADD COLUMN sender_auth TEXT;
 
 -- The classic spoof tells, none of which we kept.
---   from_display_name — `"Jeremy Hall" <random@gmail.com>`
+--   from_display_name — `"Jordan Sample" <userquince@gmail.com>`
 --   reply_to          — reply somewhere other than the visible sender
 --   return_path       — bounce elsewhere again
---   sending_host      — the real Jeremy Hall came via
+--   sending_host      — the real Jordan Sample came via
 --                       PH0PR09MB11424.namprd09.prod.outlook.com, a Microsoft
 --                       365 tenant, which is checkable; we checked nothing
 --                       because we kept nothing.

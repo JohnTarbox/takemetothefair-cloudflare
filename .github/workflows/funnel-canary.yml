@@ -47,7 +47,7 @@ jobs:
           # Lets the spec stamp its result to D1. Absent => the spec skips
           # stamping rather than failing, so a missing secret degrades to
           # "no dead-man signal" and the heartbeat probe reds within 48h.
-          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+          CANARY_STAMP_KEY: ${{ secrets.CANARY_STAMP_KEY }}
         run: npx playwright test funnel-canary.spec.ts --project=mobile-safari --project=mobile-android --project=canary-desktop
 
       - name: Upload traces and screenshots

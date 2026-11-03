@@ -34,7 +34,11 @@ import {
 import { formatOccurrenceDate } from "@/lib/k18-vendor-grouping";
 import { groupVendorShows } from "@/lib/series/group-vendor-shows";
 import { VendorShowsByYear } from "@/components/vendors/VendorShowsByYear";
-import { eq, ne, and, or, asc, desc, sql, isNull, inArray, gte } from "drizzle-orm";
+import { eq, ne, and, or, asc, desc, sql, isNull, inArray } from "drizzle-orm";
+import { upcomingEndPredicate } from "@/lib/event-dates";
+import { withD1ReadLogged } from "@/lib/db/d1-resilience";
+import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
+import { DegradedPanel } from "@/components/layout/degraded-panel";
 import { VendorGallery, type GalleryImage } from "@/components/vendors/VendorGallery";
 import { VendorContactForm } from "@/components/vendors/VendorContactForm";
 import { VendorMonogramLogo } from "@/components/vendors/VendorMonogramLogo";
@@ -64,8 +68,10 @@ import {
   type DisplayableParent,
   type ParentDisplayInput,
   type VendorDisplayInput,
+  safeHref,
+  withPublicStreetAddress,
 } from "@takemetothefair/utils";
-import { cdnImage, focalPointGravity, OG_EVENT, OG_SQUARE } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, focalPointGravity, OG_EVENT, OG_SQUARE } from "@/lib/cdn-image";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -138,7 +144,34 @@ function resolveDisplayName(vendor: NonNullable<VendorWithHierarchy>): string {
   return displayVendorName(vendorInput, brandParentInput, operatorParentInput);
 }
 
-async function getVendor(slug: string) {
+/**
+ * OPE-790 rework (John, 2026-10-04: "extend the retry to vendor detail pages") —
+ * one jittered retry on a Cloudflare-side D1 blip. 12 vendor detail renders hit
+ * the error page on "D1_ERROR: Network connection lost" between 09-24 and 10-04.
+ * Wraps a PURE read: the view counter lives in `countVendorView`, never retried.
+ */
+function getVendor(slug: string) {
+  return withD1ReadLogged("app/vendors/[slug]/page.tsx:getVendor", () => getVendorOnce(slug));
+}
+
+/**
+ * Count one view — once per render, from the page (not generateMetadata), OUTSIDE
+ * the retry, best-effort. RAW SQL DELIBERATELY (OPE-332; enforced by
+ * scripts/check-view-counters-raw-sql.ts): vendors.updated_at carries
+ * `$onUpdateFn` and is this page's HTTP validator AND sitemap <lastmod>, so a
+ * Drizzle update would kill the 304 path and tell Google every vendor changed.
+ */
+async function countVendorView(vendorId: string): Promise<void> {
+  try {
+    await getCloudflareDb().run(
+      sql`UPDATE vendors SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ${vendorId}`
+    );
+  } catch (e) {
+    console.warn(`[vendor-detail] view count skipped for ${vendorId}:`, e);
+  }
+}
+
+async function getVendorOnce(slug: string) {
   const db = getCloudflareDb();
 
   try {
@@ -193,6 +226,8 @@ async function getVendor(slug: string) {
           startDate: events.startDate,
           endDate: events.endDate,
           seriesId: events.seriesId,
+          // OPE-1326 — the "Shows by year" chips address a multi-edition member by it.
+          editionKey: events.editionKey,
         },
         venues: {
           id: venues.id,
@@ -273,18 +308,26 @@ async function getVendor(slug: string) {
     const vendorSeriesIds = [
       ...new Set(vendorEvents.map((ve) => ve.event.seriesId).filter((x): x is string => !!x)),
     ];
-    const seriesRefById = new Map<string, { canonicalSlug: string; name: string }>();
+    const seriesRefById = new Map<
+      string,
+      { canonicalSlug: string; name: string; editionMode: string }
+    >();
     if (vendorSeriesIds.length > 0) {
       const seriesRows = await db
         .select({
           id: eventSeries.id,
           canonicalSlug: eventSeries.canonicalSlug,
           name: eventSeries.name,
+          editionMode: eventSeries.editionMode,
         })
         .from(eventSeries)
         .where(inArray(eventSeries.id, vendorSeriesIds));
       for (const s of seriesRows)
-        seriesRefById.set(s.id, { canonicalSlug: s.canonicalSlug, name: s.name });
+        seriesRefById.set(s.id, {
+          canonicalSlug: s.canonicalSlug,
+          name: s.name,
+          editionMode: s.editionMode,
+        });
     }
     const seriesShows = groupVendorShows(
       vendorEvents.map((ve) => {
@@ -293,6 +336,8 @@ async function getVendor(slug: string) {
           seriesId: ve.event.seriesId ?? null,
           seriesSlug: ref?.canonicalSlug ?? null,
           seriesName: ref?.name ?? null,
+          editionMode: ref?.editionMode ?? null,
+          editionKey: ve.event.editionKey ?? null,
           eventSlug: ve.event.slug,
           eventName: ve.event.name,
           startDate: ve.event.startDate ?? null,
@@ -317,17 +362,8 @@ async function getVendor(slug: string) {
       .leftJoin(venues, eq(events.venueId, venues.id))
       .where(eq(eventVendors.vendorId, vendor.vendors.id));
 
-    // Increment view count (drizzle/0051). Mirrors events/[slug]/page.tsx pattern.
-    // ISR cache provides implicit ~5-min dedup; absolute count undercounts but
-    // relative ordering (used by claimed_ready_for_enhanced_upsell rule) is preserved.
-    // RAW SQL DELIBERATELY (OPE-332) — see scripts/check-view-counters-raw-sql.ts.
-    // vendors.updated_at carries `$onUpdateFn`, so any Drizzle `.update(vendors)`
-    // also stamps it. updated_at is this page's HTTP validator AND its sitemap
-    // <lastmod>, so counting a view through Drizzle would both kill the 304 path
-    // and tell Google every vendor changed on every view. A view is not an edit.
-    await db.run(
-      sql`UPDATE vendors SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ${vendor.vendors.id}`
-    );
+    // OPE-790 rework — the view-count UPDATE moved out of this read into
+    // `countVendorView`, called once by the page outside the retry (see there).
 
     // EH1 Phase 1 — load hierarchy context so render + canonical can resolve.
     // LOCAL_OFFICE → fetch the brand parent row (drives resolveVendorDisplay)
@@ -494,7 +530,7 @@ async function getVendor(slug: string) {
               and(
                 inArray(eventVendors.vendorId, batch),
                 isPubliclyVisibleVendorLink(),
-                gte(events.endDate, new Date())
+                upcomingEndPredicate(new Date())
               )
             )
             .orderBy(asc(events.startDate))
@@ -516,7 +552,11 @@ async function getVendor(slug: string) {
     }
 
     return {
-      ...vendor.vendors,
+      // OPE-1398 — the street address is nulled HERE, at the one loader, for a
+      // self-signup vendor that has not opted in. The Location card, the
+      // VendorSchema JSON-LD and every client prop read this object, so none
+      // of them can render or serialize the hidden string.
+      ...withPublicStreetAddress(vendor.vendors),
       user: vendor.users
         ? { name: vendor.users.name, email: vendor.users.email }
         : { name: null, email: null },
@@ -630,7 +670,14 @@ async function getSimilarVendors(vendorId: string, vendorType: string | null, ci
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const vendor = await getVendor(slug);
+  let vendor: Awaited<ReturnType<typeof getVendor>>;
+  try {
+    vendor = await getVendor(slug);
+  } catch (e) {
+    // OPE-790 rework — a D1 blip that survived the retry: noindex, not a crash.
+    if (isD1PlatformFault(e)) return DEGRADED_METADATA;
+    throw e;
+  }
 
   if (!vendor) {
     return { title: "Vendor Not Found" };
@@ -651,6 +698,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   // inclusion must never disagree for the same vendor.
   const indexable = isVendorIndexable({
     ...vendor,
+    // OPE-1398 — the sitemap's SQL gate counts a STORED address as geo; a
+    // hidden one is still on file, so feed the predicate its presence, not the
+    // (possibly nulled) string. Hiding an address must not flip noindex.
+    address: vendor.hasStreetAddress ? "on file" : null,
     eventAssociationCount: vendor.seoEventAssociationCount,
     eventVenueGeoCount: vendor.seoEventVenueGeoCount,
   });
@@ -747,7 +798,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function VendorDetailPage({ params }: Props) {
   const { slug } = await params;
-  const vendor = await getVendor(slug);
+  let vendor: Awaited<ReturnType<typeof getVendor>>;
+  try {
+    vendor = await getVendor(slug);
+  } catch (e) {
+    // OPE-790 rework (John, 10-04) — an honest degraded panel, not the error
+    // boundary. Only a platform blip; our own query defects still throw.
+    if (isD1PlatformFault(e)) {
+      return <DegradedPanel what="this vendor" retryHref={`/vendors/${slug}`} />;
+    }
+    throw e;
+  }
 
   if (!vendor) {
     // Before giving up, check the slug history table — if this URL was a
@@ -758,6 +819,9 @@ export default async function VendorDetailPage({ params }: Props) {
     }
     notFound();
   }
+
+  // OPE-790 rework — counted here, once, outside getVendor's retry.
+  await countVendorView(vendor.id);
 
   // Soft-deleted vendor (drizzle/0053): if a redirect target is set and
   // still live, 301-redirect there. Otherwise the page should not render —
@@ -898,6 +962,8 @@ export default async function VendorDetailPage({ params }: Props) {
   // surfaces (H1, JSON-LD, breadcrumb, OG/Twitter, gallery alt) move to
   // the resolved string.
   const resolvedName = resolveDisplayName(vendor);
+  // OPE-1368 — stored URLs render through safeHref (http/https only).
+  const websiteHref = safeHref(vendor.website);
   return (
     <>
       <DetailPageTracker type="vendor" slug={vendor.slug} name={vendor.businessName} />
@@ -996,9 +1062,7 @@ export default async function VendorDetailPage({ params }: Props) {
                     onerror: "redirect" as const,
                   });
                   // 200px display slot; 1x/2x DPR variants.
-                  const srcSet = [200, 400]
-                    .map((w) => `${cdnImage(vendor.logoUrl!, opts(w))} ${w}w`)
-                    .join(", ");
+                  const srcSet = cdnSrcSet(vendor.logoUrl, [200, 400], (w) => opts(w));
                   return (
                     <div
                       className="w-[200px] h-[200px] rounded-xl flex-shrink-0 relative overflow-hidden"
@@ -1559,12 +1623,12 @@ export default async function VendorDetailPage({ params }: Props) {
                     {vendor.contactPhone}
                   </TrackedActionLink>
                 )}
-                {vendor.website && (
+                {websiteHref && (
                   <TrackedActionLink
                     event="outbound_website_click"
                     entityType="VENDOR"
                     entitySlug={vendor.slug}
-                    href={vendor.website}
+                    href={websiteHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-3 text-foreground hover:text-navy"
@@ -1574,17 +1638,21 @@ export default async function VendorDetailPage({ params }: Props) {
                   </TrackedActionLink>
                 )}
                 {Object.entries(parseVendorSocialLinks(vendor.socialLinks)).map(
-                  ([platform, url]) => (
-                    <a
-                      key={platform}
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-3 text-foreground hover:text-navy capitalize"
-                    >
-                      {platform}
-                    </a>
-                  )
+                  ([platform, url]) => {
+                    const socialHref = safeHref(url);
+                    if (!socialHref) return null;
+                    return (
+                      <a
+                        key={platform}
+                        href={socialHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 text-foreground hover:text-navy capitalize"
+                      >
+                        {platform}
+                      </a>
+                    );
+                  }
                 )}
               </CardContent>
             </Card>

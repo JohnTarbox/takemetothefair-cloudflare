@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { notifyApprovalIfNeeded } from "../approval-notification";
+import * as schema from "../db/schema";
 
 interface FakeEventRow {
   id: string;
@@ -20,14 +21,24 @@ interface FakeEventRow {
   approvalNotifiedAt: Date | null;
 }
 
-function makeDb(row: FakeEventRow | null) {
+function makeDb(row: FakeEventRow | null, suppressed = false) {
   const updateSpy = vi.fn(async () => undefined);
   const setSpy = vi.fn(() => ({ where: updateSpy }));
   const updateRoot = vi.fn(() => ({ set: setSpy }));
 
-  const limitSpy = vi.fn(async () => (row ? [row] : []));
-  const whereSpy = vi.fn(() => ({ limit: limitSpy }));
-  const fromSpy = vi.fn(() => ({ where: whereSpy }));
+  // The events read returns `row`; the OPE-1396 suppression lookup returns a
+  // hit only when `suppressed`; every other read (inbound email lookups for the
+  // feedback token and the workflow-outcome writer) finds nothing.
+  const limitFor = (table: unknown) =>
+    vi.fn(async () => {
+      if (table === schema.events) return row ? [row] : [];
+      if (table === schema.emailSuppressionList)
+        return suppressed ? [{ email: row?.suggesterEmail }] : [];
+      return [];
+    });
+  const fromSpy = vi.fn((table: unknown) => ({
+    where: vi.fn(() => ({ limit: limitFor(table) })),
+  }));
   const selectSpy = vi.fn(() => ({ from: fromSpy }));
 
   return {
@@ -98,6 +109,17 @@ describe("notifyApprovalIfNeeded — gate conditions", () => {
     const result = await notifyApprovalIfNeeded(db, { EMAIL_JOBS: queue }, "evt_123");
     expect(result.outcome).toBe("skipped:already-notified");
     expect(send).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("OPE-1396 — skips with 'suppressed' when the submitter is on email_suppression_list", async () => {
+    const { db, spies } = makeDb(baseRow, true);
+    const { queue, send } = makeQueue();
+    const result = await notifyApprovalIfNeeded(db, { EMAIL_JOBS: queue }, "evt_123");
+    expect(result.outcome).toBe("skipped:suppressed");
+    expect(send).not.toHaveBeenCalled();
+    // approval_notified_at untouched — lifting the suppression re-opens the notice.
+    expect(spies.updateRoot).not.toHaveBeenCalled();
     warnSpy.mockRestore();
   });
 

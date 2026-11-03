@@ -39,6 +39,10 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY, name TEXT, website TEXT,
     created_at INTEGER, updated_at INTEGER
   );
+  CREATE TABLE event_applications (
+    id TEXT PRIMARY KEY, event_id TEXT NOT NULL,
+    capacity_status TEXT NOT NULL DEFAULT 'UNKNOWN'
+  );
 `;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -198,5 +202,48 @@ describe("OPE-863 — the pre-existing filters still hold", () => {
     seed("dateless", { status: "TENTATIVE", lifecycle: "TENTATIVE", start: null });
     seed("dated", { start: "2026-12-01T12:00:00Z" });
     await expect(slugs()).resolves.toEqual(["event-dated", "event-dateless"]);
+  });
+});
+
+/**
+ * OPE-794 — John's ruling 2026-09-30: hide Apply for full / waitlist shows.
+ * Capacity lives per application LANE; the digest shows the event once, so the
+ * best lane decides (summarizeLaneCapacity).
+ */
+describe("OPE-794 — vendor capacity in the digest selection", () => {
+  let n = 0;
+  const lane = (eventId: string, status: string) =>
+    raw
+      .prepare("INSERT INTO event_applications (id, event_id, capacity_status) VALUES (?,?,?)")
+      .run(`lane-${++n}`, eventId, status);
+  const byslug = async () =>
+    Object.fromEntries(
+      (await selectNewThisWeekEvents(db, NOW)).map((e) => [e.slug, e.capacity ?? null])
+    );
+
+  it("drops a show whose every lane is FULL or CLOSED (Manchester Grange, all floors sold)", async () => {
+    seed("full");
+    lane("full", "FULL");
+    lane("full", "CLOSED");
+    seed("control"); // positive landmark: an ordinary show is still selected
+    await expect(byslug()).resolves.toEqual({ "event-control": "UNKNOWN" });
+  });
+
+  it("keeps a WAITLIST show, marked WAITLIST so the card drops its apply button (OgunquitFest)", async () => {
+    seed("ogunquit");
+    lane("ogunquit", "WAITLIST");
+    await expect(byslug()).resolves.toEqual({ "event-ogunquit": "WAITLIST" });
+  });
+
+  it("the best lane wins — full for crafters, open for food trucks is OPEN", async () => {
+    seed("mixed");
+    lane("mixed", "FULL");
+    lane("mixed", "OPEN");
+    await expect(byslug()).resolves.toEqual({ "event-mixed": "OPEN" });
+  });
+
+  it("no lanes at all is UNKNOWN and still selected — ~every row today", async () => {
+    seed("nolanes");
+    await expect(byslug()).resolves.toEqual({ "event-nolanes": "UNKNOWN" });
   });
 });

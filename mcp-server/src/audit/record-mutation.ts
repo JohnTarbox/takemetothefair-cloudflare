@@ -14,6 +14,7 @@
 import { adminActions } from "../schema.js";
 import { buildMutationAudit, type MutationAuditInput } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
+import { logAuditWriteFailure } from "./log-audit-failure.js";
 
 /**
  * Record a mutation to a public-facing row. Best-effort: an audit row must
@@ -28,7 +29,16 @@ export async function recordMutation(db: Db, input: MutationAuditInput): Promise
     if (!row) return false;
     await db.insert(adminActions).values(row);
     return true;
-  } catch {
+  } catch (error) {
+    // Still best-effort (never fails the write it describes), but no longer
+    // silent: the lost row is logged with the entity it described (OPE-1374).
+    await logAuditWriteFailure(db, {
+      source: "audit:record-mutation",
+      action: `${input.entityType}.${input.verb}`,
+      targetType: input.entityType,
+      targetId: input.entityId,
+      error,
+    });
     return false;
   }
 }

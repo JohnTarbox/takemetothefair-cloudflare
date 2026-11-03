@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDateOnly, formatTimestamp } from "@/lib/datetime";
 import type { EventSchemaOrg } from "@/lib/db/schema";
+import { safeHref } from "@takemetothefair/utils";
 
 interface EventData {
   id: string;
@@ -315,7 +316,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
               <p>Click &quot;Refresh&quot; to fetch schema.org data from the ticket URL.</p>
               {event?.ticketUrl && (
                 <a
-                  href={event.ticketUrl}
+                  href={safeHref(event.ticketUrl)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-royal hover:underline mt-2"
@@ -451,7 +452,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
                     {" "}
                     from{" "}
                     <a
-                      href={schemaOrg.ticketUrl}
+                      href={safeHref(schemaOrg.ticketUrl)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-royal hover:underline"
@@ -472,7 +473,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
               </p>
               {schemaOrg.ticketUrl && (
                 <a
-                  href={schemaOrg.ticketUrl}
+                  href={safeHref(schemaOrg.ticketUrl)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-royal hover:underline mt-2"

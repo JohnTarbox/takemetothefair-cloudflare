@@ -249,6 +249,11 @@ export interface LifecycleTransitionContext {
   lifecycleReason?: string | null;
   /** `events.start_date`. */
   startDate?: Date | null;
+  /**
+   * OPE-1218 — the start date a RESCHEDULED transition would write. The
+   * inferred-OCCURRED escape opens RESCHEDULED only when this is in the future.
+   */
+  newStartDate?: Date | null;
   /** Injectable clock, for tests. */
   now?: Date;
 }
@@ -327,17 +332,40 @@ function isSpuriousTerminalValue(
  * toward CANCELLED.
  *
  * Exact equality, not a prefix: one writer produces this string.
+ *
+ * OPE-1218 — POSTPONED and RESCHEDULED open too. A storm weekend (2026-09-26/27)
+ * postponed Trumbull Arts Festival, Brookline Porchfest and Franklin Farm
+ * Harvest Festival by one to two weeks; the sweep marked all three OCCURRED on
+ * the abandoned date, and the table then had no way to say "it moved". A
+ * postponement outranks a calendar inference for the same reason a
+ * cancellation does.
+ *
+ * What stays shut is resurrecting an event that really is over. RESCHEDULED
+ * opens only when the NEW start date is in the future, since a reschedule to a
+ * past date is a rewrite of history rather than a postponement. SCHEDULED and
+ * TENTATIVE stay shut: neither says why the event did not happen on its date.
  */
+const INFERRED_OCCURRENCE_TARGETS: readonly EventLifecycle[] = [
+  EVENT_LIFECYCLE.CANCELLED,
+  EVENT_LIFECYCLE.POSTPONED,
+  EVENT_LIFECYCLE.RESCHEDULED,
+];
+
 function isInferredOccurrence(
   from: EventLifecycle,
   to: EventLifecycle,
   context: LifecycleTransitionContext | undefined
 ): boolean {
-  return (
-    from === EVENT_LIFECYCLE.OCCURRED &&
-    to === EVENT_LIFECYCLE.CANCELLED &&
-    context?.lifecycleReason === AUTO_OCCURRED_REASON
-  );
+  if (from !== EVENT_LIFECYCLE.OCCURRED) return false;
+  if (context?.lifecycleReason !== AUTO_OCCURRED_REASON) return false;
+  if (!INFERRED_OCCURRENCE_TARGETS.includes(to)) return false;
+  if (to === EVENT_LIFECYCLE.RESCHEDULED) {
+    const next = context.newStartDate;
+    if (!next || Number.isNaN(next.getTime())) return false;
+    const now = context.now ?? new Date();
+    return next.getTime() > now.getTime();
+  }
+  return true;
 }
 
 /**
@@ -408,6 +436,38 @@ export function describeLifecycleRefusal(
  * the strict table applies unchanged, so every existing caller keeps its
  * current behaviour until it opts in.
  */
+/**
+ * OPE-1219 — refuse a RESCHEDULED that would record the NEW date as "previous".
+ *
+ * RESCHEDULED snapshots the row's current dates into previous_*. That is right
+ * only when the dates have not already been moved. When `update_event` moved
+ * them first (Peabody International Festival: 09-27 → 10-04, then RESCHEDULED
+ * to 10-04), the snapshot is the new date, and the page told search engines
+ * previousStartDate == startDate. The tell is a "reschedule" whose new start is
+ * the row's current start day. Supplying the true previous date (OPE-1218's
+ * `previous_start_date`) is the way through, so the refusal names it.
+ *
+ * Shared by the MCP tool and the admin route, which swap dates separately.
+ * Compared by UTC calendar day because dates are stored at noon UTC.
+ */
+export function noOpRescheduleReason(input: {
+  currentStartDate: Date | null | undefined;
+  newStartDate: Date | null | undefined;
+  previousSupplied: boolean;
+}): string | null {
+  const { currentStartDate, newStartDate, previousSupplied } = input;
+  if (previousSupplied || !currentStartDate || !newStartDate) return null;
+  if (Number.isNaN(currentStartDate.getTime()) || Number.isNaN(newStartDate.getTime())) return null;
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  if (day(currentStartDate) !== day(newStartDate)) return null;
+  return (
+    `RESCHEDULED to ${day(newStartDate)}, which is already this event's start date: ` +
+    "the dates were moved before this transition, so recording them as previous would " +
+    "claim the event moved from that date to itself. Pass previous_start_date (and " +
+    "previous_end_date) with the date it was actually moved FROM."
+  );
+}
+
 export function validateLifecycleTransition(
   from: EventLifecycle,
   to: EventLifecycle,
@@ -632,6 +692,10 @@ export const EVENT_CATEGORIES = [
   "Music Festival",
   "Outdoor Show", // OPE-1058 — absorbs Sportsmen's Show, RV Show, RV & Camping Show
   "Parade",
+  // OPE-955 (John, 2026-09-30) — neighbourhood porch-music festivals. No fixed
+  // venue (the stages are residents' porches), so neither a venue page nor
+  // "Music Festival" could aggregate them; this value backs /events/<state>/porchfests.
+  "Porchfest",
   "Pop Culture Convention", // OPE-1058 — absorbs Pop Culture
   "Renaissance Fair", // OPE-1058 — absorbs Renaissance Faire
   "Senior Expo", // OPE-1058
@@ -831,6 +895,34 @@ export function isOpenToVendorApplications(status: string | null | undefined): b
   return VENDOR_CAPACITY_OPEN_TO_APPLICATIONS.includes(status as VendorCapacityStatus);
 }
 
+/**
+ * OPE-794 — one event's capacity, summarised across its application LANES, for
+ * a vendor-facing surface that shows the event once (the vendor digest).
+ *
+ * The best lane wins: a fair full for crafters but open for food trucks is
+ * still worth a vendor's attention. Order: OPEN > UNKNOWN > WAITLIST > the rest.
+ *
+ *  - `OPEN`        positive evidence a lane is taking applications
+ *  - `UNKNOWN`     no lanes, or no evidence — never rendered as "open", but
+ *                  not hidden either: it is ~every row today
+ *  - `WAITLIST`    the best a vendor can do is join a waitlist
+ *  - `UNAVAILABLE` every lane is FULL or CLOSED, or carries a status this code
+ *                  does not know — a status added later is NOT treated as an
+ *                  invitation until somebody decides it is (allow-list, as
+ *                  above)
+ */
+export type EventCapacitySummary = "OPEN" | "UNKNOWN" | "WAITLIST" | "UNAVAILABLE";
+
+export function summarizeLaneCapacity(
+  laneStatuses: ReadonlyArray<string | null | undefined>
+): EventCapacitySummary {
+  if (laneStatuses.length === 0) return "UNKNOWN";
+  if (laneStatuses.some((s) => s === "OPEN")) return "OPEN";
+  if (laneStatuses.some((s) => s === "UNKNOWN" || s == null)) return "UNKNOWN";
+  if (laneStatuses.some((s) => s === "WAITLIST")) return "WAITLIST";
+  return "UNAVAILABLE";
+}
+
 // "Producer-class" events — the big PRODUCED shows that publish a
 // web exhibitor directory worth backfilling (home/garden, boat/RV,
 // sportsman, trade, fiber, craft-festival, fairs). Deliberately
@@ -924,9 +1016,9 @@ export const PROMOTER_ENRICHMENT_STATUS_VALUES = [
   "ENRICHED",
   "NO_SOURCE",
   "BLOCKED",
-  // OPE-962 — the site was fetched successfully and staged ZERO candidates on
-  // PROMOTER_ENRICHMENT_EXHAUST_AFTER consecutive attempts: there is nothing
-  // more to extract. Distinct from NO_SOURCE (no website at all) and BLOCKED
+  // OPE-962/OPE-1279 — the site was fetched successfully on
+  // PROMOTER_ENRICHMENT_EXHAUST_AFTER consecutive live attempts that applied
+  // nothing and staged nothing new: there is nothing more to extract. Distinct from NO_SOURCE (no website at all) and BLOCKED
   // (the fetch failed). Without it NEEDS_ENRICHMENT had no exit short of every
   // field filling, so unenrichable promoters were re-fetched every ~30 days
   // forever and the queue could only grow (485 on 08-19, 516 on 09-13).
@@ -935,8 +1027,23 @@ export const PROMOTER_ENRICHMENT_STATUS_VALUES = [
 ] as const;
 export type PromoterEnrichmentStatus = (typeof PROMOTER_ENRICHMENT_STATUS_VALUES)[number];
 
-/** OPE-962 — consecutive zero-candidate attempts before a promoter is EXHAUSTED. */
-export const PROMOTER_ENRICHMENT_EXHAUST_AFTER = 3;
+/**
+ * OPE-1279 — consecutive EMPTY live attempts before a promoter is EXHAUSTED.
+ *
+ * Empty = a dry_run=false attempt that applied no field and staged no NEW
+ * candidate (`promoters.enrichment_empty_attempts`). Was 3 zero-candidate
+ * attempts under OPE-962, which never fired in prod: re-staging the same
+ * unreviewed logo reset it every run.
+ *
+ * Re-queue: `update_promoter(requeue_enrichment: true)` moves one promoter back
+ * to NEEDS_ENRICHMENT; a website change does it automatically. After an
+ * EXTRACTOR RULE change (e.g. OPE-249 hardening) the exhausted cohort may now
+ * yield, so re-queue it in bulk (an operator prod write, not automated):
+ *   UPDATE promoters SET enrichment_status = 'NEEDS_ENRICHMENT',
+ *     enrichment_empty_attempts = 0, enrichment_attempted_at = NULL
+ *   WHERE enrichment_status = 'EXHAUSTED';
+ */
+export const PROMOTER_ENRICHMENT_EXHAUST_AFTER = 2;
 
 // The five enrichment target fields tracked in `promoters.enrichment_coverage`
 // (a JSON snapshot of which are filled). Fill-rate metrics aggregate these.
@@ -1263,4 +1370,16 @@ export const AWAITING_SUBMITTER_EXPIRY_DAYS = 21;
 // OPE-772 — the send-gate allowlist + resolver, shared by both Workers so the
 // MCP Worker can report the gates only it enforces (OPERATOR_OUTBOUND_ENABLED).
 export * from "./send-gates";
+// OPE-1293 — the shared "is this flag dark?" rule (main app + MCP inventory).
+export * from "./capability-flag-dark";
 export * from "./extraction-families";
+
+// ── OPE-1531 — inbound intents the submit pipeline runs on ────────
+// `submit` is only the submit@ ADDRESS-FALLBACK intent (classifier below
+// threshold or errored — `routeIntents`, mcp-server/src/email-handler.ts); a
+// confident classifier stores `new_event`. Both dispatch to the same submit
+// pipeline (mcp-server/src/workflows/inbound-email.ts). A reader that filters
+// on `submit` alone sees only the low-confidence slice — the bug behind
+// OPE-1530 (heartbeat red ~22d on a live lane) and OPE-1531 (sender quality
+// + source-quality yield). Guarded by src/lib/__tests__/submit-intents-ope1531.test.ts.
+export const SUBMIT_PIPELINE_INTENTS = ["submit", "new_event"] as const;

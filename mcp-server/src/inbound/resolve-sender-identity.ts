@@ -4,7 +4,7 @@
  * ── The finding this exists for ────────────────────────────────────────────
  * Five high-value correspondents were measured on 2026-09-02. **All five were
  * already entities in our own database at the moment they wrote, and not one
- * was recognised** — Jeremy Hall (CT DEEP), Paradise City Arts, David Lerner,
+ * was recognised** — Jordan Sample (CT DEEP), Paradise City Arts, David Lerner,
  * aéhkō, TIMEPROOFUSA. Every one got a generic acknowledgement, and two got
  * the same template twice. The join that identifies them costs 216ms and
  * nothing in the pipeline ran it.
@@ -151,8 +151,8 @@ export async function resolveSenderIdentity(
 
   // ── (a) contact-email ────────────────────────────────────────────────────
   // Compared lowercased on BOTH sides. `users.email` uniqueness is
-  // case-sensitive in this schema, so `Jeremy.Hall@ct.gov` and
-  // `jeremy.hall@ct.gov` can both exist; a case-sensitive compare here would
+  // case-sensitive in this schema, so `Pat.tamarack@ct.gov` and
+  // `pat.tamarack@ct.gov` can both exist; a case-sensitive compare here would
   // miss the row that is actually there.
   const [vendorEmail, promoterEmail, userEmail] = await Promise.all([
     db

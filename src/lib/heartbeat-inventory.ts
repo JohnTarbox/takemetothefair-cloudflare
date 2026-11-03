@@ -95,6 +95,8 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
       "email-defect-candidate-detector",
       "photo-intake",
       "photo-intake-storage-record",
+      "enrich-on-match-disposition",
+      "free-text-extract-record",
     ],
     note: "Writers inside this Workflow each carry their own probe; a new writer here needs one too, and this check cannot see it (see header).",
   },
@@ -119,6 +121,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   "cron:main-app:/api/admin/content-links/audit": U,
   "cron:runOccurredTransitionSweep": { probes: ["occurred-transition-sweep"] },
   "cron:runRequestSampleRetention": { probes: ["request-sample-retention"] },
+  "cron:runUnterminatedCrossingNotice": { probes: ["unterminated-crossing-notice"] },
   "cron:runScheduledBingInspectionSweep": U,
   "cron:runScheduledBingLivenessCheck": { probes: ["bing-liveness"] },
   "cron:runScheduledBurstCapSelfTest": { probes: ["burst-cap-selftest"] },
@@ -151,6 +154,8 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   // OPE-1164 — weekly (Monday-gated) vendor-category new-value watch.
   // OPE-1205 — daily sync-staleness sweep; one admin_actions row per run.
   "cron:runScheduledSyncStaleSweep": { probes: ["sync-stale-sweep"] },
+  // OPE-1239 — */10 CI-trigger watchdog; stamps a run row at most hourly.
+  "cron:runScheduledCiTriggerWatchdog": { probes: ["ci-trigger-watchdog"] },
   "cron:runScheduledVendorCategoryWatch": { probes: ["vendor-category-watch"] },
   "cron:runScheduledQueueRerank": U,
   "cron:runScheduledSelfConsistencyCron": U,

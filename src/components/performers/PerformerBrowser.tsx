@@ -7,7 +7,7 @@
  */
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import { Music, MapPin, ShieldCheck, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";

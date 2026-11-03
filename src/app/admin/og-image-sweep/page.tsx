@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { safeHref } from "@takemetothefair/utils";
 
 interface ProgressResponse {
   remaining: number;
@@ -250,7 +251,7 @@ export default function OgImageSweepPage() {
                           </td>
                           <td className="py-2 pr-3 font-mono text-foreground max-w-[300px] truncate">
                             <a
-                              href={row.source_url}
+                              href={safeHref(row.source_url)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-royal hover:underline"
@@ -261,7 +262,7 @@ export default function OgImageSweepPage() {
                           <td className="py-2 pr-3 font-mono text-foreground max-w-[420px] truncate">
                             {row.image_url ? (
                               <a
-                                href={row.image_url}
+                                href={safeHref(row.image_url)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-royal hover:underline"

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
  * delivered still resolves. Shares the verify+suppress core.
  */
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { verifyUnsubscribeToken } from "@takemetothefair/utils";
+import { unsubscribeVerifySecrets, verifyUnsubscribeTokenAny } from "@takemetothefair/utils";
 import { handleUnsubscribe } from "@/lib/unsubscribe-page";
 import { logError } from "@/lib/logger";
 import { applyGlobalOptOut } from "@/lib/email/unsubscribe-stores";
@@ -19,14 +19,15 @@ export async function GET(request: Request) {
   const token = url.searchParams.get("t") ?? "";
 
   const env = getCloudflareEnv();
-  const secret = env.UNSUBSCRIBE_SECRET || env.INTERNAL_API_KEY || "";
+  // OPE-1346 — verify against every accepted secret, not just the signer.
+  const secrets = unsubscribeVerifySecrets(env);
   const db = getCloudflareDb();
 
   return handleUnsubscribe({
     email,
     token,
-    secret,
-    verify: verifyUnsubscribeToken,
+    secret: secrets[0] ?? "",
+    verify: (_one, addr, tok) => verifyUnsubscribeTokenAny(secrets, addr, tok),
     // OPE-869 — one writer for a GLOBAL opt-out, across BOTH stores.
     //
     // This path used to insert an `email_suppression_list` row and nothing

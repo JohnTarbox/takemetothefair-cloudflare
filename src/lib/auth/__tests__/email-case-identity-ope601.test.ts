@@ -33,11 +33,11 @@ describe("normalizeEmail", () => {
     // major provider distinguishes it, and a user who capitalises their own
     // address has not entered a different one.
     expect(normalizeEmail("Admin@KewlKandylz.com")).toBe("admin@kewlkandylz.com");
-    expect(normalizeEmail("jim@mfeSelfDefense.com")).toBe("jim@mfeselfdefense.com");
+    expect(normalizeEmail("oakdesk@mfeSelfDefense.com")).toBe("oakdesk@mfeselfdefense.com");
   });
 
   it("trims, because a trailing space is not a different mailbox", () => {
-    expect(normalizeEmail("  Angelacurtis14@aol.com \n")).toBe("angelacurtis14@aol.com");
+    expect(normalizeEmail("  Userivy@aol.com \n")).toBe("userivy@aol.com");
   });
 
   it("treats nullish as no address rather than throwing", () => {
@@ -98,7 +98,7 @@ describe("0245 backfill — lowercases singletons, refuses to break the collisio
     ins.run("b670e4ac", "admin@kewlkandylz.com");
     ins.run("96142359", "Admin@kewlkandylz.com");
     // A capitalised singleton — locked out today, and safe to fold.
-    ins.run("3ca5f2c1", "Marleny.Abreu@unitedwayri.org");
+    ins.run("3ca5f2c1", "Pat.juniper@unitedwayri.org");
     // An already-lowercase row, which must not be touched.
     ins.run("aaaa1111", "someone@example.com");
     return db;
@@ -110,7 +110,7 @@ describe("0245 backfill — lowercases singletons, refuses to break the collisio
     const row = db["prepare"](`SELECT email FROM users WHERE id = '3ca5f2c1'`).get() as {
       email: string;
     };
-    expect(row.email).toBe("marleny.abreu@unitedwayri.org");
+    expect(row.email).toBe("pat.juniper@unitedwayri.org");
   });
 
   it("leaves the colliding row alone instead of aborting", () => {

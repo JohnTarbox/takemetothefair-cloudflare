@@ -16,7 +16,7 @@
  * assertion is on the mechanism — what the extractor was given — not on a
  * downstream gate that might have caught it for another reason.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSlug } from "@takemetothefair/utils";
 import { InboundEmailWorkflow } from "../src/workflows/inbound-email.js";
 import { submissionProseText } from "../src/email-handlers/strip-quoted-reply.js";
@@ -79,7 +79,12 @@ function installFetch(cfg: {
       const target = u.searchParams.get("url") ?? "";
       return Response.json({
         success: true,
-        content: `CONTENT_FOR:${target}`,
+        // OPE-1253 — the page states the dates of the events it yields; a
+        // date the source never names is dropped by grounding and the row refused.
+        content: `CONTENT_FOR:${target} ${(cfg.urlEvents[target] ?? [])
+          .map((e) => e.startDate)
+          .filter(Boolean)
+          .join(" ")}`.trim(),
         fetchMethod: "standard",
       });
     }
@@ -119,6 +124,18 @@ beforeEach(() => {
   vi.unstubAllGlobals();
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
+  // The specimens are real inbounds with real dates in their BODIES ("October
+  // 11th", "September 26, 2026"), and a date stated in the body is grounded —
+  // so on the wall clock these tests began failing the day each date passed
+  // (Hackmatack went red 2026-10-12: its Oct 11 candidate hit the past-date
+  // guard). Pin "now" to when the specimens arrived. Only Date is faked, so
+  // the pipeline's timers and awaits run normally.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T12:00:00Z"));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 /** inbound 09eccd4f, verbatim (blank-line runs condensed). */
@@ -126,9 +143,9 @@ const HACKMATACK =
   "Hi Carolyn,\n\nHope you're doing well! I wanted to confirm if you'll be joining us at " +
   "Hackmatack for our fall festival on October 11th? We'd love to have you! Please let me " +
   "know, Thank you!\n\nBest,\n\nAram\n\nhttps://www.hackmatackplayhouse.org/\n\n" +
-  "Aram Guptill | Executive Producer\n\nHackmatack Farm + Playhouse\n\n~ (207) 698-1807\n\n" +
+  "Avery Sample | Executive Producer\n\nHackmatack Farm + Playhouse\n\n~ (207) 698-1807\n\n" +
   "~ 538 School Street, Berwick, ME 03901\n\n\n\n" +
-  'From: Aram Guptill <aram@hackmatack.org>\nTo: "colors"<colors@symdak.com>\n' +
+  'From: Avery Sample <heathdesk@hackmatack.org>\nTo: "colors"<orchiddesk@symdak.com>\n' +
   "Date: Thu, 14 May 2026 08:23:19 -0400\nSubject: Hackmatack Open Farm Day- June 21st\n\n" +
   "Hello Carolyn\n\nI hope you're doing well! Thank you for reaching out to be a part of our " +
   "craft + community fair at Hackmatack. Some logistics: I have you down as being interested " +
@@ -171,7 +188,7 @@ describe("OPE-1123 specimen 2 — quoted history is not a source", () => {
     });
     const { step } = makeStep({
       parsedUrl: null,
-      fromAddress: "shpandabear10@gmail.com",
+      fromAddress: "userpoppy@gmail.com",
       subject: "",
       attachmentCount: 0,
       classifiedSubIntent: "new_event",
@@ -202,7 +219,10 @@ describe("OPE-1123 specimen 1 — a listing page is not an event", () => {
       bodyExtract: () => [
         {
           name: "Thomas College Craft Fair",
-          startDate: futureDate(3),
+          // OPE-1253 — the date the verbatim specimen states. A date the
+          // source never names is dropped by grounding, and the email lane
+          // refuses a dateless create.
+          startDate: "2026-09-26",
           venueName: "Thomas College Field House",
         },
       ],

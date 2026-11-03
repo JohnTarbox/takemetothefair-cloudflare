@@ -4,6 +4,7 @@
 // duplicating SearchAction on every page.
 
 import { SOCIAL_LINKS } from "@/lib/social-links";
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 
 // TODO(jtarbox): confirm canonical logo URL — currently the OG default
 // PNG, which works but is not a branded logo asset.
@@ -56,9 +57,6 @@ export function OrganizationSchema() {
   };
 
   return (
-    <script
-      type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
-    />
+    <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: safeJsonLd(schema) }} />
   );
 }

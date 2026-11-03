@@ -27,7 +27,8 @@ import {
   VENUE_TZ,
 } from "@takemetothefair/datetime";
 import { parseJsonArray } from "@/types";
-import type { events as eventsTable, venues as venuesTable } from "@/lib/db/schema";
+import type { venues as venuesTable } from "@/lib/db/schema";
+import type { PublicEvent } from "@/lib/db/event-join-projection";
 
 /** "YYYY-MM-DD" of an ISO instant in the given IANA zone (en-CA formats as ISO date). */
 function localDayOfInstant(iso: string, tz: string): string {
@@ -41,7 +42,8 @@ function localDayOfInstant(iso: string, tz: string): string {
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
-type EventRow = typeof eventsTable.$inferSelect;
+// OPE-1387 — the public allow-listed event shape (the adapter only reads public fields).
+type EventRow = PublicEvent;
 type VenueRow = typeof venuesTable.$inferSelect;
 
 /**

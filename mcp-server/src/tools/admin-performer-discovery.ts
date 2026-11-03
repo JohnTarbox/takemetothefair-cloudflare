@@ -34,6 +34,7 @@ import { combinedSimilarity } from "@takemetothefair/utils";
 import { ensureUniquePerformerSlug, linkAppearance, FUZZY_THRESHOLD } from "./admin-performers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 
 /** How many live performers to hold in memory for fuzzy matching. */
 const PERFORMER_SCAN_CAP = 2000;
@@ -305,8 +306,15 @@ export async function harvestPerformersFromSchemaOrg(
         }),
         createdAt: new Date(),
       });
-    } catch {
+    } catch (error) {
       /* audit is non-critical */
+      await logAuditWriteFailure(db, {
+        source: "mcp:tool:harvest_performers_from_schema_org",
+        action: "performer.harvest",
+        targetType: "performer",
+        targetId: "batch",
+        error,
+      });
     }
   }
 

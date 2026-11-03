@@ -22,13 +22,12 @@
  * separate follow-up that touches the suggest-event submit pipeline.
  */
 
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDateDriftFindings, promoters } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-
-export const revalidate = 300;
 
 // Promoters with fewer than this many events default to T2 (watch) —
 // not enough signal to either trust (T1) or flag (T3). Same default
@@ -159,6 +158,7 @@ async function loadPromoterQuality(): Promise<PromoterRow[]> {
 export const dynamic = "force-dynamic";
 
 export default async function PromoterQualityPage() {
+  await requireAdmin();
   const rows = await loadPromoterQuality();
   const tierCounts = rows.reduce(
     (acc, r) => {

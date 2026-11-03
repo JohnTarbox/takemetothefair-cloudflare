@@ -374,6 +374,16 @@ export function detectRosterFlatNumbered(text: string): RosterEntry[] {
   const first = findMarker(1, 0);
   if (first < 0) return [];
 
+  // OPE-1300 — a "Last Name" first column. The New Gloucester sheet's header
+  // reads "Last Name Activity - Org Name", and without this every one of its
+  // 73 rows staged as "<surname> <business>" ("Danforth The Salty Bee Maine",
+  // "Norton Eric Norton"). Keyed on the header the sheet itself prints just
+  // before row 1, never on a guess about which words look like surnames — so a
+  // list with no such column (where "Smith's Farm Stand" IS the business name)
+  // is untouched.
+  const lineStart = cleaned.lastIndexOf("\n", first) + 1;
+  const surnameFirst = /\blast\s*name\b/i.test(cleaned.slice(lineStart, first));
+
   const out: RosterEntry[] = [];
   const seen = new Set<string>();
   let n = 1;
@@ -389,7 +399,19 @@ export function detectRosterFlatNumbered(text: string): RosterEntry[] {
         ? (cleaned.slice(valueStart).split(/\r?\n/)[0] ?? "")
         : cleaned.slice(valueStart, next);
 
-    const name = cleanName(rawValue);
+    let name = cleanName(rawValue);
+    let detail: string | null = null;
+    if (surnameFirst) {
+      // The surname is the first token; the business is the rest. A row that
+      // is ONLY a surname (space 61, "Harris") has no space and keeps it — it
+      // is the only identifier the row has. (`cleanName` has already collapsed
+      // whitespace, so a space always has a non-empty remainder after it.)
+      const sp = name.indexOf(" ");
+      if (sp > 0) {
+        detail = `contact surname: ${name.slice(0, sp)}`;
+        name = name.slice(sp + 1).trim();
+      }
+    }
     // An unassigned space is not an exhibitor. Spaces 39/52/63 read "OPEN".
     if (name.toUpperCase() !== "OPEN" && isPlausibleName(name)) {
       const key = name.toLowerCase();
@@ -397,7 +419,7 @@ export function detectRosterFlatNumbered(text: string): RosterEntry[] {
       // position is kept, exactly as the bullet and table forms dedupe.
       if (!seen.has(key)) {
         seen.add(key);
-        out.push({ position: n, name, detail: null });
+        out.push({ position: n, name, detail });
       }
     }
 

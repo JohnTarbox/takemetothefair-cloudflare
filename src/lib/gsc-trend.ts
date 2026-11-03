@@ -9,7 +9,7 @@
  * Pure over its injected `db` so it unit-tests against in-memory SQLite the
  * same way `gsc-sweep`'s pickUrls does (see __tests__/gsc-trend.test.ts).
  */
-import { and, eq, gte, lte, like, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, lte, or, sql, type SQL } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "./db/schema";
 import { gscDailyTotals, gscSearchMetrics } from "./db/schema";
@@ -131,8 +131,17 @@ export async function getGscTrend(db: Db, params: GscTrendParams = {}): Promise<
   if (params.query) conds.push(eq(gscSearchMetrics.query, params.query));
   if (params.page) {
     // Accept a full URL (exact) OR a path suffix of the stored full URL.
+    //
+    // OPE-1376: the suffix test is substr(), NOT `like(page, \`%${path}\`)`.
+    // D1 throws on a LIKE pattern over 50 chars, and an event path is often
+    // longer than that (/events/<long-name>-2026). lower() on both sides keeps
+    // the old LIKE's ASCII case-insensitivity.
+    const suffix = params.page.toLowerCase();
     conds.push(
-      or(eq(gscSearchMetrics.page, params.page), like(gscSearchMetrics.page, `%${params.page}`))!
+      or(
+        eq(gscSearchMetrics.page, params.page),
+        sql`lower(substr(${gscSearchMetrics.page}, ${-suffix.length})) = ${suffix}`
+      )!
     );
   }
   if (params.startDate) conds.push(gte(gscSearchMetrics.date, params.startDate));

@@ -363,7 +363,7 @@ export function detectSitePlatforms(html: string): string[] {
  * The gate had no format validation. `email_domain_mismatch` was standing in
  * for it, which fails in exactly the case that matters: a malformed value on
  * the vendor's OWN domain. Verified in prod — candidate 7149 proposed
- * `bill.@thirstyrobotbrewing.com` at confidence 0.90 with no flags at all,
+ * `pat.@thirstyrobotbrewing.com` at confidence 0.90 with no flags at all,
  * which is inside the auto-merge predicate.
  *
  * Deliberately NOT a full RFC 5322 implementation. RFC 5322 permits quoted
@@ -439,7 +439,7 @@ function hostOf(url: string): string | null {
 /**
  * OPE-249 #5 — a regex-scraped email is trustworthy as the org's public contact
  * only when its domain matches the site OR it's a generic mailbox. A personal
- * name at a THIRD domain (the cited `kkeating@granitemediagroup.com`) is not.
+ * name at a THIRD domain (the cited `jasminedesk@granitemediagroup.com`) is not.
  */
 export function emailHasDomainAffinity(email: string, sourceUrl: string): boolean {
   const e = email.toLowerCase().trim();
@@ -741,7 +741,7 @@ export function extractVendorContact(html: string, sourceUrl: string): VendorExt
     if (m && !isPlaceholderEmail(m[0]) && !isMalformedEmail(m[0])) {
       // OPE-249 #5 — a regex email is the weakest signal; without domain
       // affinity (matches the site, or a generic mailbox) it's likely a
-      // personal address at a third domain (`kkeating@granitemediagroup.com`).
+      // personal address at a third domain (`jasminedesk@granitemediagroup.com`).
       // Keep it but drop confidence below the clean bar so it stages flagged.
       const decoded = normalizeExtractedEmail(m[0]); // OPE-504/OPE-249 — see above
       const affinity = emailHasDomainAffinity(decoded, sourceUrl);

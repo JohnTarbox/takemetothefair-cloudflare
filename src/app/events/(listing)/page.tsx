@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
+import { isD1PlatformFault } from "@/lib/db/degraded";
+import { DegradedPanel } from "@/components/layout/degraded-panel";
 import { Suspense } from "react";
 import Link from "next/link";
 import { Search, Filter, Store, Heart, X } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { CalendarSSR } from "@/components/events/calendar-ssr";
-import { isCal1SsrMonthEnabled, isCal2ViewsEnabled } from "@/lib/flags";
 import {
   upcomingEndPredicate,
   whenWindowEnd,
@@ -49,6 +50,14 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
 import { countPublicFilteredEvents, hasPublicFilters } from "@/lib/events-filter-count";
 import { withD1ReadLogged } from "@/lib/db/d1-resilience";
+import {
+  DAYS_FILTERS,
+  DAYS_FILTER_LABELS,
+  DAYS_FILTER_SHORT_LABELS,
+  daysFilterPredicate,
+  easternDateStr,
+  parseDaysFilter,
+} from "@/lib/events/days-filter";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -122,6 +131,8 @@ interface SearchParams {
   includePast?: string;
   includeTBD?: string;
   when?: string;
+  /** OPE-1487 — day-of-week filter: weekday-only | weekday-any | weekend-only | weekend-any. */
+  days?: string;
   myEvents?: string;
   favorites?: string;
   indoorOutdoor?: string;
@@ -137,6 +148,8 @@ interface SearchParams {
   cal_year?: string;
   /** CAL2 — anchor date ("YYYY-MM-DD") for the Week/Day/Custom time-grid views; default today. */
   cal_date?: string;
+  /** OPE-1488 — the calendar's focus date ("YYYY-MM-DD"), shared by every sub-view. */
+  date?: string;
   /** CAL2 — day count (2–7) for the Custom time-grid view; default 3. */
   cal_days?: string;
 }
@@ -233,6 +246,18 @@ async function getEventsOnce(
       if (searchParams.when === "week" || searchParams.when === "weekend") {
         conditions.push(hasOccurrenceInWindowOrUndated(new Date(), whenEnd));
       }
+    }
+
+    // OPE-1487 — Days filter. Pure SQL (a few bound params), so it composes
+    // with paging and the count. Only upcoming days count unless includePast.
+    const daysFilter = parseDaysFilter(searchParams.days);
+    if (daysFilter) {
+      conditions.push(
+        daysFilterPredicate(
+          daysFilter,
+          searchParams.includePast === "true" ? null : easternDateStr(new Date())
+        )
+      );
     }
 
     if (searchParams.query) {
@@ -552,6 +577,7 @@ async function getEventsOnce(
       searchParams.includePast ||
       searchParams.includeTBD ||
       searchParams.when ||
+      searchParams.days ||
       searchParams.myEvents ||
       searchParams.favorites
     );
@@ -626,6 +652,7 @@ async function getEventsOnce(
           categoryLen: searchParams.category?.length ?? 0,
           state: searchParams.state ?? null,
           when: searchParams.when ?? null,
+          days: searchParams.days ?? null,
           view: searchParams.view ?? null,
           includePast: searchParams.includePast ?? null,
           includeTBD: searchParams.includeTBD ?? null,
@@ -733,6 +760,7 @@ function EventsFilter({
       {searchParams.cal_date && (
         <input type="hidden" name="cal_date" value={searchParams.cal_date} />
       )}
+      {searchParams.date && <input type="hidden" name="date" value={searchParams.date} />}
       {searchParams.cal_days && (
         <input type="hidden" name="cal_days" value={searchParams.cal_days} />
       )}
@@ -819,6 +847,29 @@ function EventsFilter({
             </option>
           ))}
         </select>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-foreground mb-1" htmlFor="events-days">
+          Days
+        </label>
+        <select
+          id="events-days"
+          name="days"
+          defaultValue={parseDaysFilter(searchParams.days) ?? ""}
+          aria-describedby="events-days-hint"
+          className="w-full px-3 py-2 border border-input rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+        >
+          <option value="">Any day</option>
+          {DAYS_FILTERS.map((f) => (
+            <option key={f} value={f}>
+              {DAYS_FILTER_LABELS[f]}
+            </option>
+          ))}
+        </select>
+        <p id="events-days-hint" className="text-xs text-muted-foreground mt-1">
+          &ldquo;Only&rdquo; means every open day; &ldquo;Open on&rdquo; means at least one.
+        </p>
       </div>
 
       <div>
@@ -971,15 +1022,30 @@ export default async function EventsPage({
   const favoriteUserId = isLoggedIn && params.favorites === "true" ? session.user.id : undefined;
 
   const viewMode = parseView(params.view);
-  // CAL1 — when the flag is ON, the calendar view renders the new SSR Month module
-  // (Month-only) instead of the legacy client calendar. Default OFF → no change.
-  const useSsrCalendar = viewMode === "calendar" && isCal1SsrMonthEnabled();
-  const cal2Enabled = isCal2ViewsEnabled();
-  const [{ events: eventsList, total, page, limit }, categories, states] = await Promise.all([
-    getEvents(params, vendorId, favoriteUserId, isVendor || session?.user?.role === "ADMIN"),
-    getCategories(),
-    getStates(),
-  ]);
+  // CAL1/CAL2 — the calendar view is the SSR calendar (Month + Agenda/Year/
+  // Week/Day sub-views). The CAL1_SSR_MONTH / CAL2_VIEWS flags that gated it
+  // were pinned "true" permanently (OPE-994) and retired in OPE-1394.
+  const useSsrCalendar = viewMode === "calendar";
+  let loaded: [
+    Awaited<ReturnType<typeof getEvents>>,
+    Awaited<ReturnType<typeof getCategories>>,
+    Awaited<ReturnType<typeof getStates>>,
+  ];
+  try {
+    loaded = await Promise.all([
+      getEvents(params, vendorId, favoriteUserId, isVendor || session?.user?.role === "ADMIN"),
+      getCategories(),
+      getStates(),
+    ]);
+  } catch (e) {
+    // OPE-790 rework (John, 10-04) — an honest degraded panel, not the error
+    // boundary, when a D1 platform blip survives the retry. Our own query
+    // defects still throw. (No noindex here: this route's metadata cannot see
+    // the failure — see the OPE-790 receipt.)
+    if (isD1PlatformFault(e)) return <DegradedPanel what="events" retryHref="/events" />;
+    throw e;
+  }
+  const [{ events: eventsList, total, page, limit }, categories, states] = loaded;
 
   const totalPages = Math.ceil(total / limit);
 
@@ -1077,7 +1143,6 @@ export default async function EventsPage({
           <CalendarSSR
             events={eventsList}
             searchParams={params as Record<string, string | undefined>}
-            cal2Enabled={cal2Enabled}
           />
 
           <CalendarPastEventsCta />
@@ -1105,7 +1170,9 @@ export default async function EventsPage({
               emptyMessage={
                 params.myEvents === "true"
                   ? "You are not participating in any events yet. Apply to events to see them here."
-                  : "No events match your filters. Try adjusting your search."
+                  : parseDaysFilter(params.days)
+                    ? `No events match “${DAYS_FILTER_SHORT_LABELS[parseDaysFilter(params.days)!]}” with your other filters. Try “Any day” or the other weekday/weekend option.`
+                    : "No events match your filters. Try adjusting your search."
               }
               currentPage={page}
               totalPages={totalPages}

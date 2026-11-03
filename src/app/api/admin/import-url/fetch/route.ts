@@ -17,6 +17,7 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { recordBrowserRenderingAttempt } from "@/lib/browser-rendering-attempt";
 import { checkRateLimit, meteredCallerIdentifier, rateLimitResponse } from "@/lib/rate-limit";
+import { checkEmailFetchDailyCeiling, isEmailDrivenCaller } from "@/lib/email-fetch-ceiling";
 
 // The fetch-with-Browser-Rendering-escalation primitives (fetchStandard,
 // fetchViaBrowserRendering, shouldEscalate) moved to
@@ -47,8 +48,9 @@ export const GET = withAuthorized(
   async ({ request, db, userId }) => {
     // OPE-972 — every call may escalate to billed Browser Rendering. Metered:
     // keyed on the admin (or the internal caller), fail-closed.
+    const meteredIdentifier = meteredCallerIdentifier(request, userId);
     const rate = await checkRateLimit(request, "import-url-fetch", {
-      metered: { identifier: meteredCallerIdentifier(request, userId) },
+      metered: { identifier: meteredIdentifier },
     });
     if (!rate.allowed) return rateLimitResponse(rate);
 
@@ -82,11 +84,30 @@ export const GET = withAuthorized(
     // see @takemetothefair/site-fetch ssrf-guard. Defense-in-depth on an
     // admin-only route on Cloudflare Workers (no metadata service / internal
     // HTTP network).
+    //
+    // OPE-1370 (SSRF5) — this is the FIRST-hop check. This route receives
+    // email-supplied URLs (submit@ → mcp-server submit.ts), and redirects used
+    // to be followed unchecked after it; `fetchStandard` now re-checks every
+    // hop (site-fetch guardedFetch) and caps the body, and a refused hop is
+    // never escalated. Browser Rendering's own navigation cannot be re-checked
+    // per hop — `fetchViaBrowserRendering` guards its first hop only.
     if (isBlockedSsrfHost(parsedUrl.hostname)) {
       return NextResponse.json(
         { success: false, error: "Internal URLs are not allowed" },
         { status: 400 }
       );
+    }
+
+    // OPE-1412 — the GLOBAL daily ceiling on email-driven fetches, on top of
+    // the per-sender bucket above (which a sender-rotating stream sidesteps).
+    // Checked here, after the per-sender bucket allowed the call and after the
+    // URL is known to be fetchable, so neither a sender already over its own
+    // limit nor a refused URL spends a global slot. A refusal is the same 429
+    // the per-sender bucket returns → `fetch-429` in submitFetch → the existing
+    // failed-fetch path; the email is still processed and gets the same reply.
+    if (isEmailDrivenCaller(meteredIdentifier)) {
+      const ceiling = await checkEmailFetchDailyCeiling(request, db);
+      if (!ceiling.allowed) return rateLimitResponse(ceiling);
     }
 
     try {
@@ -99,6 +120,9 @@ export const GET = withAuthorized(
 
       let html: string;
       let fetchMethod: "standard" | "browser-rendering";
+      // OPE-424 — "http" when the origin had no working TLS and the page was
+      // read over plain HTTP. Callers treat that as lower-confidence.
+      const transport = standard.ok ? standard.transport : undefined;
 
       if (standard.ok) {
         html = standard.html;
@@ -288,11 +312,16 @@ export const GET = withAuthorized(
       // to same-site links plus known ticket-vendor hosts, which is exactly the
       // set the crawler is allowed to act on — anything else would be payload
       // the consumer must discard.
-      const links = extractAnchors(html, parsedUrl.href).filter((link) => {
+      // OPE-1250 — the page's own URL is where the redirect LANDED, not the
+      // link we were handed. Resolving anchors against `share.google/…` turned
+      // wgme.com's relative nav into `share.google/news/…` (37da2bf5) and the
+      // same-site filter compared against the wrong site. Only the standard
+      // path exposes redirects; Browser Rendering keeps the requested URL.
+      const finalUrl = fetchMethod === "standard" && standard.ok ? standard.finalUrl : undefined;
+      const pageUrl = finalUrl ?? parsedUrl.href;
+      const links = extractAnchors(html, pageUrl).filter((link) => {
         try {
-          return (
-            isSameSite(link.url, parsedUrl.href) || isTicketVendorHost(new URL(link.url).hostname)
-          );
+          return isSameSite(link.url, pageUrl) || isTicketVendorHost(new URL(link.url).hostname);
         } catch {
           return false;
         }
@@ -312,6 +341,8 @@ export const GET = withAuthorized(
         // landing page.
         jsonLdEvents: metadata.jsonLdEvents || null,
         fetchMethod,
+        ...(fetchMethod === "standard" && transport ? { transport } : {}),
+        ...(finalUrl && finalUrl !== parsedUrl.href ? { finalUrl } : {}),
       });
     } catch (error) {
       await logError(db, {

@@ -32,6 +32,8 @@ import { venues, adminActions, entityDataCitations } from "@/lib/db/schema";
 import { buildEntityCitations, toCitationFields } from "@takemetothefair/utils";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { geocodeAddressDetailed, lookupPlace } from "@/lib/google-maps";
+import { flagVenuePinIfFarFromTown } from "@/lib/venues/pin-sanity";
+import { fillVenueGoogleAmenities } from "@/lib/venues/google-amenity-fill";
 import {
   preflight,
   judge,
@@ -230,6 +232,18 @@ export async function geocodeVenueRow(
         createdAt: new Date(),
       });
     }
+
+    // OPE-1079 — a geocoder pin far from its own town silently breaks GPS
+    // photo matching (New Portland sat 9 km off). Flag, never block.
+    const pinCheck = await flagVenuePinIfFarFromTown(db, {
+      venueId: v.id,
+      city: v.city,
+      state: v.state,
+      lat: pin.lat,
+      lng: pin.lng,
+      source: `venues_geocode:${outcome.status}`,
+    });
+    if (pinCheck) outcome = { ...outcome, pin_warning: pinCheck.warning };
   }
 
   return outcome;
@@ -271,7 +285,16 @@ export async function geocodeNewVenue(
       .where(eq(venues.id, venueId))
       .limit(1);
     if (!row) return null;
-    return await geocodeVenueRow(db, row as VenueForGeocode, apiKey, false);
+    const outcome = await geocodeVenueRow(db, row as VenueForGeocode, apiKey, false);
+    // OPE-1480 — Google's accessibility + parking for the place just pinned
+    // (or already held), so a new venue reaches the event page's "Visiting"
+    // box without a manual backfill. Its own try: the pin is already stored.
+    try {
+      await fillVenueGoogleAmenities(db, venueId, apiKey, { actor: "venue-create:amenities" });
+    } catch {
+      /* the backfill route is the retry */
+    }
+    return outcome;
   } catch {
     // Deliberately silent: see the docblock. The nightly sweep is the retry.
     return null;

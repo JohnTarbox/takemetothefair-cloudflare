@@ -22,6 +22,7 @@ import {
 import { fetchVendorSite } from "./fetch-site.js";
 import { extractVendorContact } from "./extract.js";
 import { applyHumanVeto } from "./human-veto.js";
+import { writeGuardedFills } from "./guarded-fill.js";
 import { buildEnrichmentResult, domainLabel, sourceDomainRelatesToVendor } from "./safety-rules.js";
 import type { VendorRowForEnrichment } from "./types.js";
 
@@ -465,9 +466,22 @@ async function applyFills(
 ): Promise<string[]> {
   // ONE map, shared with `applyFillsForTest`. A second copy here is exactly how
   // a test starts asserting against a column set production no longer uses.
-  const { update, applied } = decideFills(candidates, AUTO_MERGE_COLUMNS);
+  const { update, applied: decided } = decideFills(candidates, AUTO_MERGE_COLUMNS);
+  if (decided.length === 0) return [];
+  // OPE-1393 (CLB6) — `decideFills` judged "empty" from the row read BEFORE the
+  // site fetch. Each write re-checks `col IS NULL` so a value an operator typed
+  // in meanwhile is never overwritten; only the fills that land count.
+  const applied = await writeGuardedFills(
+    db,
+    vendors,
+    vendors.id,
+    vendorId,
+    decided.map((field) => {
+      const key = AUTO_MERGE_COLUMNS[field];
+      return { field, key, value: update[key], readValue: null };
+    })
+  );
   if (applied.length === 0) return [];
-  await db.update(vendors).set(update).where(eq(vendors.id, vendorId));
   // Mark ONLY the fields we actually applied as auto_merged. Flagged/conflict
   // candidates (e.g. a city_mismatch) stay 'pending' for manual review.
   await db

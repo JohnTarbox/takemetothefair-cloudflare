@@ -1,3 +1,4 @@
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 interface VenueSchemaProps {
   name: string;
   description?: string | null;
@@ -100,7 +101,7 @@ export function VenueSchema({
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
-          __html: JSON.stringify(JSON.parse(JSON.stringify(formerSchema))),
+          __html: safeJsonLd(formerSchema),
         }}
       />
     );
@@ -162,7 +163,7 @@ export function VenueSchema({
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(cleanSchema) }}
+      dangerouslySetInnerHTML={{ __html: safeJsonLd(cleanSchema) }}
     />
   );
 }

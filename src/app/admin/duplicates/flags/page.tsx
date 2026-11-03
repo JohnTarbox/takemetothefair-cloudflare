@@ -10,6 +10,7 @@
  * enforced by src/app/admin/layout.tsx. An empty queue renders a clean empty
  * state (the OPE-58 crash class).
  */
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
@@ -21,6 +22,7 @@ import {
 import { formatDateRange } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DuplicateFlagActions } from "@/components/admin/DuplicateFlagActions";
+import { safeHref } from "@takemetothefair/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -58,7 +60,12 @@ function Side({ title, side }: { title: string; side: FlagSide | null }) {
         {side.sourceUrl && (
           <>
             {" · "}
-            <a href={side.sourceUrl} target="_blank" rel="noreferrer" className="underline">
+            <a
+              href={safeHref(side.sourceUrl)}
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
               {side.sourceUrl}
             </a>
           </>
@@ -74,6 +81,7 @@ function Side({ title, side }: { title: string; side: FlagSide | null }) {
 }
 
 export default async function AdminDuplicateFlagsPage() {
+  await requireAdmin();
   const db = getCloudflareDb();
   const now = new Date();
   const [flags, alertDays] = await Promise.all([

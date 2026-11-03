@@ -4,6 +4,7 @@ import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { getSiteSearchQueries, ScApiError, ScConfigError } from "@/lib/search-console";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
+import { isGscExportRowQuery } from "@takemetothefair/utils";
 
 type ScOrderBy = "impressions" | "clicks" | "position" | "ctr";
 
@@ -45,6 +46,28 @@ export async function GET(request: NextRequest) {
       minImpressions: params.minImpressions,
       orderBy,
     });
+    // OPE-1255 — someone else's GSC export rows typed into Google are excluded
+    // by default (pass include_export_rows=1 to keep them). The totals are
+    // reduced by what was removed, and the removal is reported, never silent.
+    if (url.searchParams.get("include_export_rows") !== "1") {
+      const removed = result.queries.filter((q) => isGscExportRowQuery(q.query));
+      if (removed.length > 0) {
+        const kept = result.queries.filter((q) => !isGscExportRowQuery(q.query));
+        const sum = (k: "clicks" | "impressions") => removed.reduce((n, q) => n + (q[k] ?? 0), 0);
+        return NextResponse.json({
+          success: true,
+          ...result,
+          queries: kept,
+          totals: {
+            ...result.totals,
+            clicks: result.totals.clicks - sum("clicks"),
+            impressions: result.totals.impressions - sum("impressions"),
+            queries: result.totals.queries - removed.length,
+          },
+          excludedExportRowQueries: { count: removed.length, impressions: sum("impressions") },
+        });
+      }
+    }
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
     if (error instanceof DateRangeError) {

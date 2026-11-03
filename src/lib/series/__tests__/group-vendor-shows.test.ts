@@ -5,6 +5,8 @@ const item = (over: Partial<VendorShowInput> & { eventSlug: string }): VendorSho
   seriesId: null,
   seriesSlug: null,
   seriesName: null,
+  editionMode: null,
+  editionKey: null,
   eventName: "Event",
   startDate: null,
   ...over,

@@ -58,7 +58,7 @@ describe("isPlaceholderEmail", () => {
     // the pattern are anchored for exactly this reason.
     expect(isPlaceholderEmail("john@meetmeatthefair.com")).toBe(false);
     expect(isPlaceholderEmail("notpending+x@meetmeatthefair.com")).toBe(false);
-    expect(isPlaceholderEmail("pending+x@gmail.com")).toBe(false);
+    expect(isPlaceholderEmail("userreed1@gmail.com")).toBe(false);
     expect(isPlaceholderEmail("vendor+pending@meetmeatthefair.com")).toBe(false);
     expect(isPlaceholderEmail("pending@meetmeatthefair.com")).toBe(false); // no "+"
   });

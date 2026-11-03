@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { safeHref } from "@takemetothefair/utils";
 import { LayoutGrid, Table, Users, ExternalLink, Download } from "lucide-react";
 import { VenueCard } from "./venue-card";
 import {
@@ -226,9 +227,9 @@ export function VenuesView({ venues, emptyMessage = "No venues found" }: VenuesV
                           >
                             View
                           </Link>
-                          {venue.website && (
+                          {safeHref(venue.website) && (
                             <a
-                              href={venue.website}
+                              href={safeHref(venue.website)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-muted-foreground hover:text-muted-foreground"

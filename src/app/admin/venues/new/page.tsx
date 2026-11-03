@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { GooglePlaceSearch } from "@/components/google-place-search";
 import type { PlaceLookupResult } from "@/lib/google-maps";
+import { safeHref } from "@takemetothefair/utils";
 
 export default function NewVenuePage() {
   const router = useRouter();
@@ -411,7 +412,7 @@ export default function NewVenuePage() {
                           className="bg-muted text-sm"
                         />
                         <a
-                          href={googleData.googleMapsUrl}
+                          href={safeHref(googleData.googleMapsUrl)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="shrink-0 inline-flex items-center px-3 py-2 text-xs border rounded-md hover:bg-muted"

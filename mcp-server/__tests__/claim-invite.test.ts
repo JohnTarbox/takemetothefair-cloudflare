@@ -257,3 +257,54 @@ describe("create_claim_invite — non-admin", () => {
     expect(s.handlers.has("create_claim_invite")).toBe(false);
   });
 });
+
+describe("create_claim_invite — clickable link + reissue (OPE-1340)", () => {
+  const sha256Hex = async (s: string) =>
+    Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s))))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  const linkIn = (text: string) => text.match(/https:\/\/\S+invite=[a-f0-9]+/)![0];
+  const attrEscape = (u: string) => u.replace(/&/g, "&amp;");
+
+  it("the claim URL in body_html is inside an href — not bare text", async () => {
+    seedPromoter({ contactEmail: "chair@shows.test" });
+    await invoke("create_claim_invite", { entity_type: "PROMOTER", entity_id: "p-1" });
+    const primary = sent[0] as { text: string; html: string };
+    const url = linkIn(primary.text); // landmark: the text part carries the bare URL
+    expect(url).toContain("/register?role=PROMOTER");
+    expect(primary.html).toContain(`href="${attrEscape(url)}"`);
+    expect(primary.html).toContain(">Claim your page</a>");
+    // Every occurrence of the URL in the HTML is inside an <a …>…</a>.
+    const outsideAnchors = primary.html.replace(/<a\b[^>]*>[\s\S]*?<\/a>/g, "");
+    expect(outsideAnchors).not.toContain(attrEscape(url));
+  });
+
+  it("resend: revokes the live invite, mints and sends a fresh one — the old link stops working", async () => {
+    seedVendor({ contactEmail: "owner@acme.test" });
+    await invoke("create_claim_invite", { entity_type: "VENDOR", entity_id: "v-1" });
+    const oldToken = linkIn((sent[0] as { text: string }).text).split("invite=")[1];
+
+    const again = await invoke("create_claim_invite", {
+      entity_type: "VENDOR",
+      entity_id: "v-1",
+      resend: true,
+    });
+    expect(again.json).toMatchObject({ created: true, reissued: true });
+    expect(sent).toHaveLength(4); // primary + BCC, twice
+    const newToken = linkIn((sent[2] as { text: string }).text).split("invite=")[1];
+    expect(newToken).not.toBe(oldToken);
+
+    const rows = await db.select().from(claimTokens);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tokenHash).toBe(await sha256Hex(newToken));
+    expect(rows.map((r) => r.tokenHash)).not.toContain(await sha256Hex(oldToken));
+  });
+
+  it("without resend, an active invite is still a no-op (unchanged)", async () => {
+    seedVendor({ contactEmail: "owner@acme.test" });
+    await invoke("create_claim_invite", { entity_type: "VENDOR", entity_id: "v-1" });
+    const second = await invoke("create_claim_invite", { entity_type: "VENDOR", entity_id: "v-1" });
+    expect(second.json.reason).toBe("active_invite_exists");
+    expect(sent).toHaveLength(2);
+  });
+});

@@ -1,4 +1,6 @@
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
+import { normalizeHealthMessageKey } from "@/lib/site-health-group-key";
 import {
   bingPagesIndexed,
   bingScanIssueCount,
@@ -29,6 +31,7 @@ import {
   DollarSign,
   Facebook,
   FileText,
+  MessageSquare,
   Search,
   Sparkles,
   TrendingUp,
@@ -43,7 +46,7 @@ import {
   readIndexNowPauseForDisplay,
   type BreakerState,
 } from "@/lib/indexnow-breaker";
-import { analyticsEvents, indexnowSubmissions } from "@/lib/db/schema";
+import { analyticsEvents, bingDailyMetrics, indexnowSubmissions } from "@/lib/db/schema";
 import {
   BingApiError,
   BingConfigError,
@@ -72,7 +75,7 @@ import {
   type SiteSearchQueriesResult,
   type SitemapStatus,
 } from "@/lib/search-console";
-import { computeMilestoneLayout, MILESTONE_CHART_DIMS } from "@/lib/charts/milestone-layout";
+import { MilestoneEChart } from "@/components/admin/charts/admin-charts";
 import { toMilestonePoints, type GscMilestonePoint } from "@/lib/charts/milestone-points";
 import { formatDateOnly, formatTimestampForServer } from "@/lib/datetime";
 import {
@@ -86,6 +89,7 @@ import {
   type Trend,
   type WindowKey,
 } from "@/lib/analytics-overview";
+import { gscWindowRange, windowDays } from "@/lib/analytics-overview/shared";
 import type { SiteHealthVerdict, InstrumentReading } from "@/lib/site-health-unified/verdict";
 import { ENGAGEMENT_WINDOW_DAYS } from "@/lib/site-health-unified/engagement";
 import {
@@ -96,6 +100,9 @@ import {
   type KpiState,
 } from "@/lib/kpi-thresholds";
 import { isExpectedNonIndexing } from "@/lib/site-health-classify";
+import { CATALOG_BASIS_NOTE } from "@/lib/analytics-overview/catalog-basis";
+import { resolveTabAlias } from "@/lib/analytics-overview/tab-aliases";
+import { notFound, redirect } from "next/navigation";
 import {
   AEO_BUCKET_LABELS,
   aeoBadgeColor,
@@ -108,6 +115,8 @@ import {
   type FacebookTrafficSummary,
   type Ga4Env,
 } from "@/lib/ga4";
+import { safeHref } from "@takemetothefair/utils";
+import { computeContactScorecard, type ContactScorecard } from "@takemetothefair/db-schema";
 
 export const dynamic = "force-dynamic";
 
@@ -146,14 +155,30 @@ function fmtUsd(n: number): string {
 }
 
 export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
+  await requireAdmin();
   const params = await searchParams;
-  const tab: TabKey = isTabKey(params.tab) ? params.tab : "overview";
+  // OPE-1347 #7 — an unknown tab used to fall through to Overview silently, so
+  // `?tab=first-party` showed the wrong page with no hint. A missing tab is
+  // still Overview; a known near-miss redirects to its slug; anything else is
+  // a real not-found.
+  const tabParam = typeof params.tab === "string" ? params.tab : undefined;
+  const aliased = tabParam ? resolveTabAlias(tabParam) : undefined;
+  if (aliased) {
+    const q = new URLSearchParams({ tab: aliased });
+    if (typeof params.window === "string") q.set("window", params.window);
+    redirect(`/admin/analytics?${q.toString()}`);
+  }
+  if (tabParam !== undefined && !isTabKey(tabParam)) notFound();
+  const tab: TabKey = isTabKey(tabParam) ? tabParam : "overview";
   const window: WindowKey = isWindowKey(params.window) ? params.window : "7d";
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <h1 className="text-2xl font-bold text-foreground">Analytics</h1>
+        {/* OPE-1347 rework — the Google tab now honours the window, so it gets
+            the selector too (links keep the tab). */}
+        {tab === "google" && <WindowSelector currentWindow={window} tab="google" />}
         {tab === "overview" && (
           <div className="flex items-center gap-3">
             <WindowSelector currentWindow={window} />
@@ -183,7 +208,7 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
 
       {tab === "overview" && <OverviewTab window={window} />}
       {tab === "recommendations" && <RecommendationsTab />}
-      {tab === "google" && <GoogleTab />}
+      {tab === "google" && <GoogleTab window={window} />}
       {tab === "bing" && <BingTab />}
       {tab === "site-health" && <SiteHealthTab />}
       {tab === "first-party-events" && <FirstPartyEventsTab />}
@@ -210,10 +235,11 @@ async function loadAeoReferralsSafe(env: Ga4Env): Promise<AeoReferralsResult | n
 async function OverviewTab({ window }: { window: WindowKey }) {
   const db = getCloudflareDb();
   const env = getCloudflareEnv();
-  const [snapshot, aeo, fb] = await Promise.all([
+  const [snapshot, aeo, fb, contacts] = await Promise.all([
     loadOverviewSnapshot(db, env, window),
     loadAeoReferralsSafe(env),
     getFacebookTrafficSafe(env),
+    loadContactScorecardSafe(db),
   ]);
 
   return (
@@ -269,6 +295,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <AccountEngagementCardView snapshot={snapshot} />
         <AeoReferralsCardView aeo={aeo} />
         <FacebookReferralsCardView summary={fb} />
+        <ContactScorecardCardView card={contacts} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
@@ -393,7 +420,13 @@ function KpiStatusLegend() {
   );
 }
 
-function WindowSelector({ currentWindow }: { currentWindow: WindowKey }) {
+function WindowSelector({
+  currentWindow,
+  tab = "overview",
+}: {
+  currentWindow: WindowKey;
+  tab?: "overview" | "google";
+}) {
   return (
     <div className="inline-flex items-center bg-muted rounded-lg p-1 text-xs">
       {WINDOW_KEYS.map((w) => {
@@ -401,7 +434,11 @@ function WindowSelector({ currentWindow }: { currentWindow: WindowKey }) {
         return (
           <Link
             key={w}
-            href={`/admin/analytics?window=${w}`}
+            href={
+              tab === "overview"
+                ? `/admin/analytics?window=${w}`
+                : `/admin/analytics?tab=${tab}&window=${w}`
+            }
             className={`px-2.5 py-1 rounded-md font-medium ${
               active
                 ? "bg-card text-foreground shadow-sm"
@@ -593,7 +630,7 @@ function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   return (
     <KpiCard
       tileId="overview.google-clicks"
-      title={`Google clicks (last ${card.windowDays}d)`}
+      title={`Google clicks (${card.window.start} → ${card.window.end})`}
       value={fmt(card.current)}
       icon={<Search className="w-5 h-5 text-royal" />}
       iconColor="bg-info-soft"
@@ -639,6 +676,8 @@ function CatalogGrowthCard({ snapshot }: { snapshot: OverviewSnapshot }) {
             {fmt(card.totals.events)} events · {fmt(card.totals.venues)} venues ·{" "}
             {fmt(card.totals.vendors)} vendors
           </span>
+          {/* OPE-1347 #2 — say which population each count is. */}
+          <span className="text-[11px] text-muted-foreground">{CATALOG_BASIS_NOTE}</span>
         </div>
       }
     />
@@ -682,10 +721,18 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
-                Site health
-                <TileInfo id="overview.site-health" title="Site health" />
+                {/* OPE-1347 #9 — a different NAME from the Site Health tab's
+                    "action items": this counts every open issue at every
+                    severity; the tab counts errors + warnings (minus expected
+                    non-indexing) plus data/traffic items. */}
+                Open site issues (all severities)
+                <TileInfo id="overview.site-health" title="Open site issues" />
               </p>
               <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">{fmt(c.total)}</p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                incl. notices · the Site Health tab&apos;s &ldquo;action items&rdquo; is a narrower
+                count
+              </p>
               <div className="mt-2 text-xs flex gap-2">
                 <span
                   className={c.errors > 0 ? "text-red-700 font-semibold" : "text-muted-foreground"}
@@ -816,7 +863,7 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
     <KpiCard
       tileId="overview.site-ctr"
       measurement={badge ? null : c.ctrMeasured}
-      title={badge ? "Site CTR (Google, 7d)" : "Site CTR (Google, last window)"}
+      title={`Site CTR (Google, ${c.windowStart} → ${c.windowEnd})`}
       value={badge ?? measurementText(c.ctrMeasured, (v) => fmtPct(v, 2))}
       icon={<Search className="w-5 h-5 text-violet-600" />}
       iconColor="bg-violet-100"
@@ -825,16 +872,15 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5">
-          {badge && (
-            <span className="text-xs text-muted-foreground">
-              window view (top 500 queries): {measurementText(c.ctrMeasured, (v) => fmtPct(v, 2))}
-            </span>
-          )}
-          <span className={`inline-flex items-center gap-1 text-xs font-medium ${trendColor}`}>
-            <TrendIcon className="w-3 h-3" /> prev {fmtPct(c.previousCtr, 2)}
-          </span>
+          {/* OPE-1347 #4/#5 — same table (gsc_daily_totals) and window as the
+              headline, and the dates are printed so it never reads as another
+              tile's window. */}
           <span className="text-xs text-muted-foreground">
-            {fmt(c.clicks)} clicks / {fmt(c.impressions)} impr
+            {c.windowStart} → {c.windowEnd} · {fmt(c.clicks)} clicks / {fmt(c.impressions)} impr
+          </span>
+          <span className={`inline-flex items-center gap-1 text-xs font-medium ${trendColor}`}>
+            <TrendIcon className="w-3 h-3" /> prev{" "}
+            {measurementText(c.previousMeasured, (v) => fmtPct(v, 2))}
           </span>
         </div>
       }
@@ -910,6 +956,73 @@ function aeoStateFromTotal(total: number): KpiState {
   if (color === "green") return "GREEN";
   if (color === "yellow") return "YELLOW";
   return "RED";
+}
+
+// OPE-1511 — contact relationship scorecard. A read failure shows "—" rather
+// than taking the Overview tab down with it.
+async function loadContactScorecardSafe(
+  db: ReturnType<typeof getCloudflareDb>
+): Promise<ContactScorecard | null> {
+  try {
+    return await computeContactScorecard(db, { windowDays: 28 });
+  } catch (e) {
+    console.error("[analytics] contact scorecard failed", e);
+    return null;
+  }
+}
+
+function pctOrDash(x: number | null): string {
+  return x === null ? "—" : fmtPct(x, 0);
+}
+
+function ContactScorecardCardView({ card }: { card: ContactScorecard | null }) {
+  const title = "Contact replies ≤1 business day (28d)";
+  if (!card) {
+    return (
+      <KpiCard
+        tileId="overview.contact-scorecard"
+        title={title}
+        value="—"
+        icon={<MessageSquare className="w-5 h-5 text-muted-foreground" />}
+        iconColor="bg-muted"
+        footer={<span className="text-xs text-muted-foreground">Scorecard unavailable</span>}
+      />
+    );
+  }
+  const cur = card.current;
+  const pri = card.prior;
+  const leaks =
+    cur.leakage.contactEmailsWithoutObligation.length +
+    card.allTime.unlinkedOutreachReplies.length +
+    card.allTime.validatedContactsSilent12Months.length;
+  return (
+    <KpiCard
+      tileId="overview.contact-scorecard"
+      title={title}
+      value={pctOrDash(cur.ourResponsiveness.pctWithin1BusinessDay)}
+      icon={<MessageSquare className="w-5 h-5 text-teal-600" />}
+      iconColor="bg-teal-100"
+      footer={
+        <div className="text-xs text-muted-foreground space-y-0.5">
+          <div>
+            Prior 28d: {pctOrDash(pri.ourResponsiveness.pctWithin1BusinessDay)} ·{" "}
+            {fmt(cur.ourResponsiveness.contactEmails)} contact emails (prior{" "}
+            {fmt(pri.ourResponsiveness.contactEmails)})
+          </div>
+          <div>
+            {fmt(card.coverage.contactsByStatus.validated ?? 0)} validated of{" "}
+            {fmt(card.coverage.contactsTotal)} contacts · upcoming covered{" "}
+            {pctOrDash(card.coverage.pctUpcomingWithValidatedContact)}
+          </div>
+          <div>
+            Their reply rate {pctOrDash(cur.theirResponsiveness.replyRate)} (prior{" "}
+            {pctOrDash(pri.theirResponsiveness.replyRate)}) · leakage {fmt(leaks)}
+          </div>
+          <div>Floor: Gmail-sent replies are not counted.</div>
+        </div>
+      }
+    />
+  );
 }
 
 function AeoReferralsCardView({ aeo }: { aeo: AeoReferralsResult | null }) {
@@ -1012,7 +1125,11 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       tileId="overview.brand-share"
       measurement={badge ? null : c.brandShareMeasured}
       title={
-        badge ? "Brand share (Google, 28d)" : `Brand vs non-brand (last ${c.windowDays}d, Google)`
+        // OPE-1347 #4 — the badge is a SAMPLE (top 500 queries) over days
+        // 30→3 ago (readBrandShare), not a 28-day total; say so.
+        badge
+          ? "Brand share (Google, top-500 query sample, days 30→3 ago)"
+          : `Brand vs non-brand (Google, top-500 query sample, last ${c.windowDays}d)`
       }
       value={badge ?? measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}
       icon={<TrendingUp className="w-5 h-5 text-royal" />}
@@ -1021,13 +1138,14 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       state={state}
       actionPrompt={actionPrompt}
       footer={
+        // OPE-1347 rework #4 — one window per block. With a badge, the headline
+        // is days 30→3 ago and everything below is a SEPARATE last-Nd sample;
+        // the counts used to sit unlabelled under the 30→3 heading.
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
-          {badge && (
-            <span>
-              last {c.windowDays}d view:{" "}
-              {measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}
-            </span>
-          )}
+          <span className="font-medium">
+            {badge ? `Separately — last ${c.windowDays}d, top-500 sample:` : "Sample counts:"}
+            {badge && <> {measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}</>}
+          </span>
           <span>
             brand {fmt(c.brand_clicks)} clicks · non-brand {fmt(c.non_brand_clicks)} clicks
           </span>
@@ -1057,13 +1175,13 @@ function SitemapQualityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       footer={
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
           {badge && (
-            <span>all-status view: {measurementText(c.overallRate, (v) => fmtPct(v, 0))}</span>
+            <span>footer basis: {measurementText(c.overallRate, (v) => fmtPct(v, 0))}</span>
           )}
           <span>
-            vendors {fmt(c.vendors.pass)}/{fmt(c.vendors.total)}
+            live vendors {fmt(c.vendors.pass)}/{fmt(c.vendors.total)}
           </span>
           <span>
-            events {fmt(c.events.pass)}/{fmt(c.events.total)}
+            public events {fmt(c.events.pass)}/{fmt(c.events.total)}
           </span>
         </div>
       }
@@ -1115,7 +1233,10 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             </p>
           </div>
         </div>
-        {(state === "RED" || state === "STALE") && actionPrompt && (
+        {/* OPE-1347 rework #3 — a closed cohort's staleness is the expected
+            state (IndexNow is paused, see the 🕒 note below), not a fault to
+            "investigate". Printing both read as a contradiction on one tile. */}
+        {(state === "RED" || (state === "STALE" && !c.feedStale)) && actionPrompt && (
           <p
             className={`text-xs mt-3 font-medium ${state === "STALE" ? "text-orange-600" : "text-red-600"}`}
           >
@@ -1342,6 +1463,7 @@ function BlogCoverageCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
               );
             })}
           </div>
+          <p className="text-[11px] text-muted-foreground mt-3">{CATALOG_BASIS_NOTE}</p>
         </CardContent>
       </Card>
     </CardLink>
@@ -1990,142 +2112,20 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
   );
 }
 
+// OPE-1565 — was hand-rolled SVG with stride/anchor collision arithmetic
+// (`@/lib/charts/milestone-layout`, OPE-602) that broke again as the series
+// grew to 42 points, and viewBox-scaled text (~5px on a phone). Now the shared
+// admin ECharts host; label collisions are the library's job.
 function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
-  // OPE-602 — layout maths extracted to `@/lib/charts/milestone-layout` so the
-  // label-collision and edge-clipping rules are testable. They are arithmetic,
-  // and none of it could be tested while it lived inside this markup.
-  const d = MILESTONE_CHART_DIMS;
-  const layout = computeMilestoneLayout(points, fmt, d);
-  const { coords, ticks, linePath, areaPath, dateLabelIndices, labelStride } = layout;
-  if (coords.length === 0) return null;
-  const baselineY = d.height - d.padBottom;
-
   return (
-    <svg
-      viewBox={`0 0 ${d.width} ${d.height}`}
-      // OPE-602 ROOT CAUSE. This was `preserveAspectRatio="none"` with a pinned
-      // `h-56`, which let the axes scale independently: every glyph and dot was
-      // stretched, and the amount CHANGED WITH THE WINDOW (1.41x too wide at
-      // 1151px, 0.41x at 380px). `r={4}` painted an 11.5 x 8.1px ellipse.
-      //
-      // `meet` alone would letterbox, so the box is given the viewBox's own
-      // aspect ratio and the SVG fills it exactly — undistorted at every width,
-      // with height scaling instead of glyphs.
-      preserveAspectRatio="xMidYMid meet"
-      style={{ aspectRatio: `${d.width} / ${d.height}` }}
-      className="w-full h-auto"
-      aria-label="Search clicks milestone growth chart"
-      role="img"
-    >
-      {/* OPE-602 defect 4 — log-scale gridlines and ticks. The subtitle
-          promised "log scale" while the plot had a single baseline rule and no
-          ticks, so nothing let a reader take a value off the curve: the line
-          was decorative and the printed labels were the only data. */}
-      {ticks.map((t) => (
-        <g key={`tick-${t.value}`}>
-          <line
-            x1={d.padLeft}
-            y1={t.y}
-            x2={d.width - d.padRight}
-            y2={t.y}
-            className="stroke-gray-100"
-            strokeWidth={1}
-          />
-          <text
-            x={d.padLeft}
-            y={t.y - 2}
-            textAnchor="start"
-            className="fill-gray-400"
-            style={{ fontSize: "9px" }}
-          >
-            {fmt(t.value)}
-          </text>
-        </g>
-      ))}
-      {/* baseline at the bottom of the plot area */}
-      <line
-        x1={d.padLeft}
-        y1={baselineY}
-        x2={d.width - d.padRight}
-        y2={baselineY}
-        className="stroke-gray-200"
-        strokeWidth={1}
-      />
-      <path d={areaPath} className="fill-blue-100" opacity={0.5} />
-      <path d={linePath} className="stroke-blue-600 fill-none" strokeWidth={2} />
-      {coords.map((c, i) => (
-        <g key={`${c.date}-${i}`}>
-          {/* dot — OPE-456: a HOLLOW dot is a crossing we derived from our own
-              daily totals; a solid dot is a badge Google actually awarded.
-              Shape rather than colour so the distinction survives a greyscale
-              print and does not depend on the legend being read. */}
-          <circle
-            cx={c.x}
-            cy={c.y}
-            r={4}
-            className={c.derived ? "fill-white stroke-blue-600" : "fill-blue-600"}
-            strokeWidth={c.derived ? 2 : 0}
-          />
-          {/* OPE-602 defect 6 — per-point detail. There were zero <title>
-              elements and one aria-label on the whole svg, so hovering a dot
-              gave nothing and a screen reader got "growth chart" and no data. */}
-          <title>
-            {`${fmt(c.threshold)} clicks — ${formatDateOnly(c.date) || c.date}${
-              c.derived ? " (derived from our own daily totals)" : ""
-            }`}
-          </title>
-          {/* value label — drawn every `labelStride` points (defect 1) and
-              anchored away from the edge (defect 2). */}
-          {c.showLabel && (
-            <text
-              x={c.x}
-              y={c.y - 10}
-              textAnchor={c.labelAnchor}
-              className="fill-gray-900 text-xs font-semibold"
-              style={{ fontSize: "11px" }}
-            >
-              {fmt(c.threshold)}
-            </text>
-          )}
-        </g>
-      ))}
-      {dateLabelIndices.map((idx) => {
-        const c = coords[idx];
-        const anchor: "start" | "middle" | "end" =
-          idx === 0 ? "start" : idx === coords.length - 1 ? "end" : "middle";
-        return (
-          <text
-            key={`date-${idx}`}
-            x={c.x}
-            y={baselineY + 16}
-            textAnchor={anchor}
-            className="fill-gray-600"
-            style={{ fontSize: "11px" }}
-          >
-            {formatDateOnly(c.date) || c.date}
-          </text>
-        );
-      })}
-      {/* OPE-602 defect 3, stated rather than silently fixed: points are
-          INDEX-spaced, so the middle date label sits at the middle MILESTONE,
-          not the middle date, and the curve's right-hand flattening is partly
-          a spacing artifact. Date-spacing them honestly is blocked on OPE-456
-          — `reached_date` defaults to the forwarding email's date and
-          keep-earliest idempotency makes it uncorrectable — so a date-spaced
-          axis would be no more truthful than this one, only more convincing.
-          The caption below the chart now says so. */}
-      {labelStride > 1 && (
-        <text
-          x={d.width - d.padRight}
-          y={d.padTop - 16}
-          textAnchor="end"
-          className="fill-gray-400"
-          style={{ fontSize: "9px" }}
-        >
-          {`every ${labelStride}${labelStride === 2 ? "nd" : labelStride === 3 ? "rd" : "th"} milestone labelled`}
-        </text>
-      )}
-    </svg>
+    <MilestoneEChart
+      points={points.map((p) => ({
+        threshold: p.threshold,
+        date: p.date,
+        dateLabel: formatDateOnly(p.date) || p.date,
+        derived: p.derived,
+      }))}
+    />
   );
 }
 
@@ -2164,7 +2164,7 @@ function ActivityFeedCard({
                   <p className="text-sm text-foreground break-words">
                     {entry.href ? (
                       <a
-                        href={entry.href}
+                        href={safeHref(entry.href, { allowRelative: true })}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="hover:underline"
@@ -2330,7 +2330,10 @@ async function RecommendationsTab() {
   // beats low-severity-high-count, but match count breaks ties.
   const opportunities = Array.from(ruleGroups.values())
     .map((g) => ({ group: g, score: opportunityScore(g.severity, g.items.length) }))
-    .sort((a, b) => b.score - a.score)
+    // OPE-1347 #8 — the score caps the count at 99, so within a severity every
+    // rule with ≥99 items TIED and kept insertion order (849 above 7,269). The
+    // uncapped count breaks the tie, so the list is sorted by what it states.
+    .sort((a, b) => b.score - a.score || b.group.items.length - a.group.items.length)
     .slice(0, 10);
 
   // Analyst Item 2 (2026-05-30): per-ITEM opportunities feed showing the
@@ -2645,16 +2648,24 @@ async function RecommendationsTab() {
                       <div className="min-w-0 flex-1">
                         <div className="text-sm text-foreground truncate">{o.query}</div>
                         <div className="text-xs text-muted-foreground mt-0.5">
-                          {o.targetUrl && (
-                            <Link
-                              href={o.targetUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-royal hover:underline"
-                            >
-                              {o.targetUrl}
-                            </Link>
-                          )}
+                          {o.targetUrl &&
+                            (() => {
+                              // OPE-1385 — a stored page path/URL: link it only when
+                              // it is http(s) or a same-origin path.
+                              const href = safeHref(o.targetUrl, { allowRelative: true });
+                              return href ? (
+                                <Link
+                                  href={href}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-royal hover:underline"
+                                >
+                                  {o.targetUrl}
+                                </Link>
+                              ) : (
+                                <span>{o.targetUrl}</span>
+                              );
+                            })()}
                           {o.targetUrl && " · "}
                           <span className="tabular-nums">
                             {o.impressions} imp, {o.clicks} clicks, pos {o.position}
@@ -2681,6 +2692,9 @@ async function RecommendationsTab() {
               Top rules by impact ({opportunities.length}){" "}
               <TileInfo id="recommendations.top-rules" title="Top rules by impact" />
             </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Sorted by severity, then by number of affected items.
+            </p>
           </CardHeader>
           <CardContent>
             <ul className="space-y-1.5 text-sm">
@@ -2689,11 +2703,16 @@ async function RecommendationsTab() {
                 return (
                   <li key={g.ruleId} className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2 min-w-0 flex-1">
+                      {/* OPE-1347 rework #8 — the list is sorted by SEVERITY,
+                          so the chip names the severity. It used to print the
+                          tier (T1/T2/T3), and a severity-sorted list labelled
+                          by tier reads as unsorted. Tier stays, as a quiet tag. */}
                       <span
                         className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border ${sevMeta.chip}`}
                       >
-                        {g.tier}
+                        {sevMeta.label}
                       </span>
+                      <span className="text-[10px] text-muted-foreground shrink-0">{g.tier}</span>
                       <span className="text-sm text-foreground truncate">{g.title}</span>
                     </div>
                     <span className="text-xs text-muted-foreground tabular-nums shrink-0">
@@ -3040,7 +3059,7 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
                         "—"
                       ) : urlsArr.length === 1 ? (
                         <a
-                          href={urlsArr[0]}
+                          href={safeHref(urlsArr[0])}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="font-mono text-navy hover:underline"
@@ -3060,7 +3079,7 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
                             {urlsArr.map((url, i) => (
                               <li key={i} className="font-mono break-all">
                                 <a
-                                  href={url}
+                                  href={safeHref(url)}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="text-navy hover:underline"
@@ -3249,19 +3268,23 @@ type GscLoad =
     }
   | { ok: false; kind: "config" | "api" | "unknown"; message: string };
 
-async function loadGscData(): Promise<GscLoad> {
+async function loadGscData(window: WindowKey): Promise<GscLoad> {
+  // OPE-1347 rework — the tab ignored the range selector: "Total clicks 23,826"
+  // was the API default 28d while the selector read 7d. Both window-dependent
+  // pulls now take the selected range; sitemap status has no window.
+  const dateRange = gscWindowRange(windowDays(window));
   try {
     const env = getCloudflareEnv();
     const settled = await Promise.allSettled([
       // OPE-1161 D12 — top 25 BY CLICKS, as both cards below are labelled. The
       // helper defaults to impressions, which made "Top-25 query clicks" the
       // clicks of the 25 most-SEEN queries.
-      getSiteSearchQueries(env, { rowLimit: 25, orderBy: "clicks" }),
+      getSiteSearchQueries(env, { rowLimit: 25, orderBy: "clicks", dateRange }),
       getSitemapStatus(env),
       // OPE-312 (A3) — real property totals. The rowLimit-25 pull above can
       // only ever sum its own 25 rows, so it must not feed a tile that says
       // "total".
-      getSitePropertyTotals(env),
+      getSitePropertyTotals(env, { dateRange }),
     ]);
     const firstFailure = settled.find((r) => r.status === "rejected");
     if (firstFailure && firstFailure.status === "rejected") {
@@ -3330,13 +3353,13 @@ async function loadGscMilestones(): Promise<GscMilestonePoint[]> {
   return toMilestonePoints(rows);
 }
 
-async function GoogleTab() {
+async function GoogleTab({ window }: { window: WindowKey }) {
   // Milestone card reads from our own D1 (gsc_milestone_emails), not the
   // Search Console API — so it must render whether or not SC_SITE_URL is
   // configured. Load + render it ABOVE the GSC API gate. The GSC-API
   // sections below early-return GscErrorPanel when SC is unconfigured.
   const milestones = await loadGscMilestones();
-  const result = await loadGscData();
+  const result = await loadGscData(window);
   if (!result.ok) {
     return (
       <>
@@ -3827,11 +3850,32 @@ function bingSeverityClass(severity: string): string {
   return "text-muted-foreground bg-muted";
 }
 
+/**
+ * OPE-1347 #10 — why a Bing series is empty, from the record: a never-populated
+ * feed and a feed that STOPPED are different facts with different fixes.
+ */
+function bingEmptySeriesText(lastStoredDate: string | null, storedDays: number): string {
+  if (!lastStoredDate || storedDays === 0) {
+    return "No Bing traffic series yet (populates ~7–14 days post-verification).";
+  }
+  return `Bing feed stale — the live read returned no rows; last stored day ${lastStoredDate} (${storedDays} days stored).`;
+}
+
 async function BingTab() {
   const result = await loadBingData();
   if (!result.ok) {
     return <BingErrorPanel kind={result.kind} message={result.message} />;
   }
+  // OPE-1347 #10 — the stored series' last day, so an empty live read says
+  // "stale since <date>" instead of claiming the feed has never populated.
+  // bing_daily_metrics held 131 days ending 2026-09-06 while the tab read
+  // "No Bing traffic series yet (populates ~7–14 days post-verification)".
+  const [lastStored] = await getCloudflareDb()
+    .select({
+      last: sql<string | null>`MAX(${bingDailyMetrics.date})`,
+      days: sql<number>`COUNT(*)`,
+    })
+    .from(bingDailyMetrics);
   const { queries, pages, crawl, scan, quota, indexnow, traffic, sitemaps, failed } = result.data;
   // OPE-1131 — headline figures that can say "not measured" (bing-tiles.ts).
   const clicks7dM = bingWeekTotal(
@@ -3979,11 +4023,15 @@ async function BingTab() {
               <p className="text-2xl font-bold text-foreground tabular-nums">
                 {measurementText(clicks7dM, fmt)}
               </p>
-              <TrendBadge
-                trend={bingTrend(clicks7d, clicksPrior7d)}
-                current={clicks7d}
-                previous={clicksPrior7d}
-              />
+              {/* OPE-1347 #10 — no "+0% vs prior" under a "—": a trend over an
+                  unmeasured window is the A4 defect in miniature. */}
+              {clicks7dM.state === "ok" && (
+                <TrendBadge
+                  trend={bingTrend(clicks7d, clicksPrior7d)}
+                  current={clicks7d}
+                  previous={clicksPrior7d}
+                />
+              )}
             </div>
             {clicksSeries.length > 0 ? (
               <Sparkline
@@ -3993,7 +4041,7 @@ async function BingTab() {
               />
             ) : (
               <p className="text-xs text-muted-foreground italic">
-                No Bing traffic series yet (populates ~7&ndash;14 days post-verification).
+                {bingEmptySeriesText(lastStored?.last ?? null, Number(lastStored?.days ?? 0))}
               </p>
             )}
           </CardContent>
@@ -4010,11 +4058,13 @@ async function BingTab() {
               <p className="text-2xl font-bold text-foreground tabular-nums">
                 {measurementText(impr7dM, fmt)}
               </p>
-              <TrendBadge
-                trend={bingTrend(impr7d, imprPrior7d)}
-                current={impr7d}
-                previous={imprPrior7d}
-              />
+              {impr7dM.state === "ok" && (
+                <TrendBadge
+                  trend={bingTrend(impr7d, imprPrior7d)}
+                  current={impr7d}
+                  previous={imprPrior7d}
+                />
+              )}
             </div>
             {imprSeries.length > 0 ? (
               <Sparkline
@@ -4023,7 +4073,9 @@ async function BingTab() {
                 fillClass="fill-violet-100"
               />
             ) : (
-              <p className="text-xs text-muted-foreground italic">No Bing traffic series yet.</p>
+              <p className="text-xs text-muted-foreground italic">
+                {bingEmptySeriesText(lastStored?.last ?? null, Number(lastStored?.days ?? 0))}
+              </p>
             )}
           </CardContent>
         </Card>
@@ -4620,18 +4672,18 @@ function nextStepForIssue(issueType: string, tier: "ACTION" | "EXPECTED"): strin
     case "GSC_SITEMAP_ERRORS":
     case "GSC_SITEMAP_WARNINGS":
       return "Review the sitemap entry in Search Console";
+    // OPE-1280 — an outbound link we store on a promoter/vendor record.
+    case "URL_HEALTH_DOMAIN_TAKEOVER":
+      return "Remove or replace the stored website — it now serves someone else's site";
+    case "URL_HEALTH_CLOSURE_NOTICE":
+      return "Read the notice, then check the organizer's upcoming listings";
+    case "URL_HEALTH_HTTP_ERROR":
+    case "URL_HEALTH_UNREACHABLE":
+      return "Open the link; if it stays down, find the organizer's current site";
     default:
       if (issueType.startsWith("SITEMAP_")) return "Resubmit the sitemap in Bing Webmaster Tools";
       return "Investigate the flagged URL";
   }
-}
-
-/** Collapse near-identical messages so rows that differ only by a URL/entity
- *  name or a count fold into one group: lower-case, unicode dashes → "-",
- *  digit runs → "#". */
-function normalizeHealthMessageKey(message: string | null): string {
-  if (!message) return "";
-  return message.toLowerCase().replace(/[‐-―]/g, "-").replace(/\d+/g, "#").trim();
 }
 
 interface SiteHealthRowInput {
@@ -4769,7 +4821,7 @@ function SiteHealthIssueGroups({
                   >
                     {u.url ? (
                       <a
-                        href={u.url}
+                        href={safeHref(u.url, { allowRelative: true })}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="max-w-lg truncate font-mono text-royal hover:underline"

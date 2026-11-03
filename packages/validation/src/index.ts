@@ -23,6 +23,7 @@ import {
   decodeHtmlEntities,
   coerceVenueNameAtIngest,
   checkImageUrl,
+  normalizeWebUrlInput,
 } from "@takemetothefair/utils";
 
 /**
@@ -55,6 +56,8 @@ import { parseDateOnly } from "@takemetothefair/datetime";
 export const VALIDATION = {
   NAME_MIN_LENGTH: 1,
   NAME_MAX_LENGTH: 255,
+  /** OPE-1368 — a PERSON's account name (users.name), not an entity name. */
+  USER_NAME_MAX_LENGTH: 100,
   DESCRIPTION_MAX_LENGTH: 5000,
   SLUG_MAX_LENGTH: 255,
   URL_MAX_LENGTH: 2048,
@@ -104,13 +107,42 @@ export function looksLikeUrlOrEmail(value: string): boolean {
   return false;
 }
 
-const urlSchema = z
-  .string()
-  .url()
-  .max(VALIDATION.URL_MAX_LENGTH)
+/**
+ * OPE-1368 — a web URL: `http:` or `https:` only.
+ *
+ * This used to be `z.string().url()`, i.e. "does `new URL()` parse it", so
+ * `javascript:alert(1)//` and `data:text/html,…` passed and later rendered raw
+ * as an `href` (vendor self-edit of `website` reached a public page). The
+ * protocol is now restricted. A bare domain ("www.foo.com" — 41 prod vendor
+ * websites on 2026-10-15) is upgraded to `https://` by `normalizeWebUrlInput`
+ * rather than refused, so re-saving one of those rows does not block the edit.
+ * The render side applies the same rule via `safeHref` for rows written before
+ * this, or by other surfaces.
+ */
+const WEB_URL_PROTOCOL = /^https?$/;
+const WEB_URL_MESSAGE = "Must be a web address starting with http:// or https://";
+
+function webUrlString(protocol: RegExp = WEB_URL_PROTOCOL, message = WEB_URL_MESSAGE) {
+  return z
+    .string()
+    .max(VALIDATION.URL_MAX_LENGTH)
+    .transform(normalizeWebUrlInput)
+    .pipe(z.string().url({ protocol, message }));
+}
+
+const urlSchema = webUrlString().optional().nullable().or(z.literal(""));
+
+/**
+ * An event's application link may legitimately be an email address — two prod
+ * `events.application_url` rows are `mailto:` (2026-10-15) — so `mailto:` is
+ * allowed here in addition to http(s). Rendered with `safeHref(…, { allowMailto })`.
+ */
+const applicationUrlSchema = webUrlString(
+  /^(https?|mailto)$/,
+  "Must be a web address (http:// or https://) or a mailto: link"
+)
   .optional()
-  .nullable()
-  .or(z.literal(""));
+  .nullable();
 /**
  * OPE-1112 — a URL that must point at an IMAGE, not merely be well-formed.
  *
@@ -143,6 +175,35 @@ const emailSchema = z
   .nullable()
   .or(z.literal(""));
 const phoneSchema = z.string().max(VALIDATION.PHONE_MAX_LENGTH).optional().nullable();
+
+// OPE-1389 — an UPDATE schema must not invent values for fields the caller
+// did not send.
+//
+// zod 4 (4.6.5 here) keeps a field's `.default(x)` through `.partial()`: an
+// omitted key on a partial schema still parses to the CREATE default. So every
+// admin PATCH that never mentioned `categories` wrote `[]`, every Enhanced
+// Profile save that sent only `{claimed:true}` reset `verified` / `commercial`
+// / `canSelfConfirm` to false, and every venue save without `amenities`
+// emptied them — silently, because the route's `!== undefined` checks saw a
+// real value. `blogPostUpdateSchema` worked around it by re-declaring each
+// defaulted field; this does the same for a whole object, so a default added
+// to a create schema later cannot leak into its update twin.
+//
+// Apply BEFORE `.partial()`: partial wraps each field in ZodOptional, after
+// which the ZodDefault is no longer at the top of the field.
+type StripDefault<T> = T extends z.ZodDefault<infer Inner extends z.ZodType> ? Inner : T;
+type StripDefaults<S extends z.ZodRawShape> = { [K in keyof S]: StripDefault<S[K]> };
+
+export function withoutDefaults<S extends z.ZodRawShape>(
+  schema: z.ZodObject<S>
+): z.ZodObject<StripDefaults<S>> {
+  const shape: Record<string, z.ZodType> = {};
+  for (const [key, field] of Object.entries(schema.shape)) {
+    shape[key] =
+      field instanceof z.ZodDefault ? (field.unwrap() as z.ZodType) : (field as z.ZodType);
+  }
+  return schema.extend(shape) as unknown as z.ZodObject<StripDefaults<S>>;
+}
 
 // Venue schemas.
 //
@@ -202,7 +263,7 @@ export const venueCreateSchema = _venueCreateBaseSchema.transform((v) => {
 
 // Update keeps every field optional and skips the DQ2 transform — admins
 // editing an existing venue should not be second-guessed about its name.
-export const venueUpdateSchema = _venueCreateBaseSchema.partial();
+export const venueUpdateSchema = withoutDefaults(_venueCreateBaseSchema).partial();
 
 // Promoter schemas
 export const promoterCreateSchema = z.object({
@@ -218,7 +279,9 @@ export const promoterCreateSchema = z.object({
   imageFocalY: z.number().min(0).max(1).optional().default(0.5),
 });
 
-export const promoterUpdateSchema = promoterCreateSchema.partial().omit({ userId: true });
+export const promoterUpdateSchema = withoutDefaults(promoterCreateSchema)
+  .partial()
+  .omit({ userId: true });
 
 // Vendor schemas
 export const vendorCreateSchema = z.object({
@@ -276,7 +339,7 @@ export const vendorCreateSchema = z.object({
   insuranceInfo: z.string().max(500).optional().nullable(),
 });
 
-export const vendorUpdateSchema = vendorCreateSchema
+export const vendorUpdateSchema = withoutDefaults(vendorCreateSchema)
   .partial()
   .omit({ userId: true })
   .extend({
@@ -289,7 +352,7 @@ export const vendorUpdateSchema = vendorCreateSchema
     gallery_images: z
       .array(
         z.object({
-          url: z.string().url().max(VALIDATION.URL_MAX_LENGTH),
+          url: webUrlString(),
           alt: z.string().max(200),
           caption: z.string().max(500).optional(),
         })
@@ -437,7 +500,7 @@ const eventBaseSchema = z.object({
     .optional()
     .nullable(),
   applicationDeadline: z.string().datetime().optional().nullable(),
-  applicationUrl: z.string().url().max(VALIDATION.URL_MAX_LENGTH).optional().nullable(),
+  applicationUrl: applicationUrlSchema,
   applicationInstructions: z.string().max(2000).optional().nullable(),
   walkInsAllowed: z.boolean().optional().nullable(),
   status: z
@@ -525,7 +588,7 @@ export const eventCreateSchema = eventBaseSchema
     }
   );
 
-export const eventUpdateSchema = eventBaseSchema
+export const eventUpdateSchema = withoutDefaults(eventBaseSchema)
   .partial()
   .refine(
     (data) => {
@@ -660,6 +723,9 @@ export const vendorProfileUpdateSchema = z.object({
   city: z.string().max(VALIDATION.CITY_MAX_LENGTH).optional().nullable(),
   state: z.string().max(VALIDATION.STATE_MAX_LENGTH).optional().nullable(),
   zip: z.string().max(VALIDATION.ZIP_MAX_LENGTH).optional().nullable(),
+  // OPE-1398 — the vendor's own opt-back-in to showing its street address
+  // publicly. Only meaningful for self-signup vendors (hidden by default).
+  showStreetAddress: z.boolean().optional(),
   latitude: z.number().min(-90).max(90).optional().nullable(),
   longitude: z.number().min(-180).max(180).optional().nullable(),
   // Upper bound evaluated per-validation via .refine() rather than
@@ -752,7 +818,7 @@ export const promoterEventCreateSchema = z
       .optional()
       .nullable(),
     applicationDeadline: z.string().datetime().optional().nullable(),
-    applicationUrl: z.string().url().max(VALIDATION.URL_MAX_LENGTH).optional().nullable(),
+    applicationUrl: applicationUrlSchema,
     applicationInstructions: z.string().max(2000).optional().nullable(),
     walkInsAllowed: z.boolean().optional().nullable(),
   })
@@ -817,7 +883,10 @@ export const promoterEventCreateSchema = z
 
 // User profile update
 export const userProfileUpdateSchema = z.object({
-  name: z.string().max(VALIDATION.NAME_MAX_LENGTH).optional().nullable(),
+  // OPE-1368 — a person's name is interpolated into transactional email (the
+  // greeting in verification / reset mail); capped well below the 255 entity
+  // limit. The email templates escape it as well.
+  name: z.string().max(VALIDATION.USER_NAME_MAX_LENGTH).optional().nullable(),
 });
 
 // Favorite toggle
@@ -898,6 +967,10 @@ export const eventLifecycleUpdateSchema = z
     reason: z.string().min(1).max(500).transform(decodeHtmlEntities).optional().nullable(),
     new_start_date: z.string().datetime().optional().nullable(),
     new_end_date: z.string().datetime().optional().nullable(),
+    // OPE-1219 — parity with the MCP tool (OPE-1218): the date the event moved
+    // FROM, for a row whose dates were already edited before this transition.
+    previous_start_date: z.string().datetime().optional().nullable(),
+    previous_end_date: z.string().datetime().optional().nullable(),
   })
   .refine(
     (d) => {

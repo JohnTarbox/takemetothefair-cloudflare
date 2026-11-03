@@ -11,6 +11,7 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema";
 import { getGscTrend } from "../gsc-trend";
+import { emulateD1LikeCap } from "@/test/d1-like-cap";
 
 type TestDb = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -148,6 +149,19 @@ describe("getGscTrend", () => {
     // PAGE_A appears on all three days; PAGE_B (day 1) is excluded.
     expect(series.map((p) => p.date)).toEqual(["2026-06-01", "2026-06-02", "2026-06-03"]);
     expect(series[0]).toMatchObject({ clicks: 2, impressions: 10 }); // only the PAGE_A cell of day 1
+  });
+
+  it("OPE-1376: a path suffix over D1's 50-char LIKE cap still filters (no throw)", async () => {
+    emulateD1LikeCap(raw);
+    const longPath = "/events/northeast-regional-antique-tractor-and-gas-engine-show-2026";
+    expect(longPath.length).toBeGreaterThan(50);
+    seed("2026-06-05", "tractor", `https://meetmeatthefair.com${longPath}`, 7, 70, 4.0);
+    const { series } = await getGscTrend(db as never, { page: longPath });
+    expect(series.map((p) => p.date)).toEqual(["2026-06-05"]);
+    expect(series[0]).toMatchObject({ clicks: 7, impressions: 70 });
+    // Suffix, not substring: a path that only appears mid-URL does not match.
+    const mid = await getGscTrend(db as never, { page: "/events" });
+    expect(mid.series).toEqual([]);
   });
 
   it("filters by page as a full URL (exact)", async () => {

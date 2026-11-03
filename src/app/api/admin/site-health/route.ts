@@ -18,6 +18,7 @@ export async function GET(request: Request) {
     "BING_SITEMAP",
     "GSC_SITEMAP",
     "GSC_URL_INSPECTION",
+    "URL_HEALTH",
   ];
   const validSeverities: HealthSeverity[] = ["ERROR", "WARNING", "NOTICE"];
 

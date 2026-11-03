@@ -252,7 +252,7 @@ export function registerAdminVendorReadTools(server: McpServer, db: Db, auth: Au
             owner_origin: row.ownerOrigin ?? null,
             // OPE-986 — can this owner receive the verification link at all?
             // `owner_email_verified: null` alone reads as "hasn't clicked yet";
-            // for sanzaarts@gmail.vom it meant "the mail hard-bounced in 16s and
+            // for userstudios@gmail.vom it meant "the mail hard-bounced in 16s and
             // the address is suppressed", which no amount of waiting fixes.
             owner_email_delivery: ownerEmailDelivery,
             /**

@@ -45,6 +45,7 @@ const DETECTED_BY_VALUES = [
   "holdout_sample",
   "source_agreement",
   "citation_flag",
+  "newsletter",
   "manual",
 ] as const;
 

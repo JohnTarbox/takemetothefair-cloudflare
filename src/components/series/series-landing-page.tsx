@@ -14,13 +14,16 @@ import {
   partitionOccurrences,
   pickHeroOccurrence,
   toSchemaOccurrences,
+  occurrenceJsonLdDates,
 } from "@/lib/series/occurrence-view";
 import { buildEventSeriesJsonLd, seriesUrl } from "@/lib/series/series-schema-org";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import type { SeriesLanding, LandingOccurrence } from "@/lib/series/get-series-landing";
+import type { VisitorGuide } from "@/lib/blog/event-guides";
 import { formatDateRange } from "@/lib/utils";
-import { cdnImage } from "@/lib/cdn-image";
-import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
+import { occurrencePath } from "@takemetothefair/utils";
+import { cdnImage, cdnSrcSet } from "@/lib/cdn-image";
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 
 const HERO_WIDTHS = [400, 800, 1200, 1600];
 
@@ -28,7 +31,16 @@ function venueLabel(o: LandingOccurrence): string {
   return [o.venue?.city, o.venue?.state].filter(Boolean).join(", ");
 }
 
-export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; now: Date }) {
+export function SeriesLandingPage({
+  landing,
+  now,
+  visitorGuides = [],
+}: {
+  landing: SeriesLanding;
+  now: Date;
+  /** OPE-1188 — posts written about this fair; the hub links them first. */
+  visitorGuides?: VisitorGuide[];
+}) {
   const { series, occurrences } = landing;
   // OPE-27 — effective series image (already resolved in getSeriesLanding to fall
   // back to the hero occurrence when the series row has none).
@@ -43,6 +55,7 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
   const jsonLd = buildEventSeriesJsonLd(
     {
       canonicalSlug: series.canonicalSlug,
+      editionMode: series.editionMode,
       name: series.name,
       description: series.description,
       imageUrl: series.imageUrl,
@@ -54,8 +67,11 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
       // emitted `"endDate":"2026-09-27"` for a fair that ends Sep 26, while the
       // /2026 occurrence page next to it emitted the correct Sep 19 span for
       // Oxford. Two Google-visible schemas, one wrong.
-      startDateIso: hero?.startDate ? toIsoDateOnlyInVenueZone(hero.startDate) : null,
-      endDateIso: hero?.endDate ? toIsoDateOnlyInVenueZone(hero.endDate) : null,
+      //
+      // OPE-1547 — and with the hero's time when it has one, by the event page's
+      // own rule. A date-only slice here served "2026-11-07" for a market that
+      // opens at 10:00, on every dated instance whose slug is its series' slug.
+      ...(hero ? occurrenceJsonLdDates(hero) : { startDateIso: null, endDateIso: null }),
       // OPE-18 — series-level WARNING-set sources: eventStatus from the hero
       // occurrence's lifecycle; organizer (+ logo fallback for subEvent images)
       // from the series promoter. The builder already emitted these when given
@@ -70,8 +86,13 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
   );
 
   // Relative Option-A occurrence path (year page, or the event slug when undated).
-  const occPath = (year: number | null, slug: string) =>
-    year === null ? `/events/${slug}` : `/events/${series.canonicalSlug}/${year}`;
+  // OPE-1326 — on a multi-edition series, the member's EDITION path: two 2027
+  // editions must link to two pages, not both to /2027.
+  const occPath = (o: { slug: string; startDate: Date | null; editionKey: string | null }) =>
+    occurrencePath(series.canonicalSlug, o.startDate, {
+      editionMode: series.editionMode,
+      editionKey: o.editionKey,
+    }) ?? `/events/${o.slug}`;
 
   const renderRow = (v: { id: string; year: number | null }) => {
     const o = byId.get(v.id);
@@ -80,7 +101,7 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
     return (
       <li key={v.id}>
         <Link
-          href={occPath(v.year, o.slug)}
+          href={occPath(o)}
           className="flex items-baseline justify-between gap-4 border-b border-secondary/15 py-3 hover:text-terracotta"
         >
           <span className="font-display font-semibold text-secondary">
@@ -108,7 +129,7 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
           // Escape `<` so a series name/description containing `</script>` can't
           // break out of the JSON-LD block (defense beyond EventSchema's plain
           // stringify; series text is first-party but cheap to harden).
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
+          dangerouslySetInnerHTML={{ __html: safeJsonLd(jsonLd) }}
         />
       ) : null}
 
@@ -141,18 +162,15 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
                 quality: 80,
                 onerror: "redirect",
               })}
-              srcSet={HERO_WIDTHS.map(
-                (w) =>
-                  `${cdnImage(heroImage, {
-                    width: w,
-                    height: Math.round((w * 9) / 16),
-                    fit: "cover",
-                    gravity: "auto",
-                    format: "auto",
-                    quality: 80,
-                    onerror: "redirect",
-                  })} ${w}w`
-              ).join(", ")}
+              srcSet={cdnSrcSet(heroImage, HERO_WIDTHS, (w) => ({
+                width: w,
+                height: Math.round((w * 9) / 16),
+                fit: "cover",
+                gravity: "auto",
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              }))}
               sizes="(max-width: 768px) 100vw, 768px"
               width={1200}
               height={675}
@@ -169,6 +187,27 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
         <h1 className="mt-1 font-display text-3xl font-bold text-secondary">{series.name}</h1>
         {series.description ? <p className="mt-3 text-secondary/80">{series.description}</p> : null}
       </header>
+
+      {visitorGuides.length > 0 ? (
+        <section className="mb-10" aria-labelledby="visitor-guide-heading">
+          <h2
+            id="visitor-guide-heading"
+            className="mb-2 font-display text-lg font-semibold text-secondary"
+          >
+            Plan your visit
+          </h2>
+          <ul className="space-y-2">
+            {visitorGuides.map((g) => (
+              <li key={g.slug}>
+                <Link href={`/blog/${g.slug}`} className="text-royal underline hover:text-royal/80">
+                  {g.title}
+                </Link>
+                {g.excerpt ? <p className="text-sm text-secondary/70">{g.excerpt}</p> : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {current.length > 0 ? (
         <section className="mb-10">

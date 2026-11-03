@@ -34,7 +34,7 @@ function insertRow(id: string, intent: string, parentId: string | null) {
   raw
     .prepare(
       `INSERT INTO inbound_emails (id, received_at, from_address, to_address, subject, intent, status, attachment_count, parent_email_id, created_at)
-       VALUES (?, ?, 'ewelford@paradisecityarts.com', 'support@meetmeatthefair.com', 'Re: Incorrect Listing', ?, 'received', 0, ?, ?)`
+       VALUES (?, ?, 'reeddesk@paradisecityarts.com', 'support@meetmeatthefair.com', 'Re: Incorrect Listing', ?, 'received', 0, ?, ?)`
     )
     .run(
       id,
@@ -161,7 +161,7 @@ describe("the single-intent path is untouched", () => {
 
 describe("the one reply is correct for the WHOLE message", () => {
   it("names the other topic in plain English, not in routing vocabulary", () => {
-    const msg = buildReply("correction-ack", "ewelford@paradisecityarts.com", {
+    const msg = buildReply("correction-ack", "reeddesk@paradisecityarts.com", {
       subject: "Incorrect Listing",
       fanoutOtherIntents: ["claim_request"],
     });

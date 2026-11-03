@@ -17,7 +17,7 @@
  *    flag is never a false RED).
  *  - auto-file dedup reuses OPE-76's `cpi_signal_filings` ledger — nothing new.
  */
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, notInArray, or, sql } from "drizzle-orm";
 import {
   analyticsEvents,
   entityWriteLog,
@@ -32,6 +32,7 @@ import {
   agentHeartbeats,
   errorLogs,
   eventSeries,
+  events,
   inboundEmailEvents,
   inboundEmails,
   imageCoverageState,
@@ -41,6 +42,7 @@ import {
   ga4DailyMetrics,
   membraneCrossings,
   promoterOutreachAttempts,
+  promoterOutreachRuns,
   gscDailyTotals,
   gscSearchMetrics,
   promoterEnrichmentCandidates,
@@ -53,9 +55,17 @@ import {
   vendorSelfReportedEvents,
   performerEnrichmentCandidates,
   vendorCategoryWatchRuns,
+  gembaObservations,
+  promoterListArrivals,
+  venues,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
+import {
+  ENRICH_NOTHING_STAGED_ACTION,
+  ENRICH_PROPOSED_ACTION,
+} from "@/lib/inbound-enrich-on-match";
+import { AI_EXTRACTION_OK_MESSAGE, EXTRACT_LOG_SOURCE } from "@/lib/url-import/extract-telemetry";
 import type { StaleRed } from "@/lib/cpi/stale-reds";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
@@ -115,6 +125,100 @@ async function maxTs(
  * DORMANT via a null `enabled_at` — it can't false-fire until John flips the flag.
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
+  {
+    // OPE-1496 — the `/go/<kind>/<slug>` newsletter click redirect writes one
+    // analytics_events row (source='redirect') per hit, human or scanner. Mail
+    // scanners prefetch every link in a sent message, so a digest that links
+    // through /go/ produces rows within minutes of every send even if nobody
+    // clicks. Silence across two weekly sends means the writer is dead.
+    //
+    // Seeded DORMANT (drizzle/0380, enabled_at NULL): today no digest links
+    // through /go/ yet — the analyst lane switches the vendor + weekend
+    // digests over once this ships. ARMING CONDITION: set enabled_at the day
+    // the first digest sends with /go/ links (follow-up ticket on OPE-1496).
+    name: "go-click-redirect",
+    ownerOpe: "OPE-1496",
+    label: "Newsletter /go/ click redirect logs its clicks",
+    priority: "P1",
+    expectedWindowHours: 14 * 24,
+    // Keyed on the four names first so idx_analytics_events_name_ts narrows
+    // the scan; `source` has no index of its own.
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        analyticsEvents,
+        analyticsEvents.timestamp,
+        and(
+          inArray(analyticsEvents.eventName, [
+            "outbound_application_click",
+            "outbound_ticket_click",
+            "outbound_application_click_scanner",
+            "outbound_ticket_click_scanner",
+          ]),
+          eq(analyticsEvents.source, "redirect")
+        )
+      ),
+  },
+  {
+    // OPE-1558 — the no-login /list-your-event form beacons `list_view` on every
+    // mount (funnel-steps.ts `list`). A page that still renders but whose
+    // beacon silently stopped (allowlist drift, a client error before the
+    // effect) would read as "nobody came", which is the one reading this
+    // funnel exists to rule out.
+    //
+    // Seeded DORMANT (drizzle/0388, enabled_at NULL): the page ships noindex
+    // and unlinked — OPE-1559 owns the nav CTA and indexing, gated on John — so
+    // real traffic is ~0 and a live window would false-fire. ARMING CONDITION:
+    // set enabled_at the day OPE-1559's nav/contextual CTA ships.
+    name: "list-your-event-view",
+    ownerOpe: "OPE-1558",
+    label: "No-login /list-your-event form records its page views",
+    priority: "P1",
+    expectedWindowHours: 7 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        analyticsEvents,
+        analyticsEvents.timestamp,
+        eq(analyticsEvents.eventName, "list_view")
+      ),
+  },
+  {
+    // OPE-1480 — proof that venue CREATION still pulls Google's accessibility +
+    // parking (geocodeNewVenue → fillVenueGoogleAmenities), so the OPE-1479
+    // "About the venue (from Google)" line does not decay into "Not published"
+    // the way coordinates did before OPE-408. Every new venue with a place id
+    // owes both columns (an answer, or "{}" = Google has none). Demand = the
+    // newest such venue created after the probe was armed; evidence = the
+    // newest such venue holding both. 72h: venue creation is human-paced, and
+    // the fill is synchronous with it, so a miss is a broken path, not a lull.
+    name: "venue-google-amenities",
+    ownerOpe: "OPE-1480",
+    label: "new venues get Google accessibility + parking",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: async (db) => {
+      const armed = sql`${venues.createdAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'venue-google-amenities'), 4102444800)`;
+      const demand = await maxTs(
+        db,
+        venues,
+        venues.createdAt,
+        and(isNotNull(venues.googlePlaceId), armed)
+      );
+      const evidence = await maxTs(
+        db,
+        venues,
+        venues.createdAt,
+        and(
+          isNotNull(venues.googlePlaceId),
+          isNotNull(venues.accessibility),
+          isNotNull(venues.parking),
+          armed
+        )
+      );
+      return demandConditionalEvidence(demand, evidence, new Date());
+    },
+  },
   {
     // OPE-1089 — proof the intent classifier is still ANSWERING, not just running.
     //
@@ -202,6 +306,132 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         workflowRunSteps,
         workflowRunSteps.recordedAt,
         eq(workflowRunSteps.stepName, "roster-vendor-link")
+      ),
+  },
+  {
+    // OPE-328 — gemba@ observations queued for an agent to post to Linear.
+    // DORMANT (enabled_at NULL, drizzle/0348) until the gemba@ Email Routing
+    // rule exists; then a month without one row means the lane went dark.
+    name: "gemba-observation",
+    ownerOpe: "OPE-328",
+    label: "gemba@ → gemba_observations queue",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) => maxTs(db, gembaObservations, gembaObservations.createdAt),
+  },
+  {
+    // OPE-1265 — mail arriving at lists@ / lists+<promoter-slug>@ (promoter
+    // mailing lists we subscribed to). DORMANT (enabled_at NULL, drizzle/0350):
+    // the population is empty until the OPE-1266 pilot subscribes and the lists@
+    // Email Routing rule exists. 720h is a PLACEHOLDER, not a measurement —
+    // whoever arms it replaces it with the measured issue cadence.
+    name: "promoter-list-arrival",
+    ownerOpe: "OPE-1265",
+    label: "lists@ → promoter_list_arrivals",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) => maxTs(db, promoterListArrivals, promoterListArrivals.createdAt),
+  },
+  {
+    // OPE-1264 — the newsletter classifier RAN. Evidence is its step record,
+    // written for EVERY email the inbound workflow evaluates (newsletter or
+    // not), so a quiet fortnight of newsletters cannot false-fire it. 72h is
+    // MEASURED: the largest gap between workflow emails in the 60 days to
+    // 2026-10-02 was 50.5h (255 emails, mean gap 5.6h).
+    name: "newsletter-classify",
+    ownerOpe: "OPE-1264",
+    label: "inbound workflow newsletter/classify step",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "newsletter/classify")
+      ),
+  },
+  {
+    // OPE-1330 — the promoter-contacts capture step RAN. Like newsletter-classify
+    // it records itself for EVERY email the inbound workflow evaluates, match or
+    // not, so a quiet month of promoter mail (5 promoter senders in the 8 days
+    // to 2026-10-06) cannot false-fire it. 72h is that same measured window:
+    // largest gap between workflow emails in the 60 days to 2026-10-02 was 50.5h.
+    name: "promoter-contact-capture",
+    ownerOpe: "OPE-1330",
+    label: "inbound workflow promoter-contacts/capture step",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "promoter-contacts/capture")
+      ),
+  },
+  {
+    // OPE-1285 — a newsletter was itemized SUCCESSFULLY. Keyed on status='ok',
+    // not on the step running: a model that times out every time still writes
+    // a step record, and a stream of `failed` rows must not read as alive.
+    // 720h is MEASURED: 12 newsletters 2026-07-10 → 10-02, mean gap 7.6 days,
+    // largest 17.9 days.
+    name: "newsletter-itemize",
+    ownerOpe: "OPE-1285",
+    label: "inbound workflow newsletter/itemize step (status ok)",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        and(eq(workflowRunSteps.stepName, "newsletter/itemize"), eq(workflowRunSteps.status, "ok"))
+      ),
+  },
+  {
+    // OPE-1286 — the newsletter lane's creating step RAN for a newsletter the
+    // lane owns (it records `ok` even when the issue has no unmatched item, so
+    // a quiet month of fully-matched newsletters cannot false-fire it).
+    // Seeded DORMANT: only one newsletter had been itemized since OPE-1285
+    // shipped (2026-10-10), so there is no inter-arrival to size a window from.
+    // 720h is newsletter-itemize's measured window, as a placeholder; arming
+    // it from real rows is OPE-1286's follow-up.
+    name: "newsletter-candidates",
+    ownerOpe: "OPE-1286",
+    label: "inbound workflow newsletter/candidates step (status ok)",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        and(
+          eq(workflowRunSteps.stepName, "newsletter/candidates"),
+          eq(workflowRunSteps.status, "ok")
+        )
+      ),
+  },
+  {
+    // OPE-1139 — the self-announced exhibitor lane (link an existing vendor
+    // live, or stage a new one in exhibitor_proposals). Evidence: its step
+    // record, written on EVERY evaluation, declines included.
+    //
+    // Seeded DORMANT (drizzle/0343, enabled_at NULL): one specimen to date, so
+    // the 720h below is a placeholder, not a measurement — the same stance as
+    // roster-vendor-link. Whoever arms it replaces the window with a measured one.
+    name: "self-announced-exhibitor",
+    ownerOpe: "OPE-1139",
+    label: "submit@ self-announcement → exhibitor link / proposal",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "self-announced-exhibitor")
       ),
   },
   {
@@ -639,6 +869,197 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, inboundEmails, inboundEmails.receivedAt, eq(inboundEmails.intent, "photo_intake")),
   },
   {
+    // OPE-1341 — the snap capture page (/admin/snap) writes `routing_source=
+    // 'snap-app'` inbound rows and starts the photo-intake Workflow for each.
+    // Evidence is DEMAND-CONDITIONAL (OPE-325): snaps happen only when John is at
+    // a fair, so "no snap lately" is healthy. What must never happen is a snap
+    // that sits in received/processing — stored, but never run through the lane
+    // (a failed workflow create the sweep did not recover, or a handler fault).
+    // 6h is several stale-sweep cycles past the Workflow's own 120 s budget.
+    name: "snap-intake",
+    ownerOpe: "OPE-1341",
+    label: "Snap capture page → photo-intake lane",
+    priority: "P1",
+    expectedWindowHours: 6,
+    lastEvidenceAt: async (db) =>
+      demandConditionalEvidence(
+        await maxTs(
+          db,
+          inboundEmails,
+          inboundEmails.receivedAt,
+          eq(inboundEmails.routingSource, "snap-app")
+        ),
+        await maxTs(
+          db,
+          inboundEmails,
+          inboundEmails.receivedAt,
+          and(
+            eq(inboundEmails.routingSource, "snap-app"),
+            notInArray(inboundEmails.status, ["received", "processing"])
+          )
+        ),
+        new Date()
+      ),
+  },
+  {
+    // OPE-1057 rework — proof the inbound Workflow's B2 free-text branch RECORDS
+    // each run. Inbound 01ad5525 (2026-10-14) reached `submit/free-text-extract`,
+    // the extract route timed out, and the branch's bare `catch {}` wrote
+    // nothing — so a review read "0 runs ever" off a branch that had run. The
+    // branch now writes one `workflow_run_steps` row per run (ok / failed /
+    // skipped), and this probe watches that the row keeps coming.
+    //
+    // DEMAND-CONDITIONAL (OPE-325): ~1 qualifying email a fortnight, so "no row
+    // lately" is ordinary quiet. Demand is an email the classifier called
+    // `free_text`, with no parsed URL and no attachment, routed to the submit
+    // pipeline — every such run reaches the branch (a free_text body never fans
+    // out, and with no attachment there is no OCR fan-out). Only demand AFTER
+    // `enabled_at` counts, so the pre-ship specimen cannot redden it on arming.
+    // The row is written seconds after the run starts; 24h outlasts a slow
+    // Workflow queue and the digest cycle.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0363): the MCP Worker that
+    // writes the row deploys separately from the app that reads it. Arm it once
+    // the MCP deploy carrying the writer is live.
+    name: "free-text-extract-record",
+    ownerOpe: "OPE-1057",
+    label: "Inbound B2 free-text extraction → workflow_run_steps record",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const armed = await db
+        .select({ enabledAt: heartbeatProbes.enabledAt })
+        .from(heartbeatProbes)
+        .where(eq(heartbeatProbes.probeName, "free-text-extract-record"))
+        .limit(1);
+      const since = armed[0]?.enabledAt ?? null;
+      if (!since) return null; // dormant — the evaluator ignores it anyway
+      return demandConditionalEvidence(
+        await maxTs(
+          db,
+          inboundEmails,
+          inboundEmails.receivedAt,
+          and(
+            eq(inboundEmails.classifiedSubIntent, "free_text"),
+            isNull(inboundEmails.parsedUrl),
+            eq(inboundEmails.attachmentCount, 0),
+            eq(inboundEmails.routedToWorkflow, "submit-pipeline"),
+            gte(inboundEmails.receivedAt, since)
+          )
+        ),
+        await maxTs(
+          db,
+          workflowRunSteps,
+          workflowRunSteps.recordedAt,
+          eq(workflowRunSteps.stepName, "submit/free-text-extract")
+        ),
+        new Date()
+      );
+    },
+  },
+  {
+    // OPE-1505 — proof the no-URL submit branch RECORDS its text match. The
+    // matcher (mcp-server/src/inbound/text-event-match.ts) runs on every no-URL
+    // submission, before and independent of the AI extraction — on 01ad5525 the
+    // extraction timed out and no match was ever attempted — and writes one
+    // `submit/text-match` row per run whatever the outcome (matched / ambiguous
+    // / below-threshold / no-candidate / no-query, in `detail`). So "it never
+    // matches" is countable from those rows, and THIS probe catches the row
+    // disappearing, which would make that count read 0 for the wrong reason.
+    //
+    // DEMAND-CONDITIONAL on exactly the free-text-extract-record demand: every
+    // such email enters the same branch, and the text match runs first in it.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0384) for the same reason as
+    // its sibling: the writer is in the separately deployed MCP Worker.
+    name: "text-match-record",
+    ownerOpe: "OPE-1505",
+    label: "Inbound no-URL submission → text-match record",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const armed = await db
+        .select({ enabledAt: heartbeatProbes.enabledAt })
+        .from(heartbeatProbes)
+        .where(eq(heartbeatProbes.probeName, "text-match-record"))
+        .limit(1);
+      const since = armed[0]?.enabledAt ?? null;
+      if (!since) return null; // dormant — the evaluator ignores it anyway
+      return demandConditionalEvidence(
+        await maxTs(
+          db,
+          inboundEmails,
+          inboundEmails.receivedAt,
+          and(
+            eq(inboundEmails.classifiedSubIntent, "free_text"),
+            isNull(inboundEmails.parsedUrl),
+            eq(inboundEmails.attachmentCount, 0),
+            eq(inboundEmails.routedToWorkflow, "submit-pipeline"),
+            gte(inboundEmails.receivedAt, since)
+          )
+        ),
+        await maxTs(
+          db,
+          workflowRunSteps,
+          workflowRunSteps.recordedAt,
+          eq(workflowRunSteps.stepName, "submit/text-match")
+        ),
+        new Date()
+      );
+    },
+  },
+  {
+    // OPE-1506 — proof that auto-apply APPLIES. A trusted sender's or verified
+    // organizer's unambiguous match with an empty, allowed field writes it in
+    // the same step and records `dedup.enrich_applied`. The OPE-1152 shape this
+    // guards against: a writer that ran on every match and applied ONE row in
+    // its lifetime, while every match row looked healthy.
+    //
+    // DEMAND-CONDITIONAL: demand is a staged enrich row (`dedup.enrich_proposed`
+    // / `dedup.enrich_nothing_staged`) whose payload records a qualifying
+    // sender (`autoApply.basis` set) AND at least one eligible field. Such a
+    // match owes an applied row within seconds; 24h outlasts a slow queue.
+    // A field filled meanwhile is a legitimate non-apply, so a single miss
+    // reads red until the next qualifying match applies — that is the intent.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0385): the writer is in the
+    // separately deployed MCP Worker. Arm once that deploy is live.
+    name: "enrich-auto-apply",
+    ownerOpe: "OPE-1506",
+    label: "Enrich-on-match auto-apply (trusted/verified senders) → dedup.enrich_applied",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const armed = await db
+        .select({ enabledAt: heartbeatProbes.enabledAt })
+        .from(heartbeatProbes)
+        .where(eq(heartbeatProbes.probeName, "enrich-auto-apply"))
+        .limit(1);
+      const since = armed[0]?.enabledAt ?? null;
+      if (!since) return null; // dormant — the evaluator ignores it anyway
+      return demandConditionalEvidence(
+        await maxTs(
+          db,
+          adminActions,
+          adminActions.createdAt,
+          and(
+            inArray(adminActions.action, ["dedup.enrich_proposed", "dedup.enrich_nothing_staged"]),
+            sql`json_extract(${adminActions.payloadJson}, '$.autoApply.basis') IS NOT NULL`,
+            sql`json_array_length(json_extract(${adminActions.payloadJson}, '$.autoApply.eligible')) > 0`,
+            gte(adminActions.createdAt, since)
+          )
+        ),
+        await maxTs(
+          db,
+          adminActions,
+          adminActions.createdAt,
+          eq(adminActions.action, "dedup.enrich_applied")
+        ),
+        new Date()
+      );
+    },
+  },
+  {
     // OPE-403 — proof the lane still RECORDS what it stored.
     //
     // The probe directly above watches `intent='photo_intake'` arrivals, and it
@@ -719,13 +1140,31 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, emailDeliveryEvents, emailDeliveryEvents.receivedAt),
   },
   {
+    // OPE-1530 — evidence is EITHER intent the submit pipeline runs on.
+    //
+    // `submit` is only the submit@ ADDRESS-FALLBACK intent (classifier below
+    // threshold or errored — `routeIntents`, mcp-server/src/email-handler.ts);
+    // a confident classifier stores `new_event`, and both dispatch to the same
+    // submit pipeline (workflows/inbound-email.ts). Keyed on `submit` alone,
+    // the probe watched the low-confidence slice of the lane: its last row was
+    // 2026-10-05 15:01Z, and the probe sat red ~22 days while `new_event`
+    // submissions kept arriving (11 in the 30 days to 10-27, last 10-26).
+    //
+    // 21d window, re-measured 2026-10-27 on BOTH intents: 169 inter-arrival
+    // gaps since 2026-05-18, worst 197h (07-01 → 07-10), then 195h and 169h,
+    // p90 78h. 504h ≈ 2.6x the worst real gap — kept, not widened.
     name: "inbound-submit",
     ownerOpe: "OPE-174",
     label: "Inbound event submissions",
     priority: "P1",
     expectedWindowHours: 21 * 24,
     lastEvidenceAt: (db) =>
-      maxTs(db, inboundEmails, inboundEmails.receivedAt, eq(inboundEmails.intent, "submit")),
+      maxTs(
+        db,
+        inboundEmails,
+        inboundEmails.receivedAt,
+        inArray(inboundEmails.intent, ["submit", "new_event"])
+      ),
   },
   {
     // OPE-944 — proof the original-sender forward analysis is still executing.
@@ -952,6 +1391,31 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1270 — the vendor website-health sweep RAN.
+    //
+    // Driven by the same daily EventDateDriftWorkflow as the promoter sweep, 20
+    // chunks a run, rotating least-recently-checked first. Every chunk writes a
+    // row per site it examines (3,181 live sites, so a chunk is never empty), so
+    // the evidence is the newest check itself — daily by construction, and 72h
+    // is three missed runs.
+    //
+    // ⚠️ Scoped to source_field='vendors.website': four other writers share
+    // url_health_checks, and an unscoped probe would be kept green by any of
+    // them while this sweep was dead (the OPE-865 defect).
+    name: "vendor-url-health-sweep",
+    ownerOpe: "OPE-1270",
+    label: "Vendor website health sweep",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        urlHealthChecks,
+        urlHealthChecks.checkedAt,
+        eq(urlHealthChecks.sourceField, "vendors.website")
+      ),
+  },
+  {
     // OPE-987 — the organizer-page cancellation recheck RAN.
     //
     // A new pass inside the daily EventDateDriftWorkflow
@@ -1132,14 +1596,16 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // Two arrivals are not an inter-arrival distribution, so any window here
     // would be a guess — and a guessed window either cries wolf on a quiet
     // fortnight or sleeps through a dead path. A dormant probe never
-    // false-fires. ARMING CONDITION: once ≥8 qualifying replies exist, set
-    // `enabled_at` and replace this window with ~3× the measured p90 gap
-    // (tracked as its own date-gated ticket).
+    // false-fires.
+    //
+    // ARMED 2026-10-20 (OPE-1034, drizzle/0382), window MEASURED: 19 `sent`
+    // notices 2026-09-17 → 10-17, 18 gaps; p90 (nearest rank, 17th of 18) =
+    // 124.1h, largest 255.4h. 3 × p90 = 372h, ~1.46× the largest gap seen.
     name: "owed-human-notice",
     ownerOpe: "OPE-1018",
     label: "Operator notice: a customer answered a human's email",
     priority: "P1",
-    expectedWindowHours: 30 * 24,
+    expectedWindowHours: 372,
     lastEvidenceAt: (db) =>
       maxTs(
         db,
@@ -1158,11 +1624,18 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, promoterEnrichmentCandidates, promoterEnrichmentCandidates.createdAt),
   },
   {
+    // OPE-1503 — re-measured after gate tuning (OPE-1032 09-15, OPE-815 09-23)
+    // cut inflow from tens of rows a day to a few a week. Prod, 09-24 → 10-21:
+    // the longest closed gap between new rows was 102h (10-07 → 10-11), next
+    // 77.5h; the old 72h window paged on ordinary quiet stretches while the
+    // detectors ran clean (holdout + source_agreement touched rows daily, no
+    // capture errors in error_logs). 240h is ~2.35× the longest gap, with
+    // margin for the off-season, when fewer future events exist to check.
     name: "discrepancy-detection",
     ownerOpe: "OPE-GW1",
     label: "Discrepancy detection",
     priority: "P1",
-    expectedWindowHours: 72,
+    expectedWindowHours: 240,
     lastEvidenceAt: (db) => maxTs(db, eventDiscrepancies, eventDiscrepancies.detectedAt),
   },
   {
@@ -1175,16 +1648,18 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // live value. The silence this watches for is the specimen's: passes keep
     // finding defects and writing them as prose, and the queue goes quiet.
     //
-    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0295). The path is new and
-    // has produced two rows (the backfill), so there is no inter-arrival to
-    // size a window from, and 720h below is a placeholder, not a measurement —
-    // the same stance as roster-vendor-link (OPE-847). Arming is its own
-    // ticket: measure the gaps once passes use the argument, then set both.
+    // Shipped dormant (drizzle/0295, 720h placeholder); ARMED by OPE-1083
+    // (drizzle/0379) on a measurement. Prod, 2026-09-19 → 10-19: 28 rows, 26
+    // organic (two hand backfills on 09-19 excluded). They arrive in batches
+    // per verification pass, on 10 distinct pass days; the gaps between
+    // passes run from under a day to 130h (09-23→09-29), 144h (10-11→10-17)
+    // and 166h (10-04→10-11), the longest. 336h is ~2× that longest gap: a
+    // normal slow week does not page, two silent weeks do.
     name: "citation-live-defect",
     ownerOpe: "OPE-1065",
     label: "Citation live-defect findings → event_discrepancies",
     priority: "P1",
-    expectedWindowHours: 720,
+    expectedWindowHours: 336,
     lastEvidenceAt: (db) =>
       maxTs(
         db,
@@ -1213,7 +1688,14 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     label: "Booth-photo decision stage (auto-write + staging)",
     priority: "P1",
     // DORMANT until PHOTO_AUTOWRITE_ENABLED flips on — set `enabled_at` that day
-    // (drizzle/0164 seeded it NULL). Re-pointed 2026-09-13, while still dormant:
+    // (drizzle/0164 seeded it NULL). Armed 2026-09-26 (drizzle/0327) with the flip.
+    //
+    // OPE-1486 (2026-10-18): the flag is back to "false" (John's 09-30 ruling on
+    // OPE-240) and the probe is deliberately LEFT ARMED. Its evidence is the
+    // stage's decision, not the auto-write: with the gate off every would-write
+    // booth stages as `vendor.photo_proposed` (would_auto_write: true), so the
+    // flag going off cannot make this probe go silent. Silence here still means
+    // the stage stopped running. Re-pointed 2026-09-13, while still dormant:
     //
     // Evidence is the booth stage's DECISION for any photo — a staged proposal
     // OR an auto-write — not auto-writes alone. The original watched only
@@ -1530,6 +2012,24 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, errorLogs, errorLogs.timestamp, eq(errorLogs.source, "mcp:fault-signatures-emit")),
   },
   {
+    // OPE-366 — the hourly E2 push over unterminated membrane crossings.
+    // Evidence is the RUN stamp, written on every completed run whether or not
+    // it notified: a quiet week has no notices, and keying on sends would go
+    // red on a healthy table. Same 6h tolerance as the other hourly cron.
+    name: "unterminated-crossing-notice",
+    ownerOpe: "OPE-366",
+    label: "Unterminated-crossing E2 alarm run (hourly MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 6,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:unterminated-crossing-notice")
+      ),
+  },
+  {
     name: "gsc-search-metrics-ingest",
     ownerOpe: "OPE-309",
     label: "GSC search-metrics ingest",
@@ -1652,8 +2152,68 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // misfit; the long 14-day window carries the "this is slower-moving"
     // signal instead.
     priority: "P1",
-    expectedWindowHours: 14 * 24,
-    lastEvidenceAt: (db) => maxTs(db, promoterOutreachAttempts, promoterOutreachAttempts.createdAt),
+    // OPE-1345 — the lane is now a weekly research-first run (John, 2026-10-13:
+    // ruling A, amended the same day). Most weeks it fixes listings from the
+    // organizer's own page and sends NOTHING, so an attempts-only probe read a
+    // working lane as 19 days of silence. Evidence is now the newer of the
+    // lane's own run stamp and any attempt. Window: the weekly Tuesday cadence
+    // plus 2 days of slack, so ONE missed run goes red by Thursday — the
+    // ruling asked that "a missed week should go red". 7×24 alone would
+    // false-fire on a run that drifts a few hours later than last week's.
+    expectedWindowHours: 9 * 24,
+    lastEvidenceAt: async (db) => {
+      const [run, attempt] = await Promise.all([
+        maxTs(db, promoterOutreachRuns, promoterOutreachRuns.ranAt),
+        maxTs(db, promoterOutreachAttempts, promoterOutreachAttempts.createdAt),
+      ]);
+      if (!run) return attempt;
+      if (!attempt) return run;
+      return run.getTime() >= attempt.getTime() ? run : attempt;
+    },
+  },
+  {
+    // OPE-1509 — an organizer's reply moves its outreach ask to `replied` at
+    // capture (`promoter-outreach/link-reply`), with no tool call. Before this,
+    // the Message-ID rule compared a bracketed ledger id to a bracket-stripped
+    // header and never matched, and nothing ran the linker unless asked.
+    //
+    // The failure is directly observable, so there is no separate evidence
+    // query: an inbound that THREADS to one of our outreach sends (its
+    // In-Reply-To/References carry the ledger's provider_message_id) while the
+    // ask it answers is STILL `sent` (sent before the reply arrived). That row
+    // existing means the link did not happen. 24h outlasts every retry.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0386): the linker is in the
+    // separately deployed MCP Worker. Arm once that deploy is live.
+    name: "outreach-reply-link",
+    ownerOpe: "OPE-1509",
+    label: "Outreach reply linked at capture → promoter_outreach_attempts 'replied'",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ t: sql<number | null>`max(${inboundEmails.receivedAt})` })
+        .from(inboundEmails)
+        .innerJoin(
+          emailSendLedger,
+          and(
+            eq(emailSendLedger.source, "email:promoter-outreach"),
+            isNotNull(emailSendLedger.providerMessageId),
+            sql`(instr(coalesce(${inboundEmails.inReplyTo}, ''), ${emailSendLedger.providerMessageId}) > 0
+              OR instr(coalesce(${inboundEmails.emailReferences}, ''), ${emailSendLedger.providerMessageId}) > 0)`
+          )
+        )
+        .innerJoin(
+          promoterOutreachAttempts,
+          and(
+            sql`lower(${promoterOutreachAttempts.toAddress}) = lower(${emailSendLedger.recipient})`,
+            eq(promoterOutreachAttempts.status, "sent"),
+            sql`${promoterOutreachAttempts.sentAt} <= ${inboundEmails.receivedAt}`
+          )
+        );
+      const unlinked = r?.t != null ? new Date(Number(r.t) * 1000) : null;
+      return demandConditionalEvidence(unlinked, null, new Date());
+    },
   },
   // ── OPE-975 — three seeds that existed with NO registry entry ─────────
   //
@@ -1668,6 +2228,14 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // Measured 2026-09-13: ONE row (2026-07, ingested 08-09); the August email
     // (~Sept 4, per the seed) never landed. With this entry that silence
     // becomes visible at 40 days instead of never.
+    //
+    // OPE-1568 re-check of the window, measured from Gmail receipt times of
+    // Google's own sends: 07-07, 08-04, 09-08, 10-06 (2026) → gaps 28/35/28d.
+    // 40d covers the longest observed gap with 5d of slack, so it stays — IF
+    // ingest is prompt. Evidence is `updated_at` (ingest time), so any delivery
+    // lag (the email has to reach the inbound worker, or an agent has to paste
+    // it via `ingest_gsc_milestone_email`) eats that slack. Widening the window
+    // would only hide the delivery gap this probe exists to expose.
     name: "gsc-monthly-oracle",
     ownerOpe: "OPE-344",
     label: "GSC monthly oracle (Google's own monthly email figures)",
@@ -1828,6 +2396,44 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1152 — proof enrich-on-match still RECORDS a disposition for every
+    // match. It staged ONE proposal in its lifetime because its writer was
+    // reachable from one branch with a scope that was always already filled —
+    // and nothing could tell that apart from "no matches". The stager now
+    // writes exactly one admin_actions row per match (`dedup.enrich_proposed`
+    // or `dedup.enrich_nothing_staged`), so it owes evidence whenever an email
+    // matched. Demand = the newest `already-exists` reply (the single-event
+    // HIGH branch always stages before replying it); healthy when the newest
+    // disposition row postdates it. 72h, because matches are a low-traffic,
+    // human-paced input.
+    name: "enrich-on-match-disposition",
+    ownerOpe: "OPE-1152",
+    label: "enrich-on-match records a disposition for each matched submission",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: async (db) => {
+      // Demand counts only replies received after this probe was armed: the
+      // newest pre-ship `already-exists` (2026-10-04) predates the writer, so
+      // without the floor the probe would read red on its first evaluation.
+      const demand = await maxTs(
+        db,
+        inboundEmails,
+        inboundEmails.receivedAt,
+        and(
+          eq(inboundEmails.replyKind, "already-exists"),
+          sql`${inboundEmails.receivedAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'enrich-on-match-disposition'), 4102444800)`
+        )
+      );
+      const evidence = await maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        inArray(adminActions.action, [ENRICH_PROPOSED_ACTION, ENRICH_NOTHING_STAGED_ACTION])
+      );
+      return demandConditionalEvidence(demand, evidence, new Date());
+    },
+  },
+  {
     // OPE-1205 — proof the daily sync-staleness sweep still RUNS. It writes one
     // admin_actions row per run (event.sync_stale_sweep) whether or not it
     // downgrades anything, so silence means the cron stopped, not that nothing
@@ -1844,6 +2450,160 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         adminActions.createdAt,
         eq(adminActions.action, "event.sync_stale_sweep")
       ),
+  },
+  {
+    // OPE-1239 — proof the CI-trigger watchdog still RUNS. Its normal output is
+    // silence (no alert), which is indistinguishable from a dead watchdog, so it
+    // stamps admin_actions `ci.trigger_watchdog.run` at most once an hour from
+    // the */10 cron. 3h = three stamps missed before it pages.
+    name: "ci-trigger-watchdog",
+    ownerOpe: "OPE-1239",
+    label: "CI-trigger watchdog (Cloudflare cron) running",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "ci.trigger_watchdog.run")
+      ),
+  },
+  {
+    // OPE-1325 — multi-edition series, step 2/5. Proof the edition-key writer
+    // (create_occurrence on a series with edition_mode='multi', built in
+    // OPE-1327) is still producing keyed editions. Evidence is the newest events
+    // row carrying a non-NULL `edition_key` — only that writer sets one.
+    //
+    // DORMANT: seeded with enabled_at NULL (drizzle/0356). No row can carry a
+    // key until OPE-1327 ships the writer and OPE-1328 flips NEAR-Fest, so an
+    // armed probe would only false-fire. OPE-1328 sets enabled_at.
+    //
+    // ARMED 2026-10-06 (drizzle/0358) after the NEAR-Fest flip (OPE-1328).
+    //
+    // ⚠️ The window is a JUDGEMENT, not a measurement: one multi-edition series
+    // with one member (n=1), so there is no inter-arrival to measure. Evidence
+    // is the newest keyed row's created_at — XL's is 2026-05-18, because it was
+    // created annual and keyed at the flip. A twice-yearly series adds a new
+    // edition row only when its organizer publishes dates, which can trail the
+    // previous edition by 6+ months; 183 days (the dormant placeholder) would
+    // have fired ~2026-11-17 on a healthy writer. 270 days clears that. Re-derive
+    // it from real rows once a second edition (or series) exists.
+    name: "series-edition-key",
+    ownerOpe: "OPE-1325",
+    label: "multi-edition series writing edition keys",
+    priority: "P1",
+    expectedWindowHours: 6480,
+    lastEvidenceAt: (db) => maxTs(db, events, events.createdAt, isNotNull(events.editionKey)),
+  },
+  {
+    // OPE-1316 — proof the import-url AI extractor is still ANSWERING. Every
+    // successful extraction (email workflow, holdout sampler, photo intake,
+    // admin import) now writes one `info` row; before this only failures
+    // logged, so "the extractor went quiet" and "nothing was submitted" looked
+    // identical.
+    //
+    // Seeded dormant (drizzle/0357). ARMED 2026-10-20 (OPE-1329, drizzle/0383),
+    // window MEASURED on prod 2026-10-07 → 10-19: 33 rows, 32 gaps, largest
+    // 24.01h, p90 24.0h, mean ~9.75h. By caller: holdout-sampler 29 (one daily
+    // 06:10Z run, so it sets the cadence), email-workflow 2, internal-unnamed 2.
+    // 72h = 3 × the largest gap: two consecutive missed sampler days fire it.
+    //
+    // ⚠️ What it can and cannot see: it proves the shared extractor endpoint
+    // still answers, because the daily sampler calls it. It cannot tell the
+    // email path alone going quiet (n=2 in 13 days, nothing to size a window
+    // from) — that would need its own per-caller probe once there is volume.
+    name: "import-url-extract-success",
+    ownerOpe: "OPE-1316",
+    label: "import-url AI extractor returning answers",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(
+          eq(errorLogs.source, EXTRACT_LOG_SOURCE),
+          eq(errorLogs.message, AI_EXTRACTION_OK_MESSAGE)
+        )
+      ),
+  },
+  {
+    // OPE-1352 — an inbound email never keeps naming an event that lost a
+    // duplicate adjudication. All three writers (update_event_status,
+    // flag-queue reject, mergeEvents) repoint via repointInboundEmailsToKeeper;
+    // a fourth writer that forgets to is exactly what this sees.
+    //
+    // An invariant, read as demand-conditional evidence: no inbound pointing at
+    // a `merged_into` / `rejected_as_duplicate_of` row reads healthy NOW; any
+    // such row starts the clock at the loser's updated_at (≈ the adjudication).
+    //
+    // DORMANT (drizzle/0364, enabled_at NULL): 18 pre-fix rows exist in prod
+    // until the one-time backfill runs. Arm it the day the backfill lands.
+    name: "inbound-follows-duplicate-keeper",
+    ownerOpe: "OPE-1352",
+    label: "inbound emails repointed off rejected/merged duplicates",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${events.updatedAt})` })
+        .from(inboundEmails)
+        .innerJoin(events, eq(events.id, inboundEmails.resultingEventId))
+        .where(or(isNotNull(events.mergedInto), isNotNull(events.rejectedAsDuplicateOf)));
+      return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
+    },
+  },
+  {
+    // OPE-1408 — proof the K7.4 extract-context writer still runs for URL
+    // submissions. `content_length_chars` / `content_sha256_first16` were NULL on
+    // every row from 2026-08-24 to ship: the writer lived only in the single-URL
+    // path, the multi-source fan-out never called it, and OPE-537 (#1019) moved
+    // all bare-URL traffic into the fan-out. Nothing noticed for 7 weeks.
+    //
+    // Demand = an inbound row whose URL was extracted (`parsed_url` set AND
+    // `extraction_method` in ai/json-ld/thin — set at mark-done, AFTER the
+    // persist step in the same run). Evidence = a row carrying
+    // content_length_chars. The clock starts at the OLDEST demand row newer
+    // than the newest evidence: keying on the newest demand instead would let a
+    // steady inflow of unserved emails reset the clock forever and never fire.
+    //
+    // Floored at enabled_at so the ~45 pre-fix NULL rows are not demand.
+    //
+    // 240h, MEASURED (prod, n=60 URL-extract rows, all-time): inter-arrival
+    // mean 58.4h; the largest gaps are 647h, 416h, 218h, 185h, 166h. A dead
+    // writer fires 10 days after its first unserved email. A lone LEGITIMATE
+    // miss (a fan-out whose URL fetch failed but whose body prose produced the
+    // event still records extraction_method='ai') is cleared by the next served
+    // email, and only 2 of 59 gaps exceed 240h — so a false RED needs that rare
+    // miss to land right before a rare lull.
+    name: "extract-context-telemetry",
+    ownerOpe: "OPE-1408",
+    label: "URL submissions record extract context (content_length_chars)",
+    priority: "P1",
+    expectedWindowHours: 240,
+    lastEvidenceAt: async (db) => {
+      const evidence = await maxTs(
+        db,
+        inboundEmails,
+        inboundEmails.receivedAt,
+        isNotNull(inboundEmails.contentLengthChars)
+      );
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${inboundEmails.receivedAt})` })
+        .from(inboundEmails)
+        .where(
+          and(
+            isNotNull(inboundEmails.parsedUrl),
+            inArray(inboundEmails.extractionMethod, ["ai", "json-ld", "thin"]),
+            // Newer than the newest evidence ⇒ unserved by construction.
+            sql`${inboundEmails.receivedAt} > ${evidence ? Math.floor(evidence.getTime() / 1000) : 0}`,
+            sql`${inboundEmails.receivedAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'extract-context-telemetry'), 4102444800)`
+          )
+        );
+      return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
+    },
   },
 ];
 

@@ -32,6 +32,7 @@ const SCHEMA_SQL = `
   CREATE TABLE url_health_checks (
     id TEXT PRIMARY KEY, url TEXT NOT NULL, source_field TEXT NOT NULL,
     verdict TEXT NOT NULL, http_status INTEGER, signals TEXT, detail TEXT,
+    body_bytes INTEGER,
     checked_at INTEGER NOT NULL
   );
 `;
@@ -258,5 +259,52 @@ describe("OPE-988 — an empty estate is not a clean bill of health", () => {
     expect(json.examined).toBe(0);
     expect(json.events_in_window).toBe(0);
     expect(json.disagreements).toEqual([]);
+  });
+});
+
+describe("OPE-1350 — on THIS path, a 200 we could not read is not a parked page", () => {
+  beforeEach(seed);
+
+  const rowFor = (url: string) =>
+    raw
+      .prepare(`SELECT verdict, signals, detail FROM url_health_checks WHERE url = ?`)
+      .get(url) as { verdict: string; signals: string; detail: string };
+
+  /** Serve the normal estate, except FRYEBURG gets `special`. */
+  const stubFetch = (special: () => Response) =>
+    vi.stubGlobal("fetch", async (input: string | Request) => {
+      const u = typeof input === "string" ? input : input.url;
+      if (u === FRYEBURG) return special();
+      const body = PAGES[u];
+      if (body === undefined) throw new Error("network");
+      return new Response(body, { status: 200 });
+    });
+
+  it("a body that errors mid-stream (the thesandwichfair shape) reads unreachable, never parked_page", async () => {
+    stubFetch(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              c.error(new Error("aborted mid-body"));
+            },
+          }),
+          { status: 200 }
+        )
+    );
+    const json = await sweep();
+    const row = rowFor(FRYEBURG);
+    expect(row.verdict).toBe("unreachable");
+    expect(row.signals).toContain("body-read-failed");
+    expect(row.detail).toContain("aborted mid-body");
+    expect(json.verdicts.parked_page ?? 0).toBe(0);
+  });
+
+  it("a genuinely 0-byte 200 (the lebanoncraftfair row's shape) reads unreachable, never parked_page", async () => {
+    stubFetch(() => new Response("", { status: 200 }));
+    const json = await sweep();
+    expect(rowFor(FRYEBURG).verdict).toBe("unreachable");
+    expect(rowFor(FRYEBURG).signals).toContain("empty-body");
+    expect(json.verdicts.parked_page ?? 0).toBe(0);
   });
 });

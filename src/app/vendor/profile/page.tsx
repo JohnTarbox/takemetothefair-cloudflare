@@ -70,6 +70,10 @@ interface VendorProfile {
   city: string | null;
   state: string | null;
   zip: string | null;
+  // OPE-1398 — street address hidden publicly for self-signup vendors unless
+  // they opt back in.
+  selfSignup?: boolean;
+  showStreetAddress?: boolean;
   latitude: number | null;
   longitude: number | null;
   // Business Details
@@ -129,6 +133,7 @@ export default function VendorProfilePage() {
     city: "",
     state: "",
     zip: "",
+    showStreetAddress: false,
     latitude: null as number | null,
     longitude: null as number | null,
     // Business Details
@@ -193,6 +198,7 @@ export default function VendorProfilePage() {
           city: data.city || "",
           state: data.state || "",
           zip: data.zip || "",
+          showStreetAddress: Boolean(data.showStreetAddress),
           latitude: data.latitude,
           longitude: data.longitude,
           // Business Details
@@ -450,8 +456,18 @@ export default function VendorProfilePage() {
     <div className="max-w-2xl">
       <WelcomeBanner
         storageKey="mmatf.welcome.vendor"
-        title="Welcome to Meet Me at the Fair!"
-        body="Complete your vendor profile below so promoters have what they need to approve your event applications."
+        title="Your free directory listing is set up."
+        body={
+          // OPE-986 A1 — copy approved verbatim by John, 2026-10-17. A crafter
+          // read the old "approve your event applications" as having applied.
+          <p>
+            This is a listing on Meet Me at the Fair — it is not an application to any fair. Each
+            fair takes its own vendor applications, usually on the fair&apos;s website or by
+            contacting the organizer. We sent a verification link to{" "}
+            {profile.ownerEmail ? <strong>{profile.ownerEmail}</strong> : "your email address"}; if
+            that address is wrong, contact support@meetmeatthefair.com.
+          </p>
+        }
       />
       <VendorClaimWidget
         claimed={profile.claimed}
@@ -745,6 +761,27 @@ export default function VendorProfilePage() {
                   onChange={handleChange}
                   placeholder="123 Main Street"
                 />
+                {/* OPE-1398 — self-signup vendors' street address is private
+                    by default; city, state and ZIP still show. */}
+                {profile?.selfSignup && (
+                  <label className="flex items-start gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      name="showStreetAddress"
+                      className="mt-0.5"
+                      checked={formData.showStreetAddress}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, showStreetAddress: e.target.checked }))
+                      }
+                    />
+                    <span>
+                      Show my street address on my public profile
+                      <span className="block text-xs text-muted-foreground">
+                        Off by default. Your city, state and ZIP code are always shown.
+                      </span>
+                    </span>
+                  </label>
+                )}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="col-span-2">
                     <Input label="City" name="city" value={formData.city} onChange={handleChange} />

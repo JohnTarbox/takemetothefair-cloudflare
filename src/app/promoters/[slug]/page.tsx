@@ -20,16 +20,16 @@
 
 import { notFound } from "next/navigation";
 import { TrackedActionLink } from "@/components/analytics/TrackedActionLink";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import { MapPin, Phone, Mail, Globe, Calendar, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues } from "@/lib/db/schema";
-import { eq, and, lt } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
-import { upcomingEndPredicate } from "@/lib/event-dates";
+import { upcomingEndPredicate, pastEndPredicate } from "@/lib/event-dates";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { logError } from "@/lib/logger";
@@ -38,10 +38,13 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { PromoterClaimCTA } from "@/components/promoters/PromoterClaimCTA";
+import { PromoterClosedNotice } from "@/components/promoters/PromoterClosedNotice";
+import { isClosedPromoter } from "@/lib/promoters/operating-status";
 import { auth } from "@/lib/auth";
 import { unsafeSlug } from "@/lib/utils";
+import { safeHref } from "@takemetothefair/utils";
 import { buildPromoterMetaDescription } from "@/lib/seo-utils";
-import { cdnImage, OG_EVENT, focalPointGravity } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, OG_EVENT, focalPointGravity } from "@/lib/cdn-image";
 
 export const revalidate = 300; // 5-minute ISR
 
@@ -84,9 +87,7 @@ async function getPromoter(slug: string) {
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(
-        and(eq(events.promoterId, promoter.id), isPublicEventStatus(), lt(events.endDate, now))
-      )
+      .where(and(eq(events.promoterId, promoter.id), isPublicEventStatus(), pastEndPredicate(now)))
       .orderBy(events.startDate)
       .limit(12);
 
@@ -113,10 +114,22 @@ async function getPromoter(slug: string) {
       attachEventDayDates(db, pastFlat),
     ]);
 
+    // OPE-979 — who took a closed promoter's shows over, for the notice's link.
+    let successor: { companyName: string; slug: string } | null = null;
+    if (isClosedPromoter(promoter.operatingStatus) && promoter.succeededByPromoterId) {
+      const [s] = await db
+        .select({ companyName: promoters.companyName, slug: promoters.slug })
+        .from(promoters)
+        .where(eq(promoters.id, promoter.succeededByPromoterId))
+        .limit(1);
+      successor = s ?? null;
+    }
+
     return {
       ...promoter,
       upcomingEvents,
       pastEvents,
+      successor,
     };
   } catch (e) {
     await logError(db, {
@@ -191,6 +204,8 @@ export default async function PromoterDetailPage({ params }: Props) {
   const isOwner = !!session?.user?.id && session.user.id === promoter.userId;
 
   const locationStr = [promoter.city, promoter.state].filter(Boolean).join(", ");
+  // OPE-1368 — stored URLs render through safeHref (http/https only).
+  const websiteHref = safeHref(promoter.website);
 
   return (
     <>
@@ -220,9 +235,13 @@ export default async function PromoterDetailPage({ params }: Props) {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <main className="lg:col-span-2 space-y-6">
-            {!promoter.claimed && !isOwner && !isAdmin && (
-              <PromoterClaimCTA companyName={promoter.companyName} promoterSlug={promoter.slug} />
-            )}
+            {/* OPE-979 — never invite someone to claim a closed business. */}
+            {!promoter.claimed &&
+              !isOwner &&
+              !isAdmin &&
+              !isClosedPromoter(promoter.operatingStatus) && (
+                <PromoterClaimCTA companyName={promoter.companyName} promoterSlug={promoter.slug} />
+              )}
             {promoter.heroImageUrl &&
               (() => {
                 // OPE-34 — full-bleed promoter hero band (separate from the small
@@ -243,9 +262,7 @@ export default async function PromoterDetailPage({ params }: Props) {
                   quality: 80,
                   onerror: "redirect" as const,
                 });
-                const heroSrcSet = widths
-                  .map((w) => `${cdnImage(promoter.heroImageUrl!, opts(w))} ${w}w`)
-                  .join(", ");
+                const heroSrcSet = cdnSrcSet(promoter.heroImageUrl, widths, (w) => opts(w));
                 return (
                   <div className="aspect-[21/9] w-full overflow-hidden rounded-xl bg-muted">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -290,6 +307,12 @@ export default async function PromoterDetailPage({ params }: Props) {
                     {locationStr}
                   </p>
                 )}
+                {isClosedPromoter(promoter.operatingStatus) && (
+                  <PromoterClosedNotice
+                    companyName={promoter.companyName}
+                    successor={promoter.successor}
+                  />
+                )}
               </div>
             </div>
 
@@ -329,7 +352,7 @@ export default async function PromoterDetailPage({ params }: Props) {
             <Card>
               <CardContent className="py-6 space-y-3">
                 <h2 className="text-lg font-semibold text-foreground">Contact</h2>
-                {promoter.website && (
+                {websiteHref && (
                   <p className="flex items-center gap-2 text-sm">
                     <Globe className="w-4 h-4 text-muted-foreground" />
                     {/* Was next/link — an external, nofollow'd destination
@@ -339,12 +362,12 @@ export default async function PromoterDetailPage({ params }: Props) {
                       event="outbound_website_click"
                       entityType="PROMOTER"
                       entitySlug={promoter.slug}
-                      href={promoter.website}
+                      href={websiteHref}
                       target="_blank"
                       rel="noopener noreferrer nofollow"
                       className="text-navy hover:underline break-all"
                     >
-                      {promoter.website.replace(/^https?:\/\//, "")}
+                      {websiteHref.replace(/^https?:\/\//, "")}
                     </TrackedActionLink>
                   </p>
                 )}

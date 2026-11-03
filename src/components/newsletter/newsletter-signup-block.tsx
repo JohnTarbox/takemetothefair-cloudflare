@@ -41,7 +41,14 @@ export function NewsletterSignupBlock({
               : "What’s on across New England this weekend — one short email, every week, free."}
           </p>
           <div className="mt-3 max-w-sm">
-            <NewsletterSignup source={source} audience={audience} />
+            {/* OPE-1209 — this card already shows the name and blurb above, on a
+                light surface: surface tone, and no second copy of the intro. */}
+            <NewsletterSignup
+              source={source}
+              audience={audience}
+              tone="surface"
+              showIntro={false}
+            />
           </div>
         </div>
       </div>

@@ -33,7 +33,7 @@ vi.mock("@/components/google-place-search", () => ({ GooglePlaceSearch: () => nu
 const UNVERIFIED = {
   id: "d4b29175",
   ownerEmailVerified: false,
-  ownerEmail: "sanzaart@gmail.com",
+  ownerEmail: "userstudio@gmail.com",
   businessName: "Sanza Studio Creations",
   slug: "sanza-studio-creations",
   description: null,

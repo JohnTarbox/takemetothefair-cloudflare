@@ -33,13 +33,19 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { hasCalendarDayPassed } from "@takemetothefair/datetime";
 
 const SOURCE = readFileSync(resolve(__dirname, "..", "route.ts"), "utf8");
 
-/** Mirrors the guard, so the intent is testable independent of the route. */
+/**
+ * Mirrors the guard with the SAME predicate the route calls (OPE-651: a
+ * calendar-day comparison in the venue zone), so the intent is testable
+ * independent of the route; the route's use of it is pinned below.
+ */
 function gateReasonsFor(effectiveStartDate: Date | null, now: number): string[] {
   const reasons: string[] = [];
-  if (effectiveStartDate && effectiveStartDate.getTime() < now) reasons.push("past_date");
+  if (effectiveStartDate && hasCalendarDayPassed(effectiveStartDate, new Date(now)))
+    reasons.push("past_date");
   return reasons;
 }
 
@@ -90,7 +96,9 @@ describe("the ordering rule, pinned in the route itself", () => {
   });
 
   it("re-checks the past date against effectiveStartDate", () => {
-    expect(SOURCE).toMatch(/effectiveStartDate && effectiveStartDate\.getTime\(\) < Date\.now\(\)/);
+    expect(SOURCE).toContain(
+      "effectiveStartDate && hasCalendarDayPassed(effectiveStartDate, new Date())"
+    );
   });
 
   it("appends past_date idempotently, so a row gated earlier is unchanged", () => {
@@ -101,5 +109,36 @@ describe("the ordering rule, pinned in the route itself", () => {
     expect(SOURCE).toContain(
       'if (!gateReasons.includes("past_date")) gateReasons.push("past_date")'
     );
+  });
+});
+
+/**
+ * OPE-651 — the email/suggest lane stamped `past_date` on SAME-DAY rows.
+ *
+ * Dates are stored at noon UTC. `startDate.getTime() < Date.now()` therefore
+ * called an event "past" from 12:00Z — 08:00 Eastern — on its own morning,
+ * forcing PENDING_REVIEW on a fair that had not opened yet. #1102 fixed the
+ * same instant comparison in the shared gate; this path kept its own copy.
+ */
+describe("a same-day submission is not past (OPE-651)", () => {
+  const TODAY_NOON_UTC = new Date("2026-10-04T12:00:00Z");
+
+  it.each([
+    ["08:30 EDT, before doors", "2026-10-04T12:30:00Z"],
+    ["16:00 EDT, mid-event", "2026-10-04T20:00:00Z"],
+    ["23:30 EDT — already TOMORROW in UTC", "2026-10-05T03:30:00Z"],
+  ])("does not gate at %s", (_label, now) => {
+    expect(gateReasonsFor(TODAY_NOON_UTC, new Date(now).getTime())).toEqual([]);
+  });
+
+  it("does gate the next Eastern day", () => {
+    expect(gateReasonsFor(TODAY_NOON_UTC, new Date("2026-10-05T04:30:00Z").getTime())).toEqual([
+      "past_date",
+    ]);
+  });
+
+  it("neither route site compares instants any more", () => {
+    expect(SOURCE).not.toMatch(/[sS]tartDate\.getTime\(\) < Date\.now\(\)/);
+    expect(SOURCE).toContain("startDate && hasCalendarDayPassed(startDate, new Date())");
   });
 });

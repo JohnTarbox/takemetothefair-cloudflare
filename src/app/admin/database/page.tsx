@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   Database,
   Download,
-  Upload,
   RefreshCw,
   AlertTriangle,
   CheckCircle,
@@ -34,12 +33,8 @@ export default function DatabaseManagementPage() {
   const [stats, setStats] = useState<DbStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [backingUp, setBackingUp] = useState(false);
-  const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [restoreFile, setRestoreFile] = useState<File | null>(null);
-  const [confirmRestore, setConfirmRestore] = useState("");
-  const [showRestoreDialog, setShowRestoreDialog] = useState(false);
 
   useEffect(() => {
     fetchStats();
@@ -95,59 +90,6 @@ export default function DatabaseManagementPage() {
     }
   };
 
-  const handleRestore = async () => {
-    if (!restoreFile) {
-      setError("Please select a backup file");
-      return;
-    }
-
-    if (confirmRestore !== "yes-restore-database") {
-      setError("Please type 'yes-restore-database' to confirm");
-      return;
-    }
-
-    setRestoring(true);
-    setError("");
-    setSuccess("");
-
-    try {
-      const formData = new FormData();
-      formData.append("file", restoreFile);
-      formData.append("confirm", confirmRestore);
-
-      const res = await fetch("/api/admin/database/restore", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = (await res.json()) as {
-        error?: string;
-        message?: string;
-        details?: { tablesCreated: number; rowsInserted: number; totalErrors: number };
-      };
-
-      if (!res.ok) {
-        throw new Error(data.error || "Restore failed");
-      }
-
-      setSuccess(
-        `${data.message} Tables: ${data.details?.tablesCreated}, Rows: ${data.details?.rowsInserted}${
-          (data.details?.totalErrors ?? 0) > 0 ? `, Errors: ${data.details?.totalErrors}` : ""
-        }`
-      );
-      setShowRestoreDialog(false);
-      setRestoreFile(null);
-      setConfirmRestore("");
-
-      // Refresh stats
-      await fetchStats();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Restore failed");
-    } finally {
-      setRestoring(false);
-    }
-  };
-
   return (
     <div>
       <div className="mb-6">
@@ -166,7 +108,9 @@ export default function DatabaseManagementPage() {
             <Database className="w-6 h-6" />
             Database Management
           </h1>
-          <p className="text-muted-foreground mt-1">Backup and restore your database</p>
+          <p className="text-muted-foreground mt-1">
+            Download a read-only backup and view table statistics
+          </p>
         </div>
         <Button variant="outline" onClick={fetchStats} disabled={loading}>
           <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
@@ -218,114 +162,24 @@ export default function DatabaseManagementPage() {
           </CardContent>
         </Card>
 
-        {/* Restore Card */}
+        {/* Recovery note (OPE-1367): the in-app restore was retired. */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Upload className="w-5 h-5 text-orange-600" />
-              Restore Database
+              <AlertTriangle className="w-5 h-5 text-orange-600" />
+              Restoring the Database
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground mb-4">
-              Restore your database from a backup file. This will replace all existing data.
+            <p className="text-sm text-muted-foreground">
+              There is no in-app restore. Recovery uses D1 Time Travel from the command line, within
+              a 30-day window:{" "}
+              <code className="bg-muted px-1 rounded">wrangler d1 time-travel restore</code>. See{" "}
+              <code className="bg-muted px-1 rounded">docs/d1-restore-procedure.md</code>.
             </p>
-            <Button
-              variant="outline"
-              onClick={() => setShowRestoreDialog(true)}
-              className="w-full border-orange-300 text-orange-700 hover:bg-orange-50"
-            >
-              <Upload className="w-4 h-4 mr-2" />
-              Restore from Backup
-            </Button>
           </CardContent>
         </Card>
       </div>
-
-      {/* Restore Dialog */}
-      {showRestoreDialog && (
-        <Card className="mb-6 border-orange-300 bg-orange-50">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-orange-700">
-              <AlertTriangle className="w-5 h-5" />
-              Restore Database
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="bg-card p-4 rounded-lg border border-orange-200">
-                <p className="text-sm text-orange-800 font-medium mb-2">Warning:</p>
-                <ul className="text-sm text-orange-700 list-disc list-inside space-y-1">
-                  <li>This will overwrite ALL existing data</li>
-                  <li>This action cannot be undone</li>
-                  <li>Make sure you have a current backup before proceeding</li>
-                </ul>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1">
-                  Select Backup File (.sql)
-                </label>
-                <input
-                  type="file"
-                  accept=".sql"
-                  onChange={(e) => setRestoreFile(e.target.files?.[0] || null)}
-                  className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-orange-100 file:text-orange-700 hover:file:bg-orange-200"
-                />
-                {restoreFile && (
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Selected: {restoreFile.name} ({(restoreFile.size / 1024).toFixed(1)} KB)
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1">
-                  Type <code className="bg-muted px-1 rounded">yes-restore-database</code> to
-                  confirm
-                </label>
-                <input
-                  type="text"
-                  value={confirmRestore}
-                  onChange={(e) => setConfirmRestore(e.target.value)}
-                  placeholder="yes-restore-database"
-                  className="block w-full px-3 py-2 border border-border rounded-md text-sm"
-                />
-              </div>
-
-              <div className="flex gap-3">
-                <Button
-                  onClick={handleRestore}
-                  disabled={restoring || !restoreFile || confirmRestore !== "yes-restore-database"}
-                  className="bg-orange-600 hover:bg-orange-700"
-                >
-                  {restoring ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                      Restoring...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-4 h-4 mr-2" />
-                      Restore Database
-                    </>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setShowRestoreDialog(false);
-                    setRestoreFile(null);
-                    setConfirmRestore("");
-                  }}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Database Stats */}
       <Card>

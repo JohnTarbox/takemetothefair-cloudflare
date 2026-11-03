@@ -5,7 +5,11 @@ import { events, adminActions, eventSlugHistory } from "../schema.js";
 import { EVENT_LIFECYCLE_VALUES, type EventLifecycle } from "@takemetothefair/constants";
 import { decodeHtmlEntities } from "@takemetothefair/utils";
 import { jsonContent, publicUrlFor, triggerIndexNow } from "../helpers.js";
-import { validateLifecycleTransition, isPublicLifecycle } from "../lifecycle.js";
+import {
+  validateLifecycleTransition,
+  isPublicLifecycle,
+  noOpRescheduleReason,
+} from "../lifecycle.js";
 import { rolloverEventIfRecurring } from "../event-rollover.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -71,9 +75,31 @@ export function registerEventLifecycleTools(
         .datetime()
         .optional()
         .describe("ISO 8601. Required for RESCHEDULED; ignored otherwise."),
+      previous_start_date: z
+        .string()
+        .datetime()
+        .optional()
+        .describe(
+          "ISO 8601. RESCHEDULED/POSTPONED only: the date the event was moved FROM, when the row's " +
+            "start_date was already edited to the new date before this transition (otherwise the " +
+            "current start_date is recorded as previous, which is then the NEW date — OPE-1218/1219)."
+        ),
+      previous_end_date: z
+        .string()
+        .datetime()
+        .optional()
+        .describe("ISO 8601. Pairs with previous_start_date; defaults to it when omitted."),
     },
     async (params) => {
-      const { event_id, new_lifecycle, reason, new_start_date, new_end_date } = params;
+      const {
+        event_id,
+        new_lifecycle,
+        reason,
+        new_start_date,
+        new_end_date,
+        previous_start_date,
+        previous_end_date,
+      } = params;
       const decodedReason = reason ? decodeHtmlEntities(reason) : null;
       const to = new_lifecycle as EventLifecycle;
 
@@ -137,6 +163,8 @@ export function registerEventLifecycleTools(
         lifecycleStatusChangedAt: current.lifecycleStatusChangedAt ?? null,
         lifecycleReason: current.lifecycleReason ?? null,
         startDate: current.startDate ?? null,
+        // OPE-1218 — an inferred OCCURRED opens to RESCHEDULED only onto a future date.
+        newStartDate: to === "RESCHEDULED" && new_start_date ? new Date(new_start_date) : null,
       });
       if (!check.ok) {
         return {
@@ -171,6 +199,22 @@ export function registerEventLifecycleTools(
         };
       }
 
+      // OPE-1219 — a reschedule onto the row's own current start would record
+      // the new date as previous (Peabody: previousStartDate == startDate).
+      if (to === "RESCHEDULED") {
+        const noOp = noOpRescheduleReason({
+          currentStartDate: current.startDate ?? null,
+          newStartDate: new_start_date ? new Date(new_start_date) : null,
+          previousSupplied: Boolean(previous_start_date),
+        });
+        if (noOp) {
+          return {
+            content: [jsonContent({ error: "noop_reschedule", message: noOp, from, to })],
+            isError: true,
+          };
+        }
+      }
+
       // Compute date updates for RESCHEDULED / POSTPONED. Other transitions
       // leave dates untouched.
       const dateUpdate: {
@@ -180,17 +224,25 @@ export function registerEventLifecycleTools(
         previousEndDate?: Date | null;
         datesConfirmed?: boolean;
       } = {};
+      // OPE-1218 — an explicit previous pair wins over the row's current dates,
+      // for the row whose dates were already moved by update_event.
+      const prevStart = previous_start_date
+        ? new Date(previous_start_date)
+        : (current.startDate ?? null);
+      const prevEnd = previous_start_date
+        ? new Date(previous_end_date ?? previous_start_date)
+        : (current.endDate ?? null);
       if (to === "RESCHEDULED") {
         dateUpdate.startDate = new Date(new_start_date!);
         dateUpdate.endDate = new Date(new_end_date!);
-        dateUpdate.previousStartDate = current.startDate ?? null;
-        dateUpdate.previousEndDate = current.endDate ?? null;
+        dateUpdate.previousStartDate = prevStart;
+        dateUpdate.previousEndDate = prevEnd;
         dateUpdate.datesConfirmed = true;
       } else if (to === "POSTPONED") {
         dateUpdate.startDate = null;
         dateUpdate.endDate = null;
-        dateUpdate.previousStartDate = current.startDate ?? null;
-        dateUpdate.previousEndDate = current.endDate ?? null;
+        dateUpdate.previousStartDate = prevStart;
+        dateUpdate.previousEndDate = prevEnd;
         dateUpdate.datesConfirmed = false;
       }
 
@@ -448,6 +500,11 @@ export function registerEventLifecycleTools(
       "Use preview=true first to see what will change and whether there are warnings",
       "(different promoter, different venue, overlapping vendors). Refuses to merge an",
       "event with itself or one that's already merged.",
+      "",
+      "EDITIONS: refuses (409 different_editions) two events of different years, and",
+      "(OPE-1327) two DIFFERENT editions of a multi-edition series in the same year —",
+      "both carry an edition key and the keys differ (May vs October). Merging either",
+      "would fuse two editions' vendor rosters; link them as occurrences instead.",
     ].join(" "),
     {
       keeper_event_id: z

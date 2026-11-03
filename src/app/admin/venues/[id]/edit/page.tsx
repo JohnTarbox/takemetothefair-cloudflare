@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { GooglePlaceSearch } from "@/components/google-place-search";
 import { FocalPointPicker } from "@/components/admin/FocalPointPicker";
 import type { PlaceLookupResult } from "@/lib/google-maps";
+import { safeHref } from "@takemetothefair/utils";
 
 interface Venue {
   id: string;
@@ -524,7 +525,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                           className="bg-muted text-sm"
                         />
                         <a
-                          href={googleData.googleMapsUrl}
+                          href={safeHref(googleData.googleMapsUrl)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="shrink-0 inline-flex items-center px-3 py-2 text-xs border rounded-md hover:bg-muted"

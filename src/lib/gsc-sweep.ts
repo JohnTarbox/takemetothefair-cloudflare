@@ -339,10 +339,14 @@ export async function checkStubbedSends(
  * Pure and cheap — no network, no GSC quota, decided entirely from `message`.
  */
 export async function refreshOpenSeverities(db: Db): Promise<number> {
+  // OPE-1280 — GSC rows only. The rule below reads a GSC coverage phrase out of
+  // `message`; for any other source it finds none and returns WARNING, so it
+  // was silently re-grading every EMAIL_DELIVERY row and would have demoted a
+  // URL_HEALTH `domain_takeover` ERROR on its first nightly run.
   const open = await db
     .select({ id: healthIssues.id, message: healthIssues.message, severity: healthIssues.severity })
     .from(healthIssues)
-    .where(isNull(healthIssues.resolvedAt));
+    .where(and(isNull(healthIssues.resolvedAt), eq(healthIssues.source, "GSC_URL_INSPECTION")));
 
   let updated = 0;
   for (const row of open) {
@@ -582,6 +586,13 @@ export async function pickUrlsDetailed(
    *  passes the same `now` it uses everywhere else in the pass. */
   now: Date = new Date()
 ): Promise<{ urls: string[]; fillerSelected: number; guaranteedSelected: number }> {
+  // OPE-1283 — a batch of 0 means "inspect nothing" (run_site_health_sweep's
+  // documented maintenance-only mode, no GSC quota). The guaranteed per-type
+  // tier below ships in full regardless of batchSize BY DESIGN, so without this
+  // a 0 batch still inspected it: 19 URLs on 2026-10-02. Returning before any
+  // tier also means no Tier 0 cursor is stamped for rows nobody will inspect.
+  if (batchSize <= 0) return { urls: [], fillerSelected: 0, guaranteedSelected: 0 };
+
   const oneDayAgo = new Date(Date.now() - 86400 * 1000);
   const sixHoursAgo = new Date(Date.now() - 6 * 3600 * 1000);
 
@@ -833,6 +844,9 @@ export async function pickUrlsDetailed(
         slug: events.slug,
         seriesSlug: eventSeries.canonicalSlug,
         startDate: events.startDate,
+        // OPE-1326 — canonicalEventPath needs the edition to build the URL.
+        editionMode: eventSeries.editionMode,
+        editionKey: events.editionKey,
       })
       .from(events)
       .leftJoin(eventSeries, eq(events.seriesId, eventSeries.id))

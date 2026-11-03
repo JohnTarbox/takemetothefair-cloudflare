@@ -206,3 +206,25 @@ describe("send_newsletter_broadcast — audience is required and forwarded (OPE-
     expect(calls).toHaveLength(0);
   });
 });
+
+describe("send_newsletter_broadcast — OPE-1392 sanitizes before forwarding", () => {
+  it("strips script / event handlers / javascript: hrefs and CR/LF in the subject", async () => {
+    stubFetch({ success: true, mode: "test", recipients: 1 });
+    const s = server();
+    await s.invoke("send_newsletter_broadcast", {
+      audience: "weekend",
+      subject: "Hi\r\nBcc: x@evil.test",
+      content_html:
+        '<p style="color:#1f3a2d">Fair <img src="x" onerror="alert(1)"></p>' +
+        '<script>alert(1)</script><a href="javascript:alert(1)">go</a>' +
+        '<svg onload="alert(1)"></svg><a href="https://meetmeatthefair.com/events/x">ok</a>',
+      test_recipient: "me@x.com",
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body.subject).toBe("Hi Bcc: x@evil.test");
+    expect(calls[0].body.content_html).toBe(
+      '<p style="color:#1f3a2d">Fair <img></p><a>go</a>' +
+        '<a href="https://meetmeatthefair.com/events/x">ok</a>'
+    );
+  });
+});

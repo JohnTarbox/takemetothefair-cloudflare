@@ -88,11 +88,12 @@ describe("OPE-943 — the defect, on the exact production input", () => {
   it("reads the booth number as the position, so it reconciles with the map", () => {
     expect(entries[0]).toEqual({
       position: 1,
-      name: "Goss Maine Community Robotics",
-      detail: null,
+      // OPE-1300 — the sheet's first column is "Last Name"; it moves to detail.
+      name: "Maine Community Robotics",
+      detail: "contact surname: Goss",
     });
     // Space 4 is "Smith maine card works" — a real business the old path lost.
-    expect(entries.find((e) => e.position === 4)?.name).toBe("Smith maine card works");
+    expect(entries.find((e) => e.position === 4)?.name).toBe("maine card works");
   });
 
   it("splits a value that ENDS in digits from the next row number (`Works 20711`)", () => {
@@ -100,15 +101,15 @@ describe("OPE-943 — the defect, on the exact production input", () => {
     // digit" rule. Space 10 is "Lord Squirrely Works 207"; the text reads
     // `…Works 20711 Lord…` and must split 207 | 11.
     const ten = entries.find((e) => e.position === 10);
-    expect(ten?.name).toBe("Lord Squirrely Works 207");
+    expect(ten?.name).toBe("Squirrely Works 207");
     // Spaces 10 and 11 are the same vendor on two spaces, so 11 dedupes away
     // and 12 is the next surviving row.
     expect(entries.find((e) => e.position === 11)).toBeUndefined();
-    expect(entries.find((e) => e.position === 12)?.name).toBe("Forbes Joelsa Farm Fiber");
+    expect(entries.find((e) => e.position === 12)?.name).toBe("Joelsa Farm Fiber");
   });
 
   it("splits on the other digit-adjacent rows too (`4-H10`, `Dahlia Co.61`)", () => {
-    expect(entries.find((e) => e.position === 9)?.name).toBe("Mcgrath 4-H");
+    expect(entries.find((e) => e.position === 9)?.name).toBe("4-H");
     // Space 61 proves the `Dahlia Co.61` boundary was split correctly.
     expect(entries.find((e) => e.position === 61)?.name).toBe("Harris");
   });
@@ -117,7 +118,7 @@ describe("OPE-943 — the defect, on the exact production input", () => {
     // "Robbins Granite Ridge Dahlia Co." is 5 words and ends in a period. Until
     // OPE-952 the sentence rule dropped it; the flat form's `<surname> <org>`
     // cell is one word longer than a bare name, so this was systematic.
-    expect(entries.find((e) => e.position === 60)?.name).toBe("Robbins Granite Ridge Dahlia Co.");
+    expect(entries.find((e) => e.position === 60)?.name).toBe("Granite Ridge Dahlia Co.");
   });
 
   it("loses exactly the rows it should: 2 duplicates, 3 OPEN", () => {
@@ -144,13 +145,13 @@ describe("OPE-943 — the defect, on the exact production input", () => {
   });
 
   it("dedupes a vendor holding two spaces, keeping the first (37/38)", () => {
-    const cardinal = entries.filter((e) => e.name === "Martin P & K Cardinal Crafts");
+    const cardinal = entries.filter((e) => e.name === "P & K Cardinal Crafts");
     expect(cardinal).toHaveLength(1);
     expect(cardinal[0].position).toBe(37);
   });
 
   it("crosses the page breaks — the last space (78) is captured", () => {
-    expect(entries.find((e) => e.position === 78)?.name).toBe("Arata Commuinity Connections");
+    expect(entries.find((e) => e.position === 78)?.name).toBe("Commuinity Connections");
     // …and the trailing UNNUMBERED row is not glued onto it.
     expect(entries.find((e) => e.position === 78)?.name).not.toMatch(/Pelletier/);
   });
@@ -249,5 +250,54 @@ We ask that you do the following. 1 Read the rules carefully before you begin.
     // distant "5" on.
     const gap = `Vendors 1 Alpha Co2 Beta Co3 Gamma Co4 Delta Co${" filler".repeat(40)} 5 Epsilon Co6 Zeta Co7 Eta Co8 Theta Co`;
     expect(detectRosterFlatNumbered(gap)).toEqual([]);
+  });
+});
+
+/**
+ * OPE-1300 — the sheet's FIRST column is "Last Name". The 10-04 replay of
+ * 9fc287ef staged all 73 rows as "<surname> <business>"; the header printed
+ * just before row 1 is the evidence, and it is the only trigger.
+ */
+describe("OPE-1300 — a Last Name first column is split off, keyed on the header", () => {
+  const entries = detectRosterEntries(NEW_GLOUCESTER_OCR);
+  const at = (p: number) => entries.find((e) => e.position === p);
+
+  it("the business keeps the name; the surname moves to detail", () => {
+    expect(at(2)).toEqual({
+      position: 2,
+      name: "The Salty Bee Maine",
+      detail: "contact surname: Danforth",
+    });
+    // The org IS a person's name — still split on the surname column.
+    expect(at(17)?.name).toBe("Eric Norton");
+    expect(at(55)?.name).toBe("Trish Allen");
+  });
+
+  it("a row that is ONLY a surname keeps it (space 61, 'Harris')", () => {
+    expect(at(61)).toEqual({ position: 61, name: "Harris", detail: null });
+  });
+
+  it("no names in the result still carry the surname prefix from the sheet", () => {
+    const names = entries.map((e) => e.name);
+    for (const merged of [
+      "Danforth The Salty Bee Maine",
+      "Norton Eric Norton",
+      "Smith maine card works",
+    ]) {
+      expect(names).not.toContain(merged);
+    }
+  });
+
+  it("CONTROL: the same rows WITHOUT the header are untouched", () => {
+    const noHeader = NEW_GLOUCESTER_OCR.replace("# Last Name Activity - Org Name1", "# Booths1");
+    const plain = detectRosterEntries(noHeader);
+    expect(plain.find((e) => e.position === 2)?.name).toBe("Danforth The Salty Bee Maine");
+    expect(plain.find((e) => e.position === 2)?.detail).toBeNull();
+  });
+
+  it("CONTROL: a business that starts with a surname, in a list with no surname column, stays whole", () => {
+    const rows = Array.from({ length: 9 }, (_, i) => `${i + 1} Smith's Farm Stand ${i}`).join(" ");
+    const out = detectRosterFlatNumbered(`Vendor booths: ${rows}`);
+    expect(out[0]?.name).toBe("Smith's Farm Stand 0");
   });
 });

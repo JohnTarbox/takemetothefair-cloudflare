@@ -29,6 +29,8 @@ const SCHEMA_SQL = `
   CREATE TABLE email_suppression_list (
     email TEXT PRIMARY KEY, reason TEXT, source TEXT, created_at INTEGER NOT NULL
   );
+  -- OPE-412 burst check reads the submissions' own event rows.
+  CREATE TABLE events (id TEXT PRIMARY KEY, suggester_email TEXT, created_at INTEGER);
 `;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -189,6 +191,51 @@ describe("when NOT to send", () => {
     expect(
       await sendSubmissionReceivedAck(db, env(), { ...input, toEmail: "  SubMitter@Example.COM " })
     ).toBe("skipped:suppressed");
+  });
+});
+
+/**
+ * OPE-412 (rework 2026-10-04) — a BURST, before any ledger row exists.
+ *
+ * The ack is enqueued; the consumer writes its ledger row seconds later. On
+ * 09-21 three acks reached one address in 5s because every submission read the
+ * ledger inside that gap. The event rows are committed before the ack runs, so
+ * the earliest submission in the window is the only one that acks.
+ */
+describe("a burst inside the ledger's blind spot (OPE-412)", () => {
+  const T = Math.floor(Date.now() / 1000);
+  const ev = (id: string, email: string, at: number) =>
+    raw
+      .prepare("INSERT INTO events (id, suggester_email, created_at) VALUES (?, ?, ?)")
+      .run(id, email, at);
+
+  it("three submissions in the same second, NO ledger rows yet → exactly ONE ack, from the earliest id", async () => {
+    ev("evt-b", "submitter@example.com", T);
+    ev("evt-a", "submitter@example.com", T);
+    ev("evt-c", "Submitter@Example.com", T);
+    // Called out of order, as concurrent requests would be.
+    const out: Record<string, string> = {};
+    for (const id of ["evt-c", "evt-a", "evt-b"]) {
+      out[id] = await sendSubmissionReceivedAck(db, env(), { ...input, eventId: id });
+    }
+    expect(out).toEqual({
+      "evt-a": "sent",
+      "evt-b": "skipped:rate-limited",
+      "evt-c": "skipped:rate-limited",
+    });
+    expect(queued).toHaveLength(1);
+  });
+
+  it("an earlier submission OUTSIDE the window does not block a new one", async () => {
+    ev("old", "submitter@example.com", T - 2 * 60 * 60);
+    ev("new", "submitter@example.com", T);
+    expect(await sendSubmissionReceivedAck(db, env(), { ...input, eventId: "new" })).toBe("sent");
+  });
+
+  it("another address's burst does not block this one", async () => {
+    ev("x1", "someone-else@example.com", T - 5);
+    ev("mine", "submitter@example.com", T);
+    expect(await sendSubmissionReceivedAck(db, env(), { ...input, eventId: "mine" })).toBe("sent");
   });
 });
 

@@ -39,10 +39,48 @@ const COPY: Record<SignupAudience, { name: string; blurb: string }> = {
  * fixed value would make every signup look like a footer signup and hide which
  * surface actually converts — the one thing the growth target needs to know.
  */
+/**
+ * OPE-1209 (rework 2026-10-04) — the form was styled ONLY for the dark footer
+ * (`text-footer-foreground`, light text). OPE-317 then placed it on light
+ * surfaces — the in-page block on every event page and blog post, /newsletter,
+ * and later /vendors — where its label, blurb and typed email rendered
+ * near-white on cream, and inside the block the label and blurb also
+ * DUPLICATED the card's own heading. Seen in a real browser 2026-10-04.
+ *
+ * `tone="surface"` uses the page's foreground tokens. `showIntro={false}` is
+ * for a container that already shows the name and blurb: the label stays for
+ * screen readers (sr-only), the blurb is dropped. Footer behaviour unchanged.
+ */
+export type SignupTone = "footer" | "surface";
+
+const TONE: Record<SignupTone, { label: string; blurb: string; icon: string; input: string }> = {
+  footer: {
+    label: "text-footer-foreground",
+    blurb: "text-footer-foreground/70",
+    icon: "text-footer-foreground/70",
+    input:
+      "bg-footer-foreground/10 border-footer-foreground/20 text-footer-foreground placeholder:text-footer-foreground/60 focus:bg-footer-foreground/15",
+  },
+  surface: {
+    label: "text-foreground",
+    blurb: "text-muted-foreground",
+    icon: "text-muted-foreground",
+    input: "bg-background border-border text-foreground placeholder:text-muted-foreground",
+  },
+};
+
 export function NewsletterSignup({
   source: sourceProp = "footer",
   audience = "weekend",
-}: { source?: string; audience?: SignupAudience } = {}) {
+  tone = "footer",
+  showIntro = true,
+}: {
+  source?: string;
+  audience?: SignupAudience;
+  tone?: SignupTone;
+  showIntro?: boolean;
+} = {}) {
+  const t = TONE[tone];
   const source = audience === "vendor" ? VENDOR_SIGNUP_SOURCE : sourceProp;
   const copy = COPY[audience];
   // Two forms can share a page (an in-page block plus the footer), so the
@@ -76,10 +114,13 @@ export function NewsletterSignup({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-2" data-newsletter-audience={audience}>
-      <label htmlFor={inputId} className="block text-sm font-medium text-footer-foreground">
+      <label
+        htmlFor={inputId}
+        className={showIntro ? `block text-sm font-medium ${t.label}` : "sr-only"}
+      >
         {copy.name}
       </label>
-      <p className="text-xs text-footer-foreground/70">{copy.blurb}</p>
+      {showIntro && <p className={`text-xs ${t.blurb}`}>{copy.blurb}</p>}
       {status === "done" ? (
         <div className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-sage-50 text-sage-700 text-sm font-medium">
           <Check className="w-4 h-4" aria-hidden />
@@ -89,7 +130,7 @@ export function NewsletterSignup({
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Mail
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-footer-foreground/70"
+              className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${t.icon}`}
               aria-hidden
             />
             <input
@@ -100,7 +141,7 @@ export function NewsletterSignup({
               placeholder="you@example.com"
               required
               aria-label="Email address"
-              className="w-full pl-9 pr-3 py-2 rounded-md bg-footer-foreground/10 border border-footer-foreground/20 text-footer-foreground placeholder:text-footer-foreground/60 text-sm focus:bg-footer-foreground/15 focus:border-amber focus:outline-none"
+              className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm focus:border-amber focus:outline-none ${t.input}`}
             />
           </div>
           <button

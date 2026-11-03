@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { Sparkles, X } from "lucide-react";
 
 interface Props {
   storageKey: string;
   title: string;
-  body: string;
+  body: ReactNode;
 }
 
 /**
@@ -46,7 +46,7 @@ export function WelcomeBanner({ storageKey, title, body }: Props) {
         <Sparkles className="w-5 h-5 text-amber-dark flex-shrink-0 mt-0.5" aria-hidden />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-stone-900">{title}</p>
-          <p className="text-sm text-stone-900/90 mt-0.5">{body}</p>
+          <div className="text-sm text-stone-900/90 mt-0.5">{body}</div>
         </div>
         <button
           type="button"

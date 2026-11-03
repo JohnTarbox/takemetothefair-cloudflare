@@ -10,12 +10,12 @@
  *
  * Auth: redirected to /signin if not admin (mirrors /admin/analytics).
  */
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/require-admin";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { loadDiagnosticsSnapshot } from "@/lib/diagnostics";
 import { formatTimestampForServer } from "@/lib/datetime";
+import { measurementText } from "@/lib/analytics-overview/render-state";
 
 export const dynamic = "force-dynamic";
 
@@ -36,10 +36,7 @@ function fmtAge(seconds: number | null): string {
 }
 
 export default async function AdminDiagnosticsPage() {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    redirect("/signin");
-  }
+  await requireAdmin({ allowReadonlyBearer: false });
 
   const db = getCloudflareDb();
   const snapshot = await loadDiagnosticsSnapshot(db);
@@ -57,7 +54,7 @@ export default async function AdminDiagnosticsPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <Card
           className={
-            snapshot.indexnow.successRate < 0.9 && snapshot.indexnow.total > 0
+            snapshot.indexnow.successMeasured.state === "ok" && snapshot.indexnow.successRate < 0.9
               ? "border-red-300"
               : ""
           }
@@ -67,7 +64,7 @@ export default async function AdminDiagnosticsPage() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-bold text-foreground tabular-nums">
-              {fmtPct(snapshot.indexnow.successRate)}
+              {measurementText(snapshot.indexnow.successMeasured, (v) => fmtPct(v))}
             </p>
             <p className="text-xs text-muted-foreground mt-2">
               {fmt(snapshot.indexnow.success)} success / {fmt(snapshot.indexnow.failure)} failure /{" "}

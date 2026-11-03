@@ -80,7 +80,7 @@ describe("link_promoter_reply — the ledger hop", () => {
     // nobody was written to and there is nothing left to match on.
     attempt("a1", "info@grange.org", "evt-1");
     ledgerRow("m1", "info@grange.org", "prov-1", "email:promoter-outreach");
-    inbound("in1", "committee-chair@grange.org", "<prov-1>");
+    inbound("in1", "umber1desk@grange.org", "<prov-1>");
 
     const out = await call({ apply: true });
     expect(out.results[0]).toMatchObject({ verdict: "message_id", attempt_id: "a1" });

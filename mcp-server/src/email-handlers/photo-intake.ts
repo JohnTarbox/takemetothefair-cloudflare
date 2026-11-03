@@ -18,7 +18,7 @@
  *   1. Explicit override — `photos+<event-slug>@` sub-address (OPE-202 parses
  *      it) or an event slug in the subject. John naming the fair beats any
  *      inference, and is the documented escape hatch for photos with no GPS.
- *   2. EXIF — GPS → geocoded venues within a small radius → the APPROVED
+ *   2. EXIF — GPS → geocoded venues within a small radius → the public
  *      occurrence running on the photo's local date.
  *   3. Otherwise → HOLD and ask. Never a wrong silent guess: the OPE-204 tail
  *      writes vendor↔event links off this verdict, and a bad attribution would
@@ -35,17 +35,21 @@
  */
 import { events, eventDays, venues, inboundEmails } from "../schema.js";
 import { getDb, type Db } from "../db.js";
-import { and, eq, inArray, isNull, isNotNull, gte, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, isNotNull, gte, lte, or, sql } from "drizzle-orm";
 import type { HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
+import type { InboundEmail } from "@takemetothefair/db-schema";
 import { parsePlusSegment } from "../email-intents.js";
 import { logError } from "../logger.js";
 import { chunkedInArray, createSlug } from "@takemetothefair/utils";
+import { PUBLIC_EVENT_STATUSES } from "@takemetothefair/constants";
 import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
 import { classifyPosterText, type PosterClassification } from "../photo/poster-classify.js";
 import { mainAppFetch } from "../main-app-fetch.js";
 import { submitCheckDuplicate, submitEvent, submitExtract } from "./submit.js";
 import { attachPosterEvidence, type PosterEvidenceResult } from "../photo/poster-evidence.js";
 import { parseExif, type ExifData } from "../photo/exif.js";
+import { isSnapRow, parseCaptureMeta, captureMetaAsExif } from "../photo/snap-intake.js";
+import { recordGpsMissSignal } from "../photo/gps-miss-signal.js";
 import {
   resolveOccurrence,
   expandEventDates,
@@ -66,11 +70,13 @@ export interface AttachmentRef {
 const MILES_PER_DEG_LAT = 69;
 
 /**
- * Widest event span we'll consider when looking back for an occurrence that
- * contains the photo's date. Mirrors the 60-day cap in `expandEventDates`, so
- * the SQL floor can never exclude an event the resolver would have matched.
+ * OPE-1354 — slack on each side of the photo's local date when selecting
+ * candidate events by OVERLAP. One day absorbs the local-date vs stored-UTC
+ * skew (dates are stored at UTC midnight or noon; the photo date is local).
+ * The resolver still requires an exact local-date hit, so the slack only
+ * widens the candidate set, never the match.
  */
-const MAX_EVENT_SPAN_DAYS = 60;
+const OVERLAP_SLACK_MS = 86_400_000;
 
 export function parseRefs(attachmentRefs: string | null): AttachmentRef[] {
   if (!attachmentRefs) return [];
@@ -376,12 +382,20 @@ async function loadNearbyVenues(
 }
 
 /**
- * APPROVED, non-tombstone occurrences at the given venues that could contain
- * the photo's date.
+ * Publicly visible (APPROVED or TENTATIVE), non-tombstone occurrences at the
+ * given venues that could contain the photo's date.
  *
- * APPROVED-only on purpose: a fair John is standing at is live on the site. A
+ * Public-only on purpose: a fair John is standing at is live on the site. A
  * DRAFT/PENDING row is not something we want to silently attribute photos to —
  * that case holds and he names it, which is the safe direction.
+ *
+ * OPE-1337 — this read `status = 'APPROVED'` until 2026-10-10, which is
+ * narrower than its own rationale. TENTATIVE events are live on the site too
+ * (PUBLIC_EVENT_STATUSES), so two GPS-tagged photos taken ~8 m from the venue
+ * pin of People Plus Senior Health Expo (TENTATIVE) on the day it ran held as
+ * `no-event-on-date`. Widening is safe here, unlike the subject-name matcher:
+ * venue + date already pin one occurrence, and two public events on the same
+ * day at the same venue still hold as ambiguous.
  */
 async function loadCandidateEvents(
   db: Db,
@@ -391,10 +405,13 @@ async function loadCandidateEvents(
   if (venueIds.length === 0) return [];
   const dayMs = Date.parse(`${localDate}T00:00:00Z`);
   if (Number.isNaN(dayMs)) return [];
-  // An event containing this date must have started within the last
-  // MAX_EVENT_SPAN_DAYS and not after it.
-  const lo = new Date(dayMs - MAX_EVENT_SPAN_DAYS * 86_400_000);
-  const hi = new Date(dayMs + 86_400_000);
+  // OPE-1354 — select on OVERLAP with the photo's date, not start-date
+  // proximity. This read `start_date >= day - 60d` until 2026-10-15, so a
+  // season-long event (Kingfield First Friday ArtWalk: 06-05 → 10-02, a
+  // 09-04 photo) was never a candidate however good the venue pin was. The
+  // set stays bounded by GEOGRAPHY: `venueIds` is already the radius result.
+  const lo = new Date(dayMs - OVERLAP_SLACK_MS);
+  const hi = new Date(dayMs + OVERLAP_SLACK_MS);
 
   // OPE-241 — chunked: `venueIds` is bounded by GEOGRAPHY (a radius), not by a
   // query limit, so a dense metro can put 100+ venues in range and blow D1's
@@ -415,10 +432,12 @@ async function loadCandidateEvents(
       .where(
         and(
           inArray(events.venueId, batch),
-          eq(events.status, "APPROVED"),
+          inArray(events.status, [...PUBLIC_EVENT_STATUSES]),
           isNull(events.mergedInto),
-          gte(events.startDate, lo),
-          lte(events.startDate, hi)
+          lte(events.startDate, hi),
+          // Still running on (or ended within the slack of) the photo date.
+          // A NULL end_date is a single-day event: its start is its end.
+          or(gte(events.endDate, lo), and(isNull(events.endDate), gte(events.startDate, lo)))
         )
       )
   );
@@ -448,7 +467,14 @@ async function loadCandidateEvents(
     name: r.name,
     slug: r.slug,
     venueId: r.venueId,
-    dates: expandEventDates(daysByEvent.get(r.id) ?? [], r.startDate ?? null, r.endDate ?? null),
+    // OPE-1354 — expand range-only events AROUND the photo date, so the
+    // 60-day walk cap can't cut off a long run before it reaches the photo.
+    dates: expandEventDates(
+      daysByEvent.get(r.id) ?? [],
+      r.startDate ?? null,
+      r.endDate ?? null,
+      localDate
+    ),
   }));
 }
 
@@ -554,6 +580,45 @@ export async function resolvePhotoEvent(
 /** Operator-facing explanation for each hold reason — quoted in the reply. */
 
 /**
+ * OPE-1262 — the classify call's own wall-clock budget.
+ *
+ * The call is OPTIONAL enrichment on the hold path: without it the photo still
+ * holds and the sender still gets the "which fair?" notice. On 2026-10-01 it
+ * took 26–54s on large, text-poor camera originals, against the dispatch
+ * step's 30s timeout. When it lost, the whole step timed out, the step retry
+ * re-ran it from scratch (three calls for one photo), and one email
+ * (`8c8c054e`) ended `failed` with no reply at all.
+ *
+ * 60s covers every duration observed that day. The photo_intake dispatch step
+ * is given 120s (inbound-email.ts) so this budget, plus the R2 reads, EXIF and
+ * D1 writes around it, always lands inside the step — a slow OCR now costs the
+ * enrichment, never the email.
+ */
+export const POSTER_CLASSIFY_BUDGET_MS = 60_000;
+
+/** Sentinel for a lost race — distinct from any value the work can produce. */
+const BUDGET_EXCEEDED = Symbol("budget-exceeded");
+
+/**
+ * Race `work` against a timer. Deliberately NOT an AbortSignal: `mainAppFetch`
+ * falls through to the public `fetch` when the binding call throws, so
+ * aborting the binding would START a second, unbounded call — the opposite of
+ * the point. The losing promise is left to settle on its own and its result is
+ * discarded.
+ */
+async function withinBudget<T>(work: Promise<T>, ms: number): Promise<T | typeof BUDGET_EXCEEDED> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof BUDGET_EXCEEDED>((resolve) => {
+    timer = setTimeout(() => resolve(BUDGET_EXCEEDED), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
  * OPE-325 — OCR the first image and decide whether this is a POSTER.
  *
  * Runs only on the hold path (we could not identify a fair), so a normal
@@ -569,10 +634,11 @@ export async function resolvePhotoEvent(
  * read — all return null, and the caller falls through to the existing
  * which-fair flow. The worst case is the behaviour we have today.
  */
-async function classifyAsPoster(
+export async function classifyAsPoster(
   env: HandlerEnv,
   refs: AttachmentRef[],
-  messageRowId: string
+  messageRowId: string,
+  budgetMs: number = POSTER_CLASSIFY_BUDGET_MS
 ): Promise<{ classification: PosterClassification; text: string } | null> {
   const bucket = env.VENDOR_ASSETS;
   const images = imageRefs(refs);
@@ -618,18 +684,41 @@ async function classifyAsPoster(
     const bytes = await obj.arrayBuffer();
 
     const form = buildExtractImageForm(bytes, images[0]);
-    const res = await mainAppFetch(env, "/api/admin/import-url/extract-image", "workflow", {
-      method: "POST",
-      body: form,
-    });
-    if (!res.ok) {
-      return giveUp("extract-image returned non-OK", {
-        status: res.status,
-        body: (await res.text().catch(() => "")).slice(0, 200),
+    // OPE-1262 — the request AND the body read sit inside one budget: the
+    // route answers only once OCR has finished, so either can be the slow half.
+    const startedAt = Date.now();
+    const outcome = await withinBudget(
+      (async () => {
+        const res = await mainAppFetch(env, "/api/admin/import-url/extract-image", "workflow", {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) {
+          return {
+            ok: false as const,
+            status: res.status,
+            body: (await res.text().catch(() => "")).slice(0, 200),
+          };
+        }
+        const data = (await res.json().catch(() => ({}))) as { content?: string };
+        return { ok: true as const, text: data.content ?? "" };
+      })(),
+      budgetMs
+    );
+    if (outcome === BUDGET_EXCEEDED) {
+      return giveUp("budget exceeded", {
+        budgetMs,
+        elapsedMs: Date.now() - startedAt,
+        bytes: bytes.byteLength,
       });
     }
-    const data = (await res.json().catch(() => ({}))) as { content?: string };
-    const text = data.content ?? "";
+    if (!outcome.ok) {
+      return giveUp("extract-image returned non-OK", {
+        status: outcome.status,
+        body: outcome.body,
+      });
+    }
+    const text = outcome.text;
     if (!text.trim()) return giveUp("extract-image returned empty content");
 
     const classification = classifyPosterText(text);
@@ -755,7 +844,8 @@ async function stagePosterAsPendingEvent(
         links: [],
         fetchMethod: "standard",
       },
-      ""
+      "",
+      "photo-intake"
     );
     if (!extracted.event?.name) {
       return {
@@ -936,7 +1026,48 @@ const HOLD_ASK: Record<string, string> = {
   // them to re-shoot it, which fixes nothing.
   "resolver-error":
     "something went wrong on our side while looking up the fair — your photos are safe and held",
+  // OPE-1262 — the handler itself failed. Same rule as resolver-error: the
+  // sender did nothing wrong, so the copy must not send them to re-shoot.
+  "dispatch-error":
+    "something went wrong on our side while reading the photos — they're safe and held",
 };
+
+/**
+ * OPE-1262 — the reply a photo email gets when its handler FAILED.
+ *
+ * Before this, `errorToReplyKind` returned null for every non-submit intent,
+ * so a photo whose dispatch threw ended `status='failed'` with no reply at all
+ * (`8c8c054e`, 2026-10-01). The sender heard nothing, and because the row's
+ * reply_kind stayed NULL, a reply naming the fair could never find it either:
+ * `findHeldPhotoParents` keys on `reply_kind='photo-intake-unresolved'`.
+ *
+ * Answering with the ordinary hold notice fixes both at once — the sender is
+ * told how to name the fair, and that same reply_kind makes the row a held
+ * parent the reply→resolve path and `resolve_held_photos` both recover. The
+ * row still ends `status='failed'` (mark-done keys on the caught error), and
+ * `resolveHeldPhotoEmail` moves it to `salvaged` once its photos attach.
+ *
+ * Only the facts the row itself holds — no EXIF, no OCR: whatever failed may
+ * have been one of those reads.
+ */
+export function photoIntakeFailureReply(
+  row: Pick<InboundEmail, "subject" | "toAddress" | "attachmentRefs" | "attachmentCount">
+): Pick<HandlerResult, "replyKind" | "replyParams" | "resultingEventId"> {
+  return {
+    replyKind: "photo-intake-unresolved",
+    replyParams: {
+      subject: row.subject ?? "",
+      photoCount: countPhotos(row.attachmentRefs, row.attachmentCount),
+      eventHint: parsePlusSegment(row.toAddress) ?? null,
+      holdReason: "dispatch-error",
+      holdAsk: HOLD_ASK["dispatch-error"],
+      holdDetail: null,
+      sawGps: false,
+      sawDate: null,
+    },
+    resultingEventId: null,
+  };
+}
 
 export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> => {
   const refs = parseRefs(row.attachmentRefs);
@@ -947,7 +1078,15 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   // (SPF/DKIM/DMARC pass) AND from a trusted sender. Everything else is held for
   // human review — no eligibility for the OPE-204 vendor write, and no reason to
   // spend R2 reads resolving a fair we won't act on.
-  const eligible = ctx.emailAuth === "pass" && ctx.senderTrust === "trusted";
+  //
+  // OPE-1341 — a snap-app row is eligible on its own provenance: it was uploaded
+  // by an ADMIN session through the main app and written over X-Internal-Key,
+  // and no mail path writes `routing_source='snap-app'`. Reading it off the ROW
+  // (not the run's params) matters: the stale-inbound sweep re-dispatches a stuck
+  // row with no senderTrust/emailAuth, which would otherwise hold every
+  // recovered snap.
+  const snap = isSnapRow(row);
+  const eligible = snap || (ctx.emailAuth === "pass" && ctx.senderTrust === "trusted");
   if (!eligible) {
     return {
       replyKind: "photo-intake-held",
@@ -991,7 +1130,12 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
     ({ resolution, exif } = await resolvePhotoEvent(
       db,
       overrideSlugs,
-      () => readExif(env, refs),
+      // OPE-1341 — a snap's stored bytes are EXIF-stripped before R2, so its
+      // location comes from `capture_meta` (EXIF-or-device, decided at ingest).
+      // Same resolver, same venue × date rule; only the source of the fix differs.
+      snap
+        ? async () => captureMetaAsExif(parseCaptureMeta(row.captureMeta))
+        : () => readExif(env, refs),
       row.subject
     ));
   } catch (e) {
@@ -1223,6 +1367,20 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
       resultingEventId: staged.eventId,
       status: "replied",
     };
+  }
+
+  // OPE-1079 — a held photo that carries a valid GPS fix is a signal, not just
+  // a reply: the fix is ground truth for a venue pin (New Portland's sat 9 km
+  // off and nothing but the sender ever heard). Records admin_actions + the
+  // review flag; never touches the reply below.
+  if (exif.gps && exif.takenOnLocalDate) {
+    await recordGpsMissSignal(db, {
+      inboundEmailId: row.id,
+      reason: resolution.reason,
+      gps: exif.gps,
+      takenOnLocalDate: exif.takenOnLocalDate,
+      loadEventsAt: (venueIds, localDate) => loadCandidateEvents(db, venueIds, localDate),
+    });
   }
 
   // Held: name the reason and tell John exactly how to fix it. Never guess.

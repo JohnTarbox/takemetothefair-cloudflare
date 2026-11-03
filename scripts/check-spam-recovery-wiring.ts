@@ -26,11 +26,11 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readWranglerConfig, wranglerVars } from "./lib/wrangler-config";
 
 const ROOT = process.cwd();
 const HANDLER = join(ROOT, "mcp-server", "src", "email-handler.ts");
 const DETECTOR = join(ROOT, "mcp-server", "src", "email-handlers", "spam-event-triple.ts");
-const TOML = join(ROOT, "mcp-server", "wrangler.toml");
 
 function fail(msg: string): never {
   console.error(`Spam-recovery wiring guard FAILED (OPE-803):\n\n${msg}\n`);
@@ -39,7 +39,9 @@ function fail(msg: string): never {
 
 const handler = readFileSync(HANDLER, "utf8");
 const detector = readFileSync(DETECTOR, "utf8");
-const toml = readFileSync(TOML, "utf8");
+// OPE-1292 — parsed, so "declared in [vars]" means the top-level [vars] table.
+// The line regex this replaced also matched the key under any other table.
+const mcpVars = wranglerVars(readWranglerConfig("mcp", ROOT));
 
 // Positive landmark first. Every check below is a substring test, and all of
 // them pass vacuously against a file that was renamed, moved, or emptied.
@@ -88,7 +90,7 @@ if (!/flagValue === "true"/.test(detector)) {
 }
 
 // 4. The flag is declared in the committed toml, so a deploy cannot drop it.
-if (!/^SPAM_EVENT_RECOVERY_ENABLED\s*=/m.test(toml)) {
+if (!("SPAM_EVENT_RECOVERY_ENABLED" in mcpVars)) {
   fail(
     `  SPAM_EVENT_RECOVERY_ENABLED is not declared in mcp-server/wrangler.toml.\n\n` +
       `  A dashboard-only value is wiped by the next \`wrangler deploy\`, which\n` +
@@ -97,7 +99,7 @@ if (!/^SPAM_EVENT_RECOVERY_ENABLED\s*=/m.test(toml)) {
   );
 }
 
-const value = toml.match(/^SPAM_EVENT_RECOVERY_ENABLED\s*=\s*"([^"]*)"/m)?.[1] ?? "(unset)";
+const value = String(mcpVars.SPAM_EVENT_RECOVERY_ENABLED);
 console.log(
   `Spam-recovery wiring guard passed — detector called, gate consulted, ` +
     `exact-string comparison intact, flag declared (currently "${value}").`

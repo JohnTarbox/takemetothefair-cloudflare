@@ -95,13 +95,16 @@ describe("A6 — DuckDuckGo is not an AI referrer", () => {
 describe("A7 — blog coverage counts only inside its own denominator", () => {
   it("draft links, non-approved events and soft-deleted vendors are not coverage", async () => {
     raw.exec(`
-      CREATE TABLE events (id TEXT PRIMARY KEY, status TEXT);
+      CREATE TABLE events (id TEXT PRIMARY KEY, status TEXT, lifecycle_status TEXT);
       CREATE TABLE vendors (id TEXT PRIMARY KEY, deleted_at INTEGER);
-      CREATE TABLE venues (id TEXT PRIMARY KEY);
+      CREATE TABLE venues (id TEXT PRIMARY KEY, status TEXT);
       CREATE TABLE blog_posts (id TEXT PRIMARY KEY, status TEXT);
       CREATE TABLE content_links (id TEXT PRIMARY KEY, source_type TEXT, source_id TEXT,
         target_type TEXT, target_slug TEXT, target_id TEXT);
-      INSERT INTO events VALUES ('e1','APPROVED'),('e2','APPROVED'),('e3','PENDING');
+      -- OPE-1347 rework: the loader now uses the shared public-event basis,
+      -- which also reads lifecycle_status.
+      INSERT INTO events VALUES ('e1','APPROVED','SCHEDULED'),('e2','APPROVED','SCHEDULED'),
+        ('e3','PENDING','SCHEDULED');
       INSERT INTO vendors VALUES ('v1',NULL),('v2',1700000000);
       INSERT INTO blog_posts VALUES ('pub','PUBLISHED'),('draft','DRAFT');
       INSERT INTO content_links VALUES
@@ -120,7 +123,10 @@ describe("A7 — blog coverage counts only inside its own denominator", () => {
 
 describe("D12 — the Google tab's top 25 is by clicks, as labelled", () => {
   it("asks the helper for clicks ordering", () => {
-    expect(PAGE).toContain('getSiteSearchQueries(env, { rowLimit: 25, orderBy: "clicks" })');
+    // OPE-1347 rework: the call also carries the selected window now.
+    expect(PAGE).toContain(
+      'getSiteSearchQueries(env, { rowLimit: 25, orderBy: "clicks", dateRange })'
+    );
   });
 });
 

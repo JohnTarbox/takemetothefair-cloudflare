@@ -2,6 +2,7 @@ import { parseDateLoose, parseWallClockInVenueZone, formatIsoInVenueZone } from 
 import { buildEventSchemaImages } from "@/lib/event-photos";
 import { LIFECYCLE_TO_SCHEMA_ORG, type EventLifecycle } from "@/lib/event-lifecycle";
 import { buildPlaceJsonLd } from "@/lib/seo/place-jsonld";
+import { isDateOnlySentinel, columnDateForJsonLd } from "@/lib/seo/column-date-jsonld";
 import { formatAudienceBadge, isClosedToPublic, hasNonDefaultAudience } from "@/lib/event-audience";
 import type { PrimaryAudience, PublicAccess } from "@takemetothefair/constants";
 import { SITE_URL } from "@takemetothefair/constants";
@@ -10,6 +11,7 @@ import {
   performerSchemaType,
   type ConfirmedAppearance,
 } from "@/lib/performers/event-jsonld";
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 
 interface EventDay {
   date: string;
@@ -20,6 +22,8 @@ interface EventDay {
   closeTime: string | null;
   notes?: string | null;
   closed?: boolean | null;
+  // OPE-1563 — a vendor-setup window. Dropped at the prop boundary below.
+  vendorOnly?: boolean | null;
   // F2 / E.2b (Dev-Email-2026-06-09 §E.2, 2026-06-09) — per-occurrence
   // image. PR #412 added the column; subEvent.image below prefers
   // this per-day URL when present and falls back to the series-level
@@ -50,6 +54,8 @@ interface EventVendor {
 
 interface EventSchemaProps {
   name: string;
+  /** OPE-517 — public name variants → schema.org `alternateName`. */
+  alternateNames?: string[];
   slug: string;
   description?: string;
   startDate?: Date | null;
@@ -136,6 +142,11 @@ interface EventSchemaProps {
   emitPerformerSubevents?: boolean;
 }
 
+// OPE-1547 — `isDateOnlySentinel` / `columnDateForJsonLd` moved to
+// src/lib/seo/column-date-jsonld.ts so the EventSeries builder applies the SAME
+// rule to its occurrences. Re-exported here for existing importers.
+export { isDateOnlySentinel, columnDateForJsonLd };
+
 function getEventType(categories?: string[]): string {
   if (!categories?.length) return "Event";
   const cats = categories.map((c) => c.toLowerCase());
@@ -149,6 +160,7 @@ function getEventType(categories?: string[]): string {
 
 export function EventSchema({
   name,
+  alternateNames,
   galleryPhotos,
   // `slug` kept in the prop type for caller compatibility but no longer
   // consumed inside the component (the dynamic /api/og?slug=… image URL
@@ -171,7 +183,7 @@ export function EventSchema({
   pastUnconfirmed,
   previousStartDate,
   previousEndDate,
-  eventDays,
+  eventDays: allEventDays,
   vendors,
   performers,
   emitPerformerSubevents,
@@ -181,6 +193,13 @@ export function EventSchema({
   accessNotes,
   superEvent,
 }: EventSchemaProps) {
+  // OPE-1563 — every date this builder emits (subEvents, the day-derived span,
+  // the noon-sentinel hours) reads PUBLIC days only. Filtered once here so no
+  // reader below can see a vendor-setup row: GAHS Holiday Craft Fair's 07:00
+  // "Vendor setup" became a public "Day 2" subEvent, and the same row would have
+  // set the top-level startDate to 7 AM via columnDateForJsonLd's earliest-open.
+  // `closed` days stay in: each reader below already handles them its own way.
+  const eventDays = allEventDays?.filter((d) => !d.vendorOnly);
   // Convert integer cents → dollars for JSON-LD emission. Round-2 backlog
   // item 1 (2026-05-11): only emit `offers` and `isAccessibleForFree` when
   // price is *known*. The previous code treated null/undefined as free,
@@ -267,11 +286,13 @@ export function EventSchema({
   // Sep 26. This also makes the top-level dates consistent with the subEvents,
   // which have emitted venue-zone offsets since P3b.
   const venueTzForJsonLd = venue?.timezone ?? undefined;
+  // OPE-1241 — a date-only (noon-UTC) column takes its hours from event_days.
   const resolvedStartDate =
-    (startDate ? formatIsoInVenueZone(startDate, venueTzForJsonLd) || undefined : undefined) ??
-    dayDerivedDates?.start;
+    (startDate
+      ? columnDateForJsonLd(startDate, "start", eventDays, venueTzForJsonLd)
+      : undefined) ?? dayDerivedDates?.start;
   const resolvedEndDate =
-    (endDate ? formatIsoInVenueZone(endDate, venueTzForJsonLd) || undefined : undefined) ??
+    (endDate ? columnDateForJsonLd(endDate, "end", eventDays, venueTzForJsonLd) : undefined) ??
     dayDerivedDates?.end;
   if (!resolvedStartDate) return null;
   if (pastUnconfirmed) return null;
@@ -318,14 +339,17 @@ export function EventSchema({
   // EventRescheduled rich snippet requires previousStartDate to render. Emit
   // both endpoints when present so Google can show the "rescheduled from X
   // to Y" annotation in search results.
+  // OPE-1241 — a date-only (noon-UTC) previous date is emitted as a bare date;
+  // there are no event_days for the old schedule to take hours from.
+  const previousIso = (d: Date | null | undefined) => {
+    const parsed = d ? parseDateLoose(d) : null;
+    if (!parsed) return undefined;
+    return isDateOnlySentinel(parsed) ? parsed.toISOString().slice(0, 10) : parsed.toISOString();
+  };
   const previousStartIso =
-    lifecycleStatus === "RESCHEDULED" && previousStartDate
-      ? (parseDateLoose(previousStartDate)?.toISOString() ?? undefined)
-      : undefined;
+    lifecycleStatus === "RESCHEDULED" ? previousIso(previousStartDate) : undefined;
   const previousEndIso =
-    lifecycleStatus === "RESCHEDULED" && previousEndDate
-      ? (parseDateLoose(previousEndDate)?.toISOString() ?? undefined)
-      : undefined;
+    lifecycleStatus === "RESCHEDULED" ? previousIso(previousEndDate) : undefined;
 
   // TAX1 Phase 3 (2026-06-02) — A7 SEO accuracy lever. When the event
   // is CLOSED to the public (members-only, credential-gated B2B,
@@ -460,7 +484,11 @@ export function EventSchema({
             (d): d is EventDay & { openTime: string; closeTime: string } =>
               d.openTime != null && d.closeTime != null
           )
-          .map((day, i) => {
+          .map((day, _i, emitted) => {
+            // OPE-1563 — "Day N" is the date's position among the emitted
+            // dates, so two sessions on one date are both "Day 1", never a
+            // phantom "Day 2".
+            const dayNumber = [...new Set(emitted.map((d) => d.date))].sort().indexOf(day.date) + 1;
             // Sub-event open/close times are wall-clock in the venue's zone.
             // Emit them as ISO with the proper offset (`-04:00`/`-05:00` at
             // Eastern, `-02:30`/`-03:30` at Newfoundland, etc.) so calendar
@@ -477,14 +505,14 @@ export function EventSchema({
               vendorBucketToPerformerSponsor(dayBucket);
             return {
               "@type": "Event",
-              name: `${name} - Day ${i + 1}`,
+              name: `${name} - Day ${dayNumber}`,
               startDate: venueTz
                 ? formatIsoInVenueZone(startWall, venueTz) || undefined
                 : formatIsoInVenueZone(startWall) || undefined,
               endDate: venueTz
                 ? formatIsoInVenueZone(endWall, venueTz) || undefined
                 : formatIsoInVenueZone(endWall) || undefined,
-              description: day.notes || description || `${name} - Day ${i + 1}`,
+              description: day.notes || description || `${name} - Day ${dayNumber}`,
               location,
               // E.2b — use per-day image when set, else series-level.
               // resolvedImage covers the OG-fallback + transformations
@@ -543,6 +571,10 @@ export function EventSchema({
     "@context": "https://schema.org",
     "@type": getEventType(categories),
     name,
+    // OPE-517 — the names the organizer / others use for this same event.
+    ...(alternateNames && alternateNames.length > 0
+      ? { alternateName: alternateNames.length === 1 ? alternateNames[0] : alternateNames }
+      : {}),
     // EH3 P2.3b — superEvent → the parent EventSeries (occurrences only).
     ...(superEvent ? { superEvent } : {}),
     description: description || `${name} - a fair and community event.`,
@@ -597,7 +629,7 @@ export function EventSchema({
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(cleanSchema) }}
+      dangerouslySetInnerHTML={{ __html: safeJsonLd(cleanSchema) }}
     />
   );
 }

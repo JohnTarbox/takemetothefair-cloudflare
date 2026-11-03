@@ -17,6 +17,7 @@ import {
   runCheck,
   seededNames,
 } from "../../../scripts/check-heartbeat-probes";
+import { parseWranglerConfig, readWranglerConfig } from "../../../scripts/lib/wrangler-config";
 import { HEARTBEAT_PROBES } from "@/lib/heartbeat";
 import { GRANDFATHERED_UNREVIEWED, HEARTBEAT_INVENTORY } from "@/lib/heartbeat-inventory";
 
@@ -48,7 +49,7 @@ describe("OPE-975 — the real tree", () => {
 
   it("discovers the declared paths: 7 queue consumers, 4 Workflows, and the scheduled jobs", () => {
     const paths = discoverPaths(
-      readFileSync(join(ROOT, "mcp-server/wrangler.toml"), "utf8"),
+      readWranglerConfig("mcp", ROOT),
       readFileSync(join(ROOT, "mcp-server/src/index.ts"), "utf8")
     );
     expect(paths.filter((p) => p.startsWith("queue:"))).toHaveLength(7);
@@ -56,6 +57,21 @@ describe("OPE-975 — the real tree", () => {
     expect(paths).toContain("cron:runScheduledBurstCapSelfTest");
     expect(paths).toContain("cron:main-app:/api/admin/venues/geocode-venues");
     expect(Object.keys(HEARTBEAT_INVENTORY).sort()).toEqual(paths);
+  });
+
+  it("OPE-1292: a comment or an array value inside a queue/workflow block hides no path", () => {
+    // The regexes this replaced needed `queue = ` on the line right after
+    // `[[queues.consumers]]`, and stopped a workflow scan at any `[`. Both
+    // reformattings below are legal TOML that the old discovery silently lost.
+    const text = readFileSync(join(ROOT, "mcp-server/wrangler.toml"), "utf8")
+      .replace(/\[\[queues\.consumers\]\]\n/g, "[[queues.consumers]]\n# a reviewer's note\n")
+      .replace(/\[\[workflows\]\]\n/g, '[[workflows]]\ntags = ["x"]\n');
+    expect(text).toContain("# a reviewer's note"); // the mutation landed
+    expect(text).toContain('tags = ["x"]');
+    const index = readFileSync(join(ROOT, "mcp-server/src/index.ts"), "utf8");
+    expect(discoverPaths(parseWranglerConfig(text), index)).toEqual(
+      discoverPaths(readWranglerConfig("mcp", ROOT), index)
+    );
   });
 
   it("the grandfathered set only ever shrinks: every member is still an unreviewed entry", () => {
@@ -138,6 +154,22 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // the last 90 days, mean 14.1h. Sized off the MAX rather than the mean
       // because inbound volume is lumpy and a quiet week is normal.
       "classifier-execution": 240,
+      // OPE-1496 — PLACEHOLDER, dormant until the first digest links through
+      // /go/; its arming ticket measures the redirect-row inter-arrival then.
+      // Two weekly sends, because scanners prefetch every link on each send.
+      "go-click-redirect": 336,
+      // OPE-1558 — PLACEHOLDER, dormant until OPE-1559 links /list-your-event;
+      // no traffic exists to measure an inter-arrival from yet. Re-measure the
+      // list_view gap when it is armed.
+      "list-your-event-view": 168,
+      // OPE-1316 — PLACEHOLDER, dormant until its arming ticket measures the
+      // success-row inter-arrival (none existed when it shipped).
+      // OPE-1329 — measured: 33 rows, max gap 24.01h (daily holdout sampler) → 3 × max.
+      "import-url-extract-success": 72,
+      // OPE-1352 — an invariant, not a cadence: any inbound left on a loser for
+      // a day is a writer that skipped the repoint. Dormant until the backfill.
+      "inbound-follows-duplicate-keeper": 24,
+      "extract-context-telemetry": 240,
       "roster-vendor-link": 720,
       "submit-secondary-page-crawl": 576,
       "spam-event-triple-detector": 504,
@@ -157,6 +189,13 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "funnel-canary": 48,
       "verification-threshold-tuner": 48,
       "photo-intake": 30 * 24,
+      // OPE-1341 — demand-conditional: only a snap left in received/processing
+      // starts the clock, so 6h cannot fire in the weeks between fairs.
+      "snap-intake": 6,
+      "free-text-extract-record": 24,
+      "text-match-record": 24,
+      "outreach-reply-link": 24,
+      "enrich-auto-apply": 24,
       "photo-intake-storage-record": 30 * 24,
       // OPE-325 — demand-conditional: counts from an unanswered poster, not
       // from the last success, so a short window cannot cry wolf in a quiet month.
@@ -169,19 +208,29 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "near-duplicate-sweep": 48,
       // OPE-1205 — daily cron, one run row each; two cycles before it pages.
       "sync-stale-sweep": 48,
+      // OPE-1239 — */10 cron, run row at most hourly; three missed before it pages.
+      "ci-trigger-watchdog": 3,
       "ocr-attachment": 21 * 24,
       "email-send": 72,
       "email-delivery-events": 72,
+      // OPE-1152 — demand-conditional: the clock starts at an `already-exists`
+      // reply, and the disposition row is written seconds before that reply.
+      // 72h only absorbs a stuck workflow, never a quiet week.
+      "enrich-on-match-disposition": 72,
+      "venue-google-amenities": 72,
       "inbound-submit": 21 * 24,
       "inbound-forward-analysis": 72,
       "inbound-email-event-links": 21 * 24,
       "newsletter-broadcast-weekend": 21 * 24,
       "newsletter-broadcast-vendor": 21 * 24,
       "promoter-url-health-sweep": 72,
+      // OPE-1270 — same daily driver as the promoter sweep; three missed runs.
+      "vendor-url-health-sweep": 72,
       // OPE-987 — run stamp of a pass on the daily 06:00Z drift workflow: one
       // missed run tolerated, two not.
       "organizer-cancellation-recheck": 48,
-      "owed-human-notice": 720,
+      // OPE-1034 — measured: 19 notices, p90 gap 124.1h, max 255.4h → 3 × p90.
+      "owed-human-notice": 372,
       "source-agreement-sweep": 72,
       "vendor-enrichment": 7 * 24,
       "image-coverage-scan": 48,
@@ -191,9 +240,10 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "vendor-claim-evidence": 30 * 24,
       "claim-corroboration-sweep": 48,
       "promoter-enrichment": 7 * 24,
-      "discrepancy-detection": 72,
-      // OPE-1065 — dormant placeholder, not a measurement (see the registry).
-      "citation-live-defect": 720,
+      // OPE-1503 — measured post-tuning: longest gap between new rows 102h.
+      "discrepancy-detection": 240,
+      // OPE-1083 — armed on a measurement: longest gap between passes 166h.
+      "citation-live-defect": 336,
       "gw1d-scorer": 7 * 24,
       "booth-autowrite": 30 * 24,
       "series-write-path": 336,
@@ -210,13 +260,29 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "bing-liveness": 48,
       "site-health-refresh": 48,
       "membrane-crossing-ledger": 72,
-      "promoter-outreach-attempts": 14 * 24,
+      "promoter-outreach-attempts": 9 * 24,
       "gsc-monthly-oracle": 40 * 24,
       "vendor-self-reported-events": 30 * 24,
       "performer-enrichment-producer": 7 * 24,
       "request-sample-retention": 48,
+      "self-announced-exhibitor": 720,
+      "gemba-observation": 720,
+      // OPE-1265 — dormant placeholder, same stance as gemba-observation.
+      "promoter-list-arrival": 720,
+      // OPE-1264 — measured: the largest gap between workflow emails over 60 days was 50.5h.
+      "newsletter-classify": 72,
+      // OPE-1330 — same population as newsletter-classify (every workflow email), same measured 72h.
+      "promoter-contact-capture": 72,
+      // OPE-1285 — measured: 12 newsletters, largest gap 17.9 days.
+      "newsletter-itemize": 720,
+      // OPE-1286 — dormant placeholder (n=1 newsletter since OPE-1285); armed from real rows later.
+      "newsletter-candidates": 720,
+      "unterminated-crossing-notice": 6,
       "error-log-retention": 48,
       "indexnow-submission-retention": 48,
+      // OPE-1328 — armed 2026-10-06 at 270 days: a judgement at n=1 (one
+      // multi-edition series, one member), not a measurement. See heartbeat.ts.
+      "series-edition-key": 6480,
     });
   });
 });

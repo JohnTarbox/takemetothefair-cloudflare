@@ -523,6 +523,7 @@ export * from "./source-classification";
 export * from "./source-state";
 export * from "./former-venue";
 export * from "./dates-confirmed-gate";
+export * from "./non-source-url";
 // OPE-411 — ingest-time sanity checks for user-supplied submissions. Shared
 // because BOTH the app route and the MCP suggest_event tool create events from
 // them, and a validator wired into one of two parallel paths gets bypassed.
@@ -559,6 +560,10 @@ export * from "./vendor-display";
 // page and get_vendor_details cannot disagree about what is in a gallery.
 export * from "./vendor-gallery";
 
+// OPE-1398 (2026-10-16): the one rule for showing a vendor's street address
+// publicly (hidden by default for self-signup vendors; city/state stay).
+export * from "./vendor-public-address";
+
 // OPE-1112 (2026-09-22): "is this a link to an image?" — shared by the
 // self-service form, the profile API and update_vendor, so a page URL cannot
 // enter logo_url through whichever writer nobody remembered to guard.
@@ -588,6 +593,7 @@ export * from "./discovery-routing";
 export * from "./event-approval-gate";
 export * from "./event-merged-tombstone-gate";
 export * from "./venue-city-plausibility";
+export * from "./venue-pin-sanity";
 
 // OPE-241 (2026-07-17): D1 100-bound-param cap remedy — chunkIds/chunkedInArray
 // for `inArray()` lists that scale with row count. Shared because the cap bites
@@ -612,6 +618,9 @@ export * from "./date-contiguity";
 // the MCP Worker's cf-email consumer sends it — so a helper local to either one
 // would leave the other splitting differently (or not at all).
 export * from "./email-recipients";
+
+// OPE-1379 (HARD8) — mask addresses in log context / console lines ("j***@domain").
+export * from "./mask-email";
 
 // OPE-365 (R1) — "does a human owe this person a response?" Pure so the
 // decision can be replayed against real production rows without running the
@@ -662,8 +671,33 @@ export * from "./admission-price";
 export * from "./ask-about-event";
 export * from "./promoter-dedup";
 export * from "./email-providers";
+// OPE-1330 — organizational domain (PSL-aware) + the one non-ownable-domain list.
+export * from "./org-domain";
 // OPE-1030 — error text with its cause chain, for every error_logs writer.
 export * from "./describe-error";
 export * from "./field-grounding";
 // OPE-1061 — the four-state pet_friendly field: write gate + display rules.
 export * from "./pet-policy";
+export * from "./gsc-export-row-query";
+// OPE-38/249/1295 — rule agreement + the promotable gate (dashboard AND live auto-apply).
+export * from "./promoter-rule-agreement";
+// OPE-1324 — the one occurrence URL builder/parser, shared by the app and the
+// MCP Worker (which cannot import src/). See scripts/check-occurrence-paths.ts.
+export * from "./edition-path";
+// OPE-1341 — JPEG metadata strip, shared by the main app and the MCP Worker.
+export * from "./jpeg-exif-strip";
+export * from "./safe-href";
+// OPE-1392 — newsletter HTML allow-list sanitizer, the one quote-escaping HTML
+// escape, and the one email-subject control-character strip. Shared by the
+// main app and the MCP Worker.
+export * from "./html-sanitize";
+export * from "./html-escape";
+export * from "./html-to-text";
+export * from "./visitor-facts";
+export * from "./email-subject";
+// OPE-1396 (DUP6) — vendor-joins-event rule, shared by the app routes and MCP apply_to_event.
+export * from "./vendor-application-rules";
+// OPE-1393 — an operator edit to a scraper-synced field turns sync off (app + MCP).
+export * from "./scraper-sync-lock";
+// OPE-1550 — name a refused image format (JPEG XL first) so no refusal is anonymous.
+export * from "./unsupported-image-format";
