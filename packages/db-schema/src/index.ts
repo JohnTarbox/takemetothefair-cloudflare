@@ -2874,6 +2874,8 @@ export const analyticsEvents = sqliteTable(
   (table) => [
     index("idx_analytics_events_name_ts").on(table.eventName, table.timestamp),
     index("idx_analytics_events_category_ts").on(table.eventCategory, table.timestamp),
+    // OPE-1573 — range COUNT / MAX(timestamp) from the admin analytics tiles.
+    index("idx_analytics_events_timestamp").on(table.timestamp),
   ]
 );
 

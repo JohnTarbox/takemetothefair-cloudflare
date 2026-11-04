@@ -2,11 +2,15 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
-import { eq, and, or, sql } from "drizzle-orm";
+import { eq, and, or } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import { containsCI } from "@/lib/db/contains-ci";
-import { upcomingEndPredicate } from "@/lib/event-dates";
+import {
+  joinVenueCounts,
+  upcomingEventCountsByVenue,
+  venueEventCount,
+} from "@/lib/venues/upcoming-event-counts";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -41,6 +45,7 @@ export async function GET(request: Request) {
     }
 
     // Fetch all venues with event counts
+    const counts = upcomingEventCountsByVenue(db, new Date());
     const results = await db
       .select({
         id: venues.id,
@@ -52,21 +57,12 @@ export async function GET(request: Request) {
         capacity: venues.capacity,
         amenities: venues.amenities,
         website: venues.website,
-        // end_date is seconds-epoch (Drizzle mode:"timestamp" stores seconds —
-        // see reference_drizzle_timestamp_mode_is_seconds memory). Earlier
-        // comments here claimed ms; that was wrong, and the resulting
-        // *1000 made the filter `seconds >= ms` which is always false.
-        // Result: every venue card showed event_count = 0 sitewide until
-        // PR #161 corrected it. OPE-1396 (DUP5) — shared upcomingEndPredicate.
-        eventCount: sql<number>`(
-          SELECT COUNT(*) FROM events
-          WHERE events.venue_id = venues.id
-          AND events.status IN ('APPROVED', 'TENTATIVE')
-          AND events.lifecycle_status NOT IN ('CANCELLED', 'NO_SHOW')
-          AND ${upcomingEndPredicate(new Date())}
-        )`.as("event_count"),
+        // OPE-1573 — grouped count joined in (see upcoming-event-counts.ts);
+        // the correlated per-venue subquery read ~708K rows per call on prod.
+        eventCount: venueEventCount(counts).as("event_count"),
       })
       .from(venues)
+      .leftJoin(counts, joinVenueCounts(counts))
       .where(and(...conditions))
       .orderBy(venues.name);
 
