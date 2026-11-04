@@ -8,7 +8,11 @@ import { auth } from "@/lib/auth";
 import { VenuesView } from "@/components/venues/venues-view";
 import { logError } from "@/lib/logger";
 import { containsCI } from "@/lib/db/contains-ci";
-import { upcomingEndPredicate } from "@/lib/event-dates";
+import {
+  joinVenueCounts,
+  upcomingEventCountsByVenue,
+  venueEventCount,
+} from "@/lib/venues/upcoming-event-counts";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ItemListTracker } from "@/components/analytics/ItemListTracker";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
@@ -99,23 +103,13 @@ async function getVenues(searchParams: SearchParams, favoriteUserId?: string) {
       return [];
     }
 
-    // Single query: Get venues with event counts using subquery.
-    // events.end_date is seconds-epoch (Drizzle mode:"timestamp" stores
-    // seconds — see reference_drizzle_timestamp_mode_is_seconds memory).
-    // Earlier comments here claimed ms-epoch; that was wrong, and the
-    // resulting *1000 made the filter `seconds >= ms` which is always
-    // false. Result: every venue card showed event_count = 0 sitewide
-    // until PR #161 corrected it.
-    // OPE-1396 (DUP5) — the shared upcomingEndPredicate, not a raw
-    // `end_date >= unixepoch('now')`: the raw form dropped NULL-end events and
-    // events on their last day, which the venue detail page still lists.
-    const eventCountSubquery = sql<number>`(
-      SELECT COUNT(*) FROM events
-      WHERE events.venue_id = venues.id
-      AND events.status IN ('APPROVED', 'TENTATIVE')
-      AND events.lifecycle_status NOT IN ('CANCELLED', 'NO_SHOW')
-      AND ${upcomingEndPredicate(new Date())}
-    )`;
+    // OPE-1573 — event counts come from ONE grouped scan joined in, not a
+    // correlated subquery per venue: the subquery read ~708K rows per render on
+    // prod and was the top consumer in the 2026-11-03 22:47Z D1 overload. See
+    // upcoming-event-counts.ts. Same filter (incl. the shared
+    // upcomingEndPredicate, OPE-1396) as before.
+    const counts = upcomingEventCountsByVenue(db, new Date());
+    const eventCount = venueEventCount(counts);
 
     if (searchParams.missingGoogle === "true") {
       conditions.push(isNull(venues.googlePlaceId));
@@ -123,7 +117,7 @@ async function getVenues(searchParams: SearchParams, favoriteUserId?: string) {
 
     // Add hasEvents filter condition if requested
     if (searchParams.hasEvents === "true") {
-      conditions.push(sql`${eventCountSubquery} > 0`);
+      conditions.push(sql`${eventCount} > 0`);
     }
 
     const venuesWithCounts = await db
@@ -139,9 +133,10 @@ async function getVenues(searchParams: SearchParams, favoriteUserId?: string) {
         amenities: venues.amenities,
         imageUrl: venues.imageUrl,
         website: venues.website,
-        eventCount: eventCountSubquery.as("event_count"),
+        eventCount: eventCount.as("event_count"),
       })
       .from(venues)
+      .leftJoin(counts, joinVenueCounts(counts))
       .where(and(...conditions))
       .orderBy(venues.name);
 

@@ -1,0 +1,13 @@
+-- OPE-1573 — index analytics_events(timestamp).
+--
+-- The /admin/analytics tiles run `SELECT COUNT(*) … WHERE timestamp >= ?` and
+-- `SELECT MAX(timestamp) …`. The only indexes were (event_name, timestamp),
+-- (event_category, timestamp) and the PK, so prod's plan was
+-- `SCAN analytics_events USING COVERING INDEX idx_analytics_events_category_ts`:
+-- every call read all ~40.2K rows. In the 2026-11-04 01:43Z overload those two
+-- queries read 14.5M rows across 360 calls (D1 GraphQL d1QueriesAdaptiveGroups,
+-- 01:35–01:46Z). With this index MAX() reads one row and the range count reads
+-- only the matching rows.
+--
+-- Schema-only and idempotent; a no-op on an empty database.
+CREATE INDEX IF NOT EXISTS idx_analytics_events_timestamp ON analytics_events (timestamp);
