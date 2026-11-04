@@ -105,6 +105,11 @@ import { CATALOG_BASIS_NOTE } from "@/lib/analytics-overview/catalog-basis";
 import { resolveTabAlias } from "@/lib/analytics-overview/tab-aliases";
 import { notFound, redirect } from "next/navigation";
 import {
+  parseRulePage,
+  ruleRowWindow,
+  RULE_PAGE_SIZE,
+} from "@/lib/recommendations/rule-row-window";
+import {
   AEO_BUCKET_LABELS,
   aeoBadgeColor,
   Ga4ApiError,
@@ -144,6 +149,9 @@ type PageProps = {
     // IndexNow tab filters — only consumed by IndexNowTab. Other tabs ignore.
     indexnow_limit?: string;
     indexnow_source?: string;
+    // OPE-1574 — Recommendations tab: focus one rule and page its rows.
+    rule?: string;
+    rpage?: string;
   }>;
 };
 
@@ -208,7 +216,12 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
       <TabBar currentTab={tab} />
 
       {tab === "overview" && <OverviewTab window={window} />}
-      {tab === "recommendations" && <RecommendationsTab />}
+      {tab === "recommendations" && (
+        <RecommendationsTab
+          focusRuleId={typeof params.rule === "string" ? params.rule : undefined}
+          focusPage={parseRulePage(typeof params.rpage === "string" ? params.rpage : undefined)}
+        />
+      )}
       {tab === "google" && <GoogleTab window={window} />}
       {tab === "bing" && <BingTab />}
       {tab === "site-health" && <SiteHealthTab />}
@@ -2273,7 +2286,14 @@ function ScanFreshnessBadge({ lastScannedAt }: { lastScannedAt: Date | null }) {
 const RECS_WOW_UNAVAILABLE_REASON =
   "Week-over-week not measured: last week's active count can't be rebuilt (last-seen times and snoozes aren't kept as history), and comparing it with a different count showed changes that never happened.";
 
-async function RecommendationsTab() {
+async function RecommendationsTab({
+  focusRuleId,
+  focusPage,
+}: {
+  /** OPE-1574 — `?rule=<ruleId>`: show this rule's rows paged, not previewed. */
+  focusRuleId?: string;
+  focusPage: number;
+}) {
   const { getActiveItems, getScanState, getCycleState } =
     await import("@/lib/recommendations/engine");
   const { RecommendationActions } = await import("@/components/admin/recommendation-actions");
@@ -2770,9 +2790,19 @@ async function RecommendationsTab() {
               {groups.map((group) => {
                 const meta = severityMeta[group.severity];
                 const count = group.items.length;
-                const defaultOpen = count === 1;
+                const focused = focusRuleId === group.ruleId;
+                const defaultOpen = count === 1 || focused;
+                // OPE-1574 — render a window of rows, never all of them. A
+                // collapsed <details> is still serialized into the HTML, so
+                // rendering every item made this tab 39 MB. Counts above and
+                // in the chip still come from the full group.items.
+                const win = ruleRowWindow({ total: count, focused, page: focusPage });
+                const ruleHref = (page: number) =>
+                  `/admin/analytics?tab=recommendations&rule=${encodeURIComponent(group.ruleId)}${
+                    page > 1 ? `&rpage=${page}` : ""
+                  }#rule-${group.ruleId}`;
                 return (
-                  <Card key={group.ruleId} className={meta.cardBorder}>
+                  <Card key={group.ruleId} id={`rule-${group.ruleId}`} className={meta.cardBorder}>
                     <details open={defaultOpen} className="group">
                       <summary className="cursor-pointer p-5 list-none [&::-webkit-details-marker]:hidden">
                         <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -2834,6 +2864,7 @@ async function RecommendationsTab() {
                               numeric: true,
                             })
                           )
+                          .slice(win.start, win.end)
                           .map((item) => {
                             const link = targetLink(item);
                             const meta2 = targetMeta(item);
@@ -2860,6 +2891,46 @@ async function RecommendationsTab() {
                               </div>
                             );
                           })}
+                        {win.truncated && (
+                          <div className="px-5 py-3 text-xs text-muted-foreground flex items-center gap-3 flex-wrap">
+                            <span className="tabular-nums">
+                              Showing {fmt(win.start + 1)}–{fmt(win.end)} of {fmt(count)}
+                            </span>
+                            {!focused ? (
+                              <Link
+                                href={ruleHref(1)}
+                                prefetch={false}
+                                className="text-royal hover:underline"
+                              >
+                                View all {fmt(count)}
+                              </Link>
+                            ) : (
+                              <>
+                                {win.page > 1 && (
+                                  <Link
+                                    href={ruleHref(win.page - 1)}
+                                    prefetch={false}
+                                    className="text-royal hover:underline"
+                                  >
+                                    ← Previous {RULE_PAGE_SIZE}
+                                  </Link>
+                                )}
+                                <span>
+                                  page {win.page} of {win.pageCount}
+                                </span>
+                                {win.page < win.pageCount && (
+                                  <Link
+                                    href={ruleHref(win.page + 1)}
+                                    prefetch={false}
+                                    className="text-royal hover:underline"
+                                  >
+                                    Next {RULE_PAGE_SIZE} →
+                                  </Link>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </details>
                   </Card>
