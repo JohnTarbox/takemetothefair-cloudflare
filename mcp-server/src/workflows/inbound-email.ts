@@ -363,6 +363,10 @@ const HANDLERS: Record<Exclude<EmailIntent, "submit" | "new_event">, HandlerFn> 
   // Classifier-introduced intents that route through legacy handlers:
   claim_request: handleCorrection, // record in admin_actions; admin reviews
   vendor_inquiry: handleSupport, // manual response via support template
+  // OPE-1248 — a reader's question about one event. The support handler opens
+  // the same-day obligation and sends the ruled `support-ack`; it is NOT in
+  // `needsAdminDecision`, so it never parks in the 7-day waitForEvent.
+  event_question: handleSupport,
   unclear: handleUnknown, // catch-all admin triage
   multi: handleUnknown, // parent row of a multi-intent split; children carry the real intent
   // UR1 Phase 1 (2026-06-04) — report@ / feedback@ → problem_reports table

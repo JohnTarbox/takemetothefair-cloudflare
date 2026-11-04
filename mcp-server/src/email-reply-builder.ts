@@ -170,6 +170,7 @@ const FANOUT_INTENT_LABELS: Record<string, string> = {
   correction: "a correction to a listing",
   claim_request: "a request to claim a listing",
   vendor_inquiry: "a vendor question",
+  event_question: "a question about an event",
   source_suggestion: "a suggestion for a source to follow",
   press: "a press inquiry",
   support: "a general question",

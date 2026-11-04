@@ -31,6 +31,7 @@ const VALID_INTENTS = new Set([
   "source_suggestion",
   "claim_request",
   "vendor_inquiry",
+  "event_question",
   "support",
   "press",
   "unsubscribe",

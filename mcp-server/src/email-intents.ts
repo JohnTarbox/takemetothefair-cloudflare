@@ -38,6 +38,7 @@ export type EmailIntent =
   | "source_suggestion" // sender points us at a website/feed as a potential events source
   | "claim_request" // organizer claiming ownership of a listing
   | "vendor_inquiry" // vendor asking about listing/applications/profile
+  | "event_question" // OPE-1248 — a reader asking about one event we list (hours, parking, access)
   | "spam" // quarantine — no auto-reply, no admin forward
   | "unclear" // confidence below threshold; admin triage
   | "multi" // parent of a multi-intent split (children carry the real intent)
@@ -143,6 +144,7 @@ export function toWorkflowIntent(intent: EmailIntent): EmailIntent {
     case "claim_request":
       return "correction";
     case "vendor_inquiry":
+    case "event_question":
       return "support";
     case "spam":
     case "unclear":
