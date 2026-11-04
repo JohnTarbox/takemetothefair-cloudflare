@@ -65,9 +65,15 @@ function renderShell(children: React.ReactNode) {
     <div className="min-h-screen bg-muted">
       <div className="flex">
         <aside className="w-64 bg-card border-r border-border min-h-[calc(100vh-4rem)]">
+          {/* OPE-1573: prefetch={false}. Every admin route is force-dynamic, so each
+              in-viewport sidebar link fired its own RSC render (auth + D1) on every
+              admin page load. During the 2026-11-04 01:43Z D1 overload those
+              prefetches returned 503 alongside the page itself. Guarded by
+              src/app/admin/__tests__/admin-link-prefetch.test.ts. */}
           <nav className="p-4 space-y-1">
             {adminNav.map((item) => (
               <Link
+                prefetch={false}
                 key={item.name}
                 href={item.href}
                 className="flex items-center gap-3 px-3 py-2 text-foreground rounded-lg hover:bg-muted transition-colors"

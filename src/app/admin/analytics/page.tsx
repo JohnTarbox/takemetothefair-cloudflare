@@ -184,18 +184,21 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
           <div className="flex items-center gap-3">
             <WindowSelector currentWindow={window} />
             <Link
+              prefetch={false}
               href="/admin/diagnostics"
               className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
             >
               Diagnostics <ArrowRight className="w-3.5 h-3.5" />
             </Link>
             <Link
+              prefetch={false}
               href="/admin/analytics/ga4"
               className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
             >
               GA4 dashboard <ArrowRight className="w-3.5 h-3.5" />
             </Link>
             <Link
+              prefetch={false}
               href="/admin/analytics/automation"
               className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
             >
@@ -434,6 +437,7 @@ function WindowSelector({
         const active = w === currentWindow;
         return (
           <Link
+            prefetch={false}
             key={w}
             href={
               tab === "overview"
@@ -594,7 +598,12 @@ function CardLink({
   return (
     <div className={`relative block hover:opacity-90 transition-opacity ${className ?? ""}`.trim()}>
       {children}
-      <Link href={href} aria-label={label} className="absolute inset-0 rounded-lg" />
+      <Link
+        prefetch={false}
+        href={href}
+        aria-label={label}
+        className="absolute inset-0 rounded-lg"
+      />
     </div>
   );
 }
@@ -1363,7 +1372,11 @@ function ActionQueueRow({ entry }: { entry: ActionQueueEntry }) {
               {sla.label}
             </span>
           )}
-          <Link href={entry.href} className="font-medium text-foreground hover:underline truncate">
+          <Link
+            prefetch={false}
+            href={entry.href}
+            className="font-medium text-foreground hover:underline truncate"
+          >
             {entry.title}
           </Link>
         </div>
@@ -2682,6 +2695,7 @@ async function RecommendationsTab() {
                               const href = safeHref(o.targetUrl, { allowRelative: true });
                               return href ? (
                                 <Link
+                                  prefetch={false}
                                   href={href}
                                   target="_blank"
                                   rel="noreferrer"
@@ -2845,7 +2859,11 @@ async function RecommendationsTab() {
                                 <div className="min-w-0 flex-1">
                                   <p className="text-sm text-foreground">
                                     {link ? (
-                                      <Link href={link} className="text-royal hover:underline">
+                                      <Link
+                                        prefetch={false}
+                                        href={link}
+                                        className="text-royal hover:underline"
+                                      >
                                         {targetLabel(item)}
                                       </Link>
                                     ) : (
@@ -3024,6 +3042,7 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
             <div className="inline-flex items-center bg-muted rounded-lg p-1 text-xs">
               {INDEXNOW_LIMITS.map((n) => (
                 <Link
+                  prefetch={false}
                   key={n}
                   href={filterUrl({ limit: n })}
                   className={
@@ -3263,6 +3282,7 @@ function TabBar({ currentTab }: { currentTab: TabKey }) {
           tab.key === "overview" ? "/admin/analytics" : `/admin/analytics?tab=${tab.key}`;
         return (
           <Link
+            prefetch={false}
             key={tab.key}
             href={href}
             role="tab"
@@ -4946,7 +4966,11 @@ function VerdictBanner({ verdict }: { verdict: SiteHealthVerdict }) {
                 <li key={p.key} className="text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">{p.label}:</span> {p.detail}
                   {p.href && (
-                    <Link href={p.href} className="ml-1.5 text-royal hover:text-navy">
+                    <Link
+                      prefetch={false}
+                      href={p.href}
+                      className="ml-1.5 text-royal hover:text-navy"
+                    >
                       view
                     </Link>
                   )}
@@ -4992,6 +5016,7 @@ function InstrumentTile({ reading }: { reading: InstrumentReading }) {
         <p className="mt-1 text-xs text-muted-foreground">{reading.detail}</p>
         {reading.href && (
           <Link
+            prefetch={false}
             href={reading.href}
             className="mt-2 inline-flex items-center gap-1 text-xs text-royal hover:text-navy"
           >
@@ -5268,6 +5293,7 @@ async function SiteHealthTab() {
                     <td className="px-6 py-3 text-foreground break-all max-w-xs">
                       {row.sampleEventSlug ? (
                         <Link
+                          prefetch={false}
                           href={`/events/${row.sampleEventSlug}`}
                           target="_blank"
                           rel="noopener noreferrer"
