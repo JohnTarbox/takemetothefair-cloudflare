@@ -425,15 +425,44 @@ ${SIGN_OFF}`;
       //
       // `no-url` says "we couldn't find a link in your message." When a URL is
       // sitting in `inbound_emails.parsed_url`, that sentence is false, and it
-      // is false in the direction that blames the sender for our failure. One
-      // contributor received it eight times across five weeks for a link they
-      // included every single time.
+      // is false in the direction that blames the sender for our failure.
       //
-      // So: name the URL we actually tried (they can see we had it), take the
-      // failure, and ask for the thing that would genuinely help — the
-      // destination page — rather than re-asking for a link they already sent.
+      // OPE-1316 — split by what actually happened to the link, per John's
+      // 2026-11-03 ruling (texts B and C verbatim, closing "If you didn't mean
+      // to email us…" line removed: everyone here sent us a link on purpose).
+      // `linkOutcome` is set by the branch that observed it (link-reply.ts):
+      //   fetched-no-event → B. The row is flagged for review in the same
+      //                      pass, which is what makes "a person will take a
+      //                      look" true.
+      //   fetch-failed     → C. The cause sentence names a shortener only when
+      //                      one was detected.
+      //   unset            → the link was never fetched (the GH #244 free-text
+      //                      override). Neither B nor C is true there, so the
+      //                      pre-ruling copy stays until that case is ruled on.
       const tried = typeof params.attemptedUrl === "string" ? params.attemptedUrl : null;
       const triedLine = tried ? `The link we tried was:\n  ${tried}\n\n` : "";
+      if (params.linkOutcome === "fetched-no-event") {
+        return `Thanks for emailing Meet Me at the Fair!
+
+We opened the page you sent but couldn't pick out the event details from it automatically. A person on our side will take a look.
+
+${triedLine}If it's quicker, reply with the event's name, dates and town in a line of text and we'll add it from that.
+
+${SIGN_OFF}`;
+      }
+      if (params.linkOutcome === "fetch-failed") {
+        const cause =
+          typeof params.causeSentence === "string"
+            ? params.causeSentence
+            : "The site didn't let our reader in.";
+        return `Thanks for emailing Meet Me at the Fair!
+
+We found a link in your message but couldn't open it. ${cause}
+
+${triedLine}If you can, reply with the event's own page — the fair's website, a ticket page, or the organizer's post — or just the event's name, dates and town in a line of text.
+
+${SIGN_OFF}`;
+      }
       return `Thanks for emailing Meet Me at the Fair!
 
 We found a link in your message but couldn't read the event details from it — some links (shorteners, redirects, and pages that need JavaScript) don't open for us.
@@ -441,6 +470,25 @@ We found a link in your message but couldn't read the event details from it — 
 ${triedLine}If you can, reply with the event's own page — the fair's website, a ticket page, or the organizer's post — and we'll take it from there. The date and town in a plain sentence works too.
 
 ${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
+    case "already-listed-link": {
+      // OPE-1316 reply A, approved 2026-11-03 (closing line removed). Reached
+      // only on an EXACT link match against a public event's source_url
+      // (link-reply.ts) — never on a text match, which named the wrong fair on
+      // de188d66.
+      const name = String(params.listedEventName ?? "");
+      const dates = String(params.listedEventDates ?? "");
+      const url = String(params.listedEventUrl ?? "");
+      const heading = dates ? `${name} — ${dates}` : name;
+      return `Thanks for emailing Meet Me at the Fair!
+
+That event is already listed with us:
+  ${heading}
+  ${url}
+
+If anything there is wrong or out of date, or you have dates for a new year, just reply to this email and we'll update it.
 
 ${SIGN_OFF}`;
     }

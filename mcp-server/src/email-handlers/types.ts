@@ -58,6 +58,10 @@ export type ReplyKind =
   // sent, and puts the fault on them for a failure that is ours. The two are
   // different claims about WHOSE mistake it was, so they get different copy.
   | "unfetchable-url"
+  // OPE-1316 (reply A) — the link the sender gave is, exactly, the stored
+  // source_url of an event we list publicly. Chosen only on an exact-link match
+  // (link-reply.ts), never on a text match.
+  | "already-listed-link"
   // OPE-407 — the message arrived carrying nothing: no attachment, no
   // meaningful body, no usable subject. Distinct from `no-url`, which is a
   // claim about a body that contains no link; these have no body to inspect.
