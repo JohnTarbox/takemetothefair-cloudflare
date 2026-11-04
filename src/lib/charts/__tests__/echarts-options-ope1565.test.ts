@@ -11,11 +11,15 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  LAST_SYMBOL_SIZE,
   MIN_CHART_FONT_PX,
   accuracyOption,
   dailyViewsOption,
   milestoneChartOption,
   niceCeil,
+  MILESTONES_SERIES,
+  ROLLING_SERIES,
+  type RollingClicksPoint,
   type ChartCtx,
   type MilestoneChartPoint,
 } from "../echarts-options";
@@ -61,30 +65,35 @@ describe("milestoneChartOption (OPE-1565)", () => {
 
   it("collision handling is the library's: hideOverlap on point labels and the x axis", () => {
     const o = milestoneChartOption(LIVE_SHAPE, WIDE);
-    expect(o.series[0].labelLayout).toEqual({ hideOverlap: true });
+    expect(o.series[1].labelLayout).toEqual({ hideOverlap: true });
     expect(o.xAxis.axisLabel.hideOverlap).toBe(true);
   });
 
   it("x axis is date-spaced (time): each point sits at its reached date (John, 2026-11-02)", () => {
     const o = milestoneChartOption(LIVE_SHAPE, WIDE);
     expect(o.xAxis.type).toBe("time");
-    const data = o.series[0].data;
+    const data = o.series[1].data;
     expect(data).toHaveLength(42);
     expect(data[0].value).toEqual(["2026-05-01", 100]);
     expect(data[41].value).toEqual([LIVE_SHAPE[41].date, 31000]);
   });
 
-  it("the last point is labelled by endLabel only, so 29,000 and 31,000 cannot overprint", () => {
+  it("the last point's label wins every collision: largest dot, so highest hideOverlap priority", () => {
+    // ECharts ranks overlapping labels by host-symbol area. endLabel sat outside
+    // that ranking and overprinted 30,000 live on 2026-11-03.
     const o = milestoneChartOption(LIVE_SHAPE, WIDE);
-    const data = o.series[0].data;
-    expect(data[data.length - 1].label.show).toBe(false);
-    expect(data[data.length - 2].label.show).toBe(true);
-    expect(o.series[0].endLabel.show).toBe(true);
-    expect(o.series[0].endLabel.formatter()).toBe("31,000");
+    const data = o.series[1].data;
+    const lastPt = data[data.length - 1];
+    expect("endLabel" in o.series[1]).toBe(false);
+    expect(lastPt.label.show).toBe(true);
+    expect(lastPt.label.position).toBe("top");
+    expect(lastPt.label.formatter()).toBe("31,000");
+    expect(lastPt.symbolSize).toBe(LAST_SYMBOL_SIZE);
+    for (const d of data.slice(0, -1)) expect(d.symbolSize).toBeLessThan(LAST_SYMBOL_SIZE);
   });
 
   it("OPE-456: hollow dot = derived, solid = Google badge", () => {
-    const data = milestoneChartOption(LIVE_SHAPE, WIDE).series[0].data;
+    const data = milestoneChartOption(LIVE_SHAPE, WIDE).series[1].data;
     const derived = data[0]; // i=0 derived
     const badge = data[1];
     expect(derived.itemStyle.borderWidth).toBe(2);
@@ -95,7 +104,7 @@ describe("milestoneChartOption (OPE-1565)", () => {
 
   it("tooltip shows value, date and derived-vs-awarded", () => {
     const o = milestoneChartOption(LIVE_SHAPE, WIDE);
-    const data = o.series[0].data;
+    const data = o.series[1].data;
     expect(o.tooltip.formatter({ data: data[0] })).toBe(
       "100 clicks — Day 1<br/>Derived from our own daily totals"
     );
@@ -112,7 +121,61 @@ describe("milestoneChartOption (OPE-1565)", () => {
 
   it("does not throw on empty data (OPE-242)", () => {
     expect(() => milestoneChartOption([], WIDE)).not.toThrow();
-    expect(milestoneChartOption([], WIDE).series[0].endLabel.show).toBe(false);
+    expect(milestoneChartOption([], WIDE).series[1].data).toEqual([]);
+    expect(() => milestoneChartOption([], WIDE, [])).not.toThrow();
+  });
+});
+
+describe("milestoneChartOption — the 28-day click line", () => {
+  // Shape of the live series after the peak: up to 31,248 on Sep 20, down to
+  // 16,744 on Oct 30 (prod D1, 2026-11-02).
+  const ROLLING: RollingClicksPoint[] = [
+    { date: "2026-05-01", total: 61, dateLabel: "May 1, 2026" },
+    { date: "2026-09-20", total: 31248, dateLabel: "Sep 20, 2026" },
+    { date: "2026-10-30", total: 16744, dateLabel: "Oct 30, 2026" },
+  ];
+
+  it("draws the measured line first and the milestones as dots on top", () => {
+    const o = milestoneChartOption(LIVE_SHAPE, WIDE, ROLLING);
+    expect(o.series.map((x) => x.name)).toEqual([ROLLING_SERIES, MILESTONES_SERIES]);
+    expect(o.series[0].data[2].value).toEqual(["2026-10-30", 16744]);
+    expect(o.series[0].showSymbol).toBe(false);
+    expect(o.series[1].lineStyle.width).toBe(0);
+    expect(o.series[1].z).toBeGreaterThan(o.series[0].z);
+  });
+
+  it("labels where the total stands now, and shows the legend", () => {
+    const o = milestoneChartOption(LIVE_SHAPE, WIDE, ROLLING);
+    expect(o.series[0].endLabel.show).toBe(true);
+    expect(o.series[0].endLabel.formatter()).toBe("16.7K now");
+    expect(o.legend.show).toBe(true);
+  });
+
+  it("y axis covers the line as well as the milestones (61 sits below the 100 milestone)", () => {
+    const o = milestoneChartOption(LIVE_SHAPE, WIDE, ROLLING);
+    expect(o.yAxis.min).toBe(10);
+    expect(o.yAxis.max).toBe(50000);
+  });
+
+  it("tooltip on the line names the window, not a milestone source", () => {
+    const o = milestoneChartOption(LIVE_SHAPE, WIDE, ROLLING);
+    expect(o.tooltip.formatter({ seriesName: ROLLING_SERIES, data: o.series[0].data[2] })).toBe(
+      "16,744 clicks in the 28 days to Oct 30, 2026"
+    );
+  });
+
+  it("without rolling data: no legend, no end label — the milestone chart as before", () => {
+    const o = milestoneChartOption(LIVE_SHAPE, WIDE);
+    expect(o.legend.show).toBe(false);
+    expect(o.series[0].endLabel.show).toBe(false);
+    expect(o.series[0].endLabel.formatter()).toBe("");
+  });
+
+  it("every text size stays a fixed px ≥ 10 with the line and legend added", () => {
+    for (const ctx of [WIDE, NARROW, DARK]) {
+      const sizes = fontSizes(milestoneChartOption(LIVE_SHAPE, ctx, ROLLING));
+      expect(Math.min(...sizes)).toBeGreaterThanOrEqual(MIN_CHART_FONT_PX);
+    }
   });
 });
 

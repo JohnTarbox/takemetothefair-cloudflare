@@ -92,6 +92,41 @@ export function deriveCrossings(
   return out;
 }
 
+export interface WindowTotal {
+  /** YYYY-MM-DD — the last day of the trailing window. */
+  date: string;
+  /** Sum of clicks over the `windowDays` days ending on `date`. */
+  total: number;
+}
+
+/**
+ * The trailing `windowDays` click total for every day that has a full window
+ * of CONSECUTIVE days behind it — the same series `deriveCrossings` scans, so a
+ * chart plotting this line and the derived milestones can never disagree.
+ *
+ * Same rule as `deriveCrossings`: a window with a missing day spans more than
+ * `windowDays` calendar days and over-counts, so it is skipped rather than
+ * drawn; a series shorter than the window yields nothing.
+ */
+export function rollingWindowTotals(
+  dailies: ReadonlyArray<DailyTotal>,
+  windowDays = 28
+): WindowTotal[] {
+  const sorted = [...dailies].sort((a, b) => a.date.localeCompare(b.date));
+  const out: WindowTotal[] = [];
+  for (let i = windowDays - 1; i < sorted.length; i++) {
+    const spanDays =
+      (Date.parse(`${sorted[i].date}T00:00:00Z`) -
+        Date.parse(`${sorted[i - windowDays + 1].date}T00:00:00Z`)) /
+      86_400_000;
+    if (spanDays !== windowDays - 1) continue;
+    let total = 0;
+    for (let j = i - windowDays + 1; j <= i; j++) total += sorted[j].clicks;
+    out.push({ date: sorted[i].date, total });
+  }
+  return out;
+}
+
 export type DateVerdict = "match" | "differs" | "stored_null" | "underivable";
 
 export interface DateAudit {

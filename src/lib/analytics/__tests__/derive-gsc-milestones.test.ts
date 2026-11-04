@@ -16,7 +16,12 @@
  * 13/13 elsewhere is what makes the 14th credible.
  */
 import { describe, expect, it } from "vitest";
-import { deriveCrossings, auditStoredDates, type DailyTotal } from "../derive-gsc-milestones";
+import {
+  deriveCrossings,
+  rollingWindowTotals,
+  auditStoredDates,
+  type DailyTotal,
+} from "../derive-gsc-milestones";
 
 /** n days of `perDay` clicks starting at 2026-01-01. */
 function series(n: number, perDay: number | ((i: number) => number)): DailyTotal[] {
@@ -118,5 +123,37 @@ describe("auditing stored dates before correcting them", () => {
     const a = auditStoredDates([{ threshold: 99_999, reachedDate: "2026-01-01" }], crossings);
     expect(a[0].verdict).toBe("underivable");
     expect(a[0].derived).toBeNull();
+  });
+});
+
+describe("rollingWindowTotals", () => {
+  const day = (i: number) => new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);
+  const series = (n: number, clicks = (i: number) => i + 1): DailyTotal[] =>
+    Array.from({ length: n }, (_, i) => ({ date: day(i), clicks: clicks(i) }));
+
+  it("yields one total per day that has a full 28-day window behind it", () => {
+    const out = rollingWindowTotals(series(30));
+    expect(out.map((o) => o.date)).toEqual([day(27), day(28), day(29)]);
+    // 1+…+28, then 2+…+29, then 3+…+30
+    expect(out.map((o) => o.total)).toEqual([406, 434, 462]);
+  });
+
+  it("is the series deriveCrossings scans: its crossing date has a total ≥ the threshold", () => {
+    const s = series(60, () => 37);
+    const [crossing] = deriveCrossings(s, [1000]);
+    const at = rollingWindowTotals(s).find((o) => o.date === crossing.reachedDate);
+    expect(at?.total).toBe(crossing.windowTotal);
+  });
+
+  it("skips any window with a missing day rather than over-counting it", () => {
+    const s = series(40).filter((d) => d.date !== day(30));
+    const out = rollingWindowTotals(s);
+    // Every window ending after the gap contains it; only day(27..29) survive.
+    expect(out.map((o) => o.date)).toEqual([day(27), day(28), day(29)]);
+  });
+
+  it("a series shorter than the window yields nothing, and input order does not matter", () => {
+    expect(rollingWindowTotals(series(27))).toEqual([]);
+    expect(rollingWindowTotals([...series(30)].reverse())).toEqual(rollingWindowTotals(series(30)));
   });
 });

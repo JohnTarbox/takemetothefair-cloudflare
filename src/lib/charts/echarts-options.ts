@@ -70,6 +70,10 @@ export function niceCeil(v: number): number {
 
 // ── Search clicks milestones ──────────────────────────────────────────────
 
+const SYMBOL_SIZE = 8;
+/** Larger than SYMBOL_SIZE on purpose — see the hideOverlap note in the series. */
+export const LAST_SYMBOL_SIZE = 11;
+
 export interface MilestoneChartPoint {
   threshold: number;
   /** ISO calendar date (YYYY-MM-DD) the milestone was reached — the x position. */
@@ -88,24 +92,141 @@ export interface MilestoneChartPoint {
  * error on those points is smaller than index spacing's distortion of the whole
  * curve (it put "Aug 8" at the midpoint of a May→Sep series).
  */
-export function milestoneChartOption(points: MilestoneChartPoint[], ctx: ChartCtx) {
+export interface RollingClicksPoint {
+  /** YYYY-MM-DD — last day of the trailing 28-day window. */
+  date: string;
+  /** Clicks over the 28 days ending on `date`. */
+  total: number;
+  /** Pre-formatted on the server ("Oct 30, 2026"). */
+  dateLabel: string;
+}
+
+export const MILESTONES_SERIES = "Milestones";
+export const ROLLING_SERIES = "28-day clicks";
+
+/**
+ * Milestones as dots, sitting on the 28-day click total as the line.
+ *
+ * A milestone records only a NEW HIGH, so a milestones-only chart cannot show
+ * a decline: after the 2026-09-20 peak (31,248) the 28-day total fell ~46% by
+ * Oct 30 while the chart just stopped, reading as "no data since Sep 19". The
+ * line is the measured series the derived milestones are computed from
+ * (`rollingWindowTotals`, same skip-a-gap rule as `deriveCrossings`), so the
+ * dots and the line cannot disagree. The milestone series draws no line of its
+ * own — two near-identical lines would be noise.
+ */
+export function milestoneChartOption(
+  points: MilestoneChartPoint[],
+  ctx: ChartCtx,
+  rolling: RollingClicksPoint[] = []
+) {
   const p = chartPalette(ctx.dark);
-  const maxT = points.reduce((m, x) => Math.max(m, x.threshold), 0);
-  const minT = points.reduce((m, x) => Math.min(m, x.threshold), Number.POSITIVE_INFINITY);
+  const values = [...points.map((x) => x.threshold), ...rolling.map((r) => r.total)].filter(
+    (v) => v > 0
+  );
+  const maxV = values.reduce((m, v) => Math.max(m, v), 0);
+  const minV = values.reduce((m, v) => Math.min(m, v), Number.POSITIVE_INFINITY);
   const last = points.length - 1;
+  const lastRolling = rolling.length - 1;
   const labelSize = ctx.narrow ? 10 : 11;
+  const hasRolling = rolling.length > 0;
+  // The measured line, drawn first so the milestone dots sit on top of it.
+  const rollingSeries = {
+    name: ROLLING_SERIES,
+    type: "line" as const,
+    showSymbol: false,
+    symbol: "circle",
+    symbolSize: 4,
+    lineStyle: { color: p.line, width: 2 },
+    itemStyle: { color: p.line },
+    areaStyle: { color: p.area },
+    z: 1,
+    data: rolling.map((r) => ({
+      value: [r.date, r.total] as [string, number],
+      dateLabel: r.dateLabel,
+    })),
+    // Where the total stands today — the number a milestones-only chart hid.
+    // Far below and to the right of every milestone label, so it sits
+    // outside their collision set without risk.
+    endLabel: {
+      show: hasRolling,
+      fontSize: labelSize,
+      fontWeight: 600,
+      color: p.muted,
+      formatter: () => (lastRolling >= 0 ? `${fmtCompact(rolling[lastRolling].total)} now` : ""),
+    },
+  };
+  const milestonesSeries = {
+    name: MILESTONES_SERIES,
+    type: "line" as const,
+    symbol: "circle",
+    // Dots only: the line above is the series these milestones come from.
+    lineStyle: { width: 0, opacity: 0 },
+    itemStyle: { color: p.line },
+    z: 2,
+    data: points.map((x, i) => ({
+      value: [x.date, x.threshold] as [string, number],
+      dateLabel: x.dateLabel,
+      derived: x.derived,
+      // The headline (last) dot is drawn larger. ECharts' hideOverlap ranks
+      // labels by their host symbol's AREA, so a bigger last dot guarantees
+      // its label survives and the colliding neighbour is the one hidden.
+      // (endLabel sat outside hideOverlap: live on 2026-11-03 it overprinted
+      // 30,000, reached one day before 31,000.)
+      symbolSize: i === last ? LAST_SYMBOL_SIZE : SYMBOL_SIZE,
+      // OPE-456 — shape, not colour: hollow = derived, solid = Google badge.
+      itemStyle: x.derived
+        ? { color: p.hollow, borderColor: p.line, borderWidth: 2 }
+        : { color: p.line, borderColor: p.line, borderWidth: 0 },
+      // Above the dot, last one included: with the 28-day line running on
+      // past the final milestone, a label to its RIGHT sat on the line.
+      label: {
+        show: true,
+        position: "top" as const,
+        // `minMargin` widens the rect hideOverlap tests (padding does not),
+        // so labels that would merely butt together are thinned too —
+        // "8,0009,000" was the live-data render without it.
+        minMargin: 6,
+        fontSize: i === last ? labelSize + 1 : labelSize,
+        fontWeight: i === last ? 700 : 600,
+        color: p.text,
+        formatter: () => fmtInt(x.threshold),
+      },
+    })),
+    labelLayout: { hideOverlap: true },
+  };
   return {
     ...baseText(ctx),
     animation: false,
-    grid: { left: 8, right: ctx.narrow ? 60 : 56, top: 28, bottom: 8, containLabel: true },
+    legend: {
+      show: hasRolling,
+      top: 0,
+      left: 0,
+      itemWidth: 14,
+      itemHeight: 8,
+      textStyle: { fontSize: labelSize, color: p.muted },
+      data: [ROLLING_SERIES, MILESTONES_SERIES],
+    },
+    grid: {
+      left: 8,
+      // containLabel ignores endLabel, so room for "16.7K now" is reserved here.
+      right: hasRolling ? (ctx.narrow ? 64 : 76) : ctx.narrow ? 60 : 56,
+      top: hasRolling ? 44 : 28,
+      bottom: 8,
+      containLabel: true,
+    },
     tooltip: {
       trigger: "item" as const,
       textStyle: { fontSize: 12 },
       formatter: (params: {
-        data?: { value: [string, number]; dateLabel: string; derived: boolean };
+        seriesName?: string;
+        data?: { value: [string, number]; dateLabel: string; derived?: boolean };
       }) => {
         const d = params.data;
         if (!d) return "";
+        if (params.seriesName === ROLLING_SERIES) {
+          return `${fmtInt(d.value[1])} clicks in the 28 days to ${d.dateLabel}`;
+        }
         return `${fmtInt(d.value[1])} clicks — ${d.dateLabel}<br/>${
           d.derived ? "Derived from our own daily totals" : "Badge awarded by Google"
         }`;
@@ -121,8 +242,8 @@ export function milestoneChartOption(points: MilestoneChartPoint[], ctx: ChartCt
     },
     yAxis: {
       type: "log" as const,
-      min: Number.isFinite(minT) ? 10 ** Math.floor(Math.log10(Math.max(minT, 1))) : 1,
-      max: niceCeil(maxT * 1.2),
+      min: Number.isFinite(minV) ? 10 ** Math.floor(Math.log10(Math.max(minV, 1))) : 1,
+      max: niceCeil(maxV * 1.2),
       axisLabel: {
         fontSize: labelSize,
         color: p.muted,
@@ -131,42 +252,9 @@ export function milestoneChartOption(points: MilestoneChartPoint[], ctx: ChartCt
       },
       splitLine: { lineStyle: { color: p.grid } },
     },
-    series: [
-      {
-        type: "line" as const,
-        symbol: "circle",
-        symbolSize: 8,
-        lineStyle: { color: p.line, width: 2 },
-        areaStyle: { color: p.area },
-        data: points.map((x, i) => ({
-          value: [x.date, x.threshold] as [string, number],
-          dateLabel: x.dateLabel,
-          derived: x.derived,
-          // OPE-456 — shape, not colour: hollow = derived, solid = Google badge.
-          itemStyle: x.derived
-            ? { color: p.hollow, borderColor: p.line, borderWidth: 2 }
-            : { color: p.line, borderColor: p.line, borderWidth: 0 },
-          // The last point is labelled by endLabel, at the line end, so it can
-          // never collide with its neighbour (OPE-1565 defect 1).
-          label: {
-            show: i !== last,
-            position: "top" as const,
-            fontSize: labelSize,
-            fontWeight: 600,
-            color: p.text,
-            formatter: () => fmtInt(x.threshold),
-          },
-        })),
-        labelLayout: { hideOverlap: true },
-        endLabel: {
-          show: points.length > 0,
-          fontSize: labelSize + 1,
-          fontWeight: 700,
-          color: p.text,
-          formatter: () => (last >= 0 ? fmtInt(points[last].threshold) : ""),
-        },
-      },
-    ],
+    // A fixed pair, not an array of a union: callers (and tests) index
+    // series[0] / series[1] and need each one's own shape.
+    series: [rollingSeries, milestonesSeries] as [typeof rollingSeries, typeof milestonesSeries],
   };
 }
 

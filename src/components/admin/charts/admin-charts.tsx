@@ -16,14 +16,25 @@ import {
   type ChartCtx,
   type DailyViewsPoint,
   type MilestoneChartPoint,
+  type RollingClicksPoint,
 } from "@/lib/charts/echarts-options";
 
 function Empty({ text }: { text: string }) {
   return <p className="text-sm text-muted-foreground">{text}</p>;
 }
 
-export function MilestoneEChart({ points }: { points: MilestoneChartPoint[] }) {
-  const build = useCallback((ctx: ChartCtx) => milestoneChartOption(points, ctx), [points]);
+export function MilestoneEChart({
+  points,
+  rolling = [],
+}: {
+  points: MilestoneChartPoint[];
+  /** The trailing 28-day click total, drawn as the line the milestone dots sit on. */
+  rolling?: RollingClicksPoint[];
+}) {
+  const build = useCallback(
+    (ctx: ChartCtx) => milestoneChartOption(points, ctx, rolling),
+    [points, rolling]
+  );
   if (points.length === 0) return <Empty text="No milestones to plot yet." />;
   return (
     <>
