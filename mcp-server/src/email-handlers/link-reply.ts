@@ -22,7 +22,8 @@
  * ⚠️ The match never writes to the matched event (ticket note). It only picks
  * the reply.
  */
-import { and, asc, desc, gte, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, inArray, isNull } from "drizzle-orm";
+import { upcomingEndPredicate } from "@takemetothefair/db-schema";
 import { formatDateMedium } from "@takemetothefair/datetime";
 import { events } from "../schema.js";
 import type { Db } from "../db.js";
@@ -114,7 +115,7 @@ export async function findListedEventByExactLink(
   const [upcoming] = await db
     .select(cols)
     .from(events)
-    .where(and(base, gte(events.endDate, now)))
+    .where(and(base, upcomingEndPredicate(now)))
     .orderBy(asc(events.startDate))
     .limit(1);
   if (upcoming) return upcoming as ListedEvent;
