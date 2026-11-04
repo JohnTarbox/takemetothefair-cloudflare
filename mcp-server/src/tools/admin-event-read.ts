@@ -127,6 +127,8 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           applicationDeadline: events.applicationDeadline,
           walkInsAllowed: events.walkInsAllowed,
           commercialVendorsAllowed: events.commercialVendorsAllowed,
+          vendorEligibility: events.vendorEligibility,
+          vendorEligibilityOrg: events.vendorEligibilityOrg,
           estimatedAttendance: events.estimatedAttendance,
           eventScale: events.eventScale,
           indoorOutdoor: events.indoorOutdoor,
@@ -416,6 +418,9 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
               : null,
             walk_ins_allowed: event.walkInsAllowed,
             commercial_vendors_allowed: event.commercialVendorsAllowed,
+            // OPE-1564 — who may be a vendor; cited via update_event(citation).
+            vendor_eligibility: event.vendorEligibility,
+            vendor_eligibility_org: event.vendorEligibilityOrg,
             estimated_attendance: event.estimatedAttendance,
             event_scale: event.eventScale,
             indoor_outdoor: event.indoorOutdoor,

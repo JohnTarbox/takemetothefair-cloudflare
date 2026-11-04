@@ -3,7 +3,11 @@ import { z } from "zod";
 import { and, desc, eq, gt, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { adminActions, citationSupersedeScope, events, eventDataCitations } from "../schema.js";
 import { decodeHtmlEntities, dollarsToCents, jsonContent } from "../helpers.js";
-import { normalizeEventDate } from "@takemetothefair/utils";
+import {
+  isVendorEligibility,
+  normalizeEventDate,
+  VENDOR_ELIGIBILITY_ORG_MAX,
+} from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import {
@@ -114,6 +118,22 @@ const DENORM_FIELD_MAP: Record<string, DenormSpec> = {
     parse: (raw) => {
       const t = raw.trim();
       return t.length > 0 ? t.slice(0, 500) : undefined;
+    },
+  },
+  // OPE-1564 — who may be a vendor, cited like the fees. A value outside the
+  // enum parses to undefined, so create_event_citation never writes it.
+  vendor_eligibility: {
+    column: "vendorEligibility",
+    parse: (raw) => {
+      const u = raw.trim().toUpperCase();
+      return isVendorEligibility(u) ? u : undefined;
+    },
+  },
+  vendor_eligibility_org: {
+    column: "vendorEligibilityOrg",
+    parse: (raw) => {
+      const t = raw.trim();
+      return t.length > 0 ? t.slice(0, VENDOR_ELIGIBILITY_ORG_MAX) : undefined;
     },
   },
   indoor_outdoor: {

@@ -161,6 +161,8 @@ import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js
 import {
   petFriendlyWriteError,
   type PetFriendly,
+  VENDOR_ELIGIBILITY_ORG_MAX,
+  VENDOR_ELIGIBILITY_VALUES,
   withoutGooglePlacesPhoto,
 } from "@takemetothefair/utils";
 import {
@@ -1259,6 +1261,24 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe("Indoor/outdoor designation"),
       pet_friendly: PET_FRIENDLY_PARAM,
       pet_friendly_evidence: PET_FRIENDLY_EVIDENCE_PARAM,
+      // OPE-1564 — who may be a VENDOR (not who may attend, not whether
+      // commercial sellers are admitted). Cite it via `citation` like the fees.
+      vendor_eligibility: z
+        .enum(VENDOR_ELIGIBILITY_VALUES)
+        .optional()
+        .describe(
+          "OPE-1564: who may be a vendor. OPEN = no restriction recorded (default; renders nothing). MEMBERS_ONLY = sellers must belong to an org (set vendor_eligibility_org). JURIED = sellers selected by jury. INVITATION_ONLY = invited sellers only. Separate from commercial_vendors_allowed and primary_audience. Pass `citation` with the organizer's page that says it."
+        ),
+      vendor_eligibility_org: z
+        .string()
+        .min(1)
+        .max(VENDOR_ELIGIBILITY_ORG_MAX)
+        .transform(decodeHtmlEntities)
+        .nullable()
+        .optional()
+        .describe(
+          `OPE-1564: the organization a MEMBERS_ONLY vendor must belong to, as it should read in "Vendors must be members of <org>." (≤${VENDOR_ELIGIBILITY_ORG_MAX} chars). null clears it.`
+        ),
       parking_notes: PARKING_NOTES_PARAM,
       parking_notes_evidence: VISITOR_NOTE_EVIDENCE_PARAM,
       accessibility_notes: ACCESSIBILITY_NOTES_PARAM,
@@ -1378,7 +1398,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         })
         .optional()
         .describe(
-          "Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, start_date, end_date, venue_id, name, promoter_id). A changed field that gets NO citation row is named in warnings.citation_ignored_for (OPE-1110) — never report such a field as cited. When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
+          "Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, vendor_eligibility, vendor_eligibility_org, start_date, end_date, venue_id, name, promoter_id). A changed field that gets NO citation row is named in warnings.citation_ignored_for (OPE-1110) — never report such a field as cited. When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
         ),
     },
     async (params) => {
@@ -1488,6 +1508,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "vendor_fee_max", column: "vendorFeeMaxCents", transform: dollarsToCents },
         { param: "vendor_fee_notes", column: "vendorFeeNotes" },
         { param: "indoor_outdoor", column: "indoorOutdoor" },
+        // OPE-1564 — cited through the generic `citation` arg (DENORM_FIELD_MAP).
+        { param: "vendor_eligibility", column: "vendorEligibility" },
+        { param: "vendor_eligibility_org", column: "vendorEligibilityOrg" },
         // OPE-1061 — evidence is checked above and cited below.
         { param: "pet_friendly", column: "petFriendly" },
         // OPE-1481 — evidence is checked above and cited below.

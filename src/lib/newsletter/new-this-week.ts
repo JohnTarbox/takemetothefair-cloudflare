@@ -70,6 +70,8 @@ export async function selectNewThisWeekEvents(db: Db, now: Date): Promise<Vendor
       estimatedAttendance: events.estimatedAttendance,
       eventScale: events.eventScale,
       indoorOutdoor: events.indoorOutdoor,
+      vendorEligibility: events.vendorEligibility,
+      vendorEligibilityOrg: events.vendorEligibilityOrg,
       applicationUrl: events.applicationUrl,
       sourceUrl: events.sourceUrl,
       promoterWebsite: promoters.website,
@@ -175,6 +177,9 @@ export async function selectNewThisWeekEvents(db: Db, now: Date): Promise<Vendor
     sourceUrl: r.sourceUrl ?? null,
     promoterWebsite: r.promoterWebsite ?? null,
     capacity: capacity as "OPEN" | "UNKNOWN" | "WAITLIST",
+    // OPE-1564 — readable by the digest lane; not rendered (see the type).
+    vendorEligibility: r.vendorEligibility ?? "OPEN",
+    vendorEligibilityOrg: r.vendorEligibilityOrg ?? null,
   }));
 
   // Curate: soonest real date first; dateless/tentative last. (The SQL ordered

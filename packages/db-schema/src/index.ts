@@ -613,6 +613,17 @@ export const events = sqliteTable(
     applicationUrl: text("application_url"),
     applicationInstructions: text("application_instructions"),
     walkInsAllowed: integer("walk_ins_allowed", { mode: "boolean" }),
+    // OPE-1564 (drizzle/0392) — who may be a VENDOR here, separate from
+    // commercialVendorsAllowed (commercial sellers admitted at all) and from
+    // primaryAudience (who may ATTEND). OPEN = no restriction recorded; it
+    // renders nothing. `vendorEligibilityOrg` names the org for MEMBERS_ONLY.
+    // Values: VENDOR_ELIGIBILITY_VALUES in @takemetothefair/utils.
+    vendorEligibility: text("vendor_eligibility", {
+      enum: ["OPEN", "MEMBERS_ONLY", "JURIED", "INVITATION_ONLY"],
+    })
+      .notNull()
+      .default("OPEN"),
+    vendorEligibilityOrg: text("vendor_eligibility_org"),
     // Suggester email for community-suggested events
     suggesterEmail: text("suggester_email"),
     // Tracks who submitted the event (vendor, community user, etc.)
