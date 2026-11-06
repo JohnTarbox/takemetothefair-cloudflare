@@ -13,7 +13,7 @@
     "test:workerd": "vitest --run --config vitest.workerd.config.ts"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^1.2.1",
+    "@cloudflare/workers-oauth-provider": "^1.2.4",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@takemetothefair/constants": "*",
     "@takemetothefair/datetime": "*",
