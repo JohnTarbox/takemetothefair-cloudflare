@@ -24,8 +24,8 @@
  */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
-import { upcomingEndPredicate } from "@takemetothefair/db-schema";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { citationSupersedeScope, upcomingEndPredicate } from "@takemetothefair/db-schema";
 import {
   EVENT_APPLICATION_LANES,
   VENDOR_CAPACITY_STATUSES,
@@ -37,7 +37,7 @@ import {
   isVendorCallCurrent,
   parseVendorCategories,
 } from "@takemetothefair/utils";
-import { adminActions, eventApplications, events } from "../schema.js";
+import { adminActions, eventApplications, eventDataCitations, events } from "../schema.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { decodeHtmlEntities, jsonContent } from "../helpers.js";
@@ -70,6 +70,45 @@ export function presentApplication(r: AppRow) {
   };
 }
 
+/**
+ * OPE-1572 — the evidence a capacity claim must carry. OPE-794 asked for "a
+ * required citation for any value other than UNKNOWN": FULL in September says
+ * nothing about January, and a claim nobody can trace is the prose problem
+ * again, one column over. UNKNOWN needs none (it asserts nothing).
+ */
+const CAPACITY_EVIDENCE_PARAM = z
+  .object({
+    source_url: z
+      .string()
+      .url()
+      .max(2000)
+      .refine((u) => /^https?:\/\//i.test(u), "http(s) URLs only"),
+    source_type: z.enum([
+      "official_website",
+      "news_article",
+      "press_release",
+      "social_media",
+      "user_submitted",
+      "other",
+    ]),
+    source_name: z.string().max(200).transform(decodeHtmlEntities).optional(),
+    excerpt: z
+      .string()
+      .max(1000)
+      .transform(decodeHtmlEntities)
+      .optional()
+      .describe('The organizer\'s own words, verbatim ("WE ARE FULL FOR THIS YEAR").'),
+  })
+  .optional()
+  .describe(
+    "OPE-1572: REQUIRED when capacity_status is anything but UNKNOWN. Written as an event_data_citations row (field vendor_capacity:<lane>[:<department>]) in the same call, superseding the prior one."
+  );
+
+/** The citation field for one route, so lanes and departments never supersede each other. */
+export function capacityCitationField(lane: string, department: string | null): string {
+  return department ? `vendor_capacity:${lane}:${department}` : `vendor_capacity:${lane}`;
+}
+
 const categoryList = z
   .array(z.string().max(200))
   .max(100)
@@ -92,7 +131,9 @@ export function registerEventApplicationTools(server: McpServer, db: Db, auth: A
       "23:59:59 ET — never infer a deadline from the event's dates), capacity status",
       "(OPEN / WAITLIST / FULL / CLOSED / UNKNOWN — UNKNOWN is not open) and note, and",
       "the categories the show still WANTS and has FULL (OPE-1512). Setting a capacity",
-      "or category list stamps its as_of to today unless you pass one. Booth FEE and",
+      "or category list stamps its as_of to today unless you pass one. A capacity other",
+      "than UNKNOWN REQUIRES capacity_evidence (source URL + type, ideally the verbatim",
+      "excerpt), recorded as a citation (OPE-1572). Booth FEE and",
       "events.application_deadline stay on update_event. Returns the row before and",
       "after. Audited in admin_actions.",
     ].join(" "),
@@ -125,6 +166,7 @@ export function registerEventApplicationTools(server: McpServer, db: Db, auth: A
       capacity_status: z.enum(VENDOR_CAPACITY_STATUSES).optional(),
       capacity_as_of: dayArg.nullable().optional(),
       capacity_note: z.string().max(500).transform(decodeHtmlEntities).nullable().optional(),
+      capacity_evidence: CAPACITY_EVIDENCE_PARAM,
       categories_wanted: categoryList,
       categories_full: categoryList,
       categories_as_of: dayArg.nullable().optional(),
@@ -174,6 +216,13 @@ export function registerEventApplicationTools(server: McpServer, db: Db, auth: A
 
       const now = new Date();
       const { patch, problems } = buildApplicationPatch(params, existing ?? null, now);
+      const citesCapacity =
+        params.capacity_status !== undefined && params.capacity_status !== "UNKNOWN";
+      if (citesCapacity && !params.capacity_evidence) {
+        problems.push(
+          `capacity_evidence is required to set capacity_status ${params.capacity_status} (OPE-1572): pass the source_url and source_type, ideally with the organizer's exact words as excerpt`
+        );
+      }
       if (problems.length) {
         return { content: [jsonContent({ applied: false, problems })], isError: true };
       }
@@ -222,7 +271,60 @@ export function registerEventApplicationTools(server: McpServer, db: Db, auth: A
         }),
         createdAt: now,
       });
-      await db.batch([write, audit] as unknown as Parameters<typeof db.batch>[0]);
+      // OPE-1572 — the capacity claim's citation, in the same batch as the row,
+      // so the claim and its evidence land (or fail) together.
+      const citationId = citesCapacity ? crypto.randomUUID() : null;
+      const citationWrites: unknown[] = [];
+      if (citesCapacity && params.capacity_evidence) {
+        const field = capacityCitationField(lane, department);
+        const scope = and(
+          citationSupersedeScope(event.id, field, null),
+          eq(eventDataCitations.state, "active")
+        );
+        const [prior] = await db
+          .select({ id: eventDataCitations.id })
+          .from(eventDataCitations)
+          .where(scope)
+          .orderBy(desc(eventDataCitations.createdAt))
+          .limit(1);
+        if (prior) {
+          citationWrites.push(
+            db.update(eventDataCitations).set({ state: "superseded", updatedAt: now }).where(scope)
+          );
+        }
+        const ev = params.capacity_evidence;
+        const asOfDay = patch.capacityAsOf ? day(patch.capacityAsOf) : null;
+        citationWrites.push(
+          db.insert(eventDataCitations).values({
+            id: citationId!,
+            eventId: event.id,
+            fieldName: field,
+            value: params.capacity_status!,
+            year: null,
+            sourceUrl: ev.source_url,
+            sourceName: ev.source_name ?? null,
+            sourceType: ev.source_type,
+            confidence: null,
+            state: "active",
+            notes:
+              [
+                asOfDay ? `as of ${asOfDay}` : null,
+                params.capacity_note ? `note: ${params.capacity_note}` : null,
+              ]
+                .filter(Boolean)
+                .join("; ") || null,
+            sourceExcerpt: ev.excerpt ?? null,
+            sourceFetchedAt: ev.excerpt ? now : null,
+            supersedesCitationId: prior?.id ?? null,
+            createdBy: auth.userId ?? null,
+            createdAt: now,
+            updatedAt: now,
+          })
+        );
+      }
+      await db.batch([write, audit, ...citationWrites] as unknown as Parameters<
+        typeof db.batch
+      >[0]);
 
       const [after] = await db
         .select()
@@ -236,6 +338,7 @@ export function registerEventApplicationTools(server: McpServer, db: Db, auth: A
             created: !existing,
             event_slug: event.slug,
             fields_written: Object.keys(patch),
+            capacity_citation_id: citationId,
             before: existing ? presentApplication(existing) : null,
             after: after ? presentApplication(after) : null,
           }),
