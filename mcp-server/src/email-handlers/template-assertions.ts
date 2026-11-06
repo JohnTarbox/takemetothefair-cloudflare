@@ -47,6 +47,8 @@ export interface InboundFacts {
   storedPhotoCount?: number | null;
   /** For `correction-applied`: did a write actually land? */
   correctionApplied?: boolean | null;
+  /** For `already-listed-link`: the listed event the copy is about to name. */
+  listedEventId?: string | null;
 }
 
 export interface TemplateAssertion {
@@ -210,6 +212,18 @@ export const TEMPLATE_ASSERTIONS: Record<string, TemplateAssertion[]> = {
           : null,
     },
   ],
+  // OPE-1316 reply A — "that event is already listed with us". False exactly
+  // when no listed event was resolved for the link; then the honest sibling is
+  // the couldn't-use-your-link reply.
+  "already-listed-link": [
+    {
+      claim: "that event is already listed with us",
+      falsifiedBy: (f) =>
+        f.listedEventId === null
+          ? "no listed event resolved for the link — there is nothing to point at"
+          : null,
+    },
+  ],
   "already-exists": [
     {
       claim: "we already have this event",
@@ -321,6 +335,8 @@ export const NEUTRAL_FALLBACK: Record<string, string> = {
   "no-url": "unfetchable-url",
   // And the inverse.
   "unfetchable-url": "no-url",
+  // OPE-1316 — nothing listed to point at ⇔ we just couldn't use the link.
+  "already-listed-link": "unfetchable-url",
   // "hasn't been read by a person yet" is false ⇔ this is a reply to us
   // mid-thread. `thread-reply-ack` is the template for precisely that.
   "support-ack": "thread-reply-ack",

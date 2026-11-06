@@ -102,6 +102,11 @@ import {
   chooseNoUrlReplyKind,
   violatesNoUrlInvariant,
 } from "../email-handlers/no-url-reply-kind.js";
+import {
+  decideLinkReply,
+  findListedEventByExactLink,
+  type LinkOutcome,
+} from "../email-handlers/link-reply.js";
 // OPE-431 — one definition of "may this event URL go in an email".
 import {
   alreadyExistsBullet,
@@ -1679,6 +1684,34 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               });
               replyKind = "unfetchable-url";
               if (rows[0].parsedUrl) params = { ...params, attemptedUrl: rows[0].parsedUrl };
+            }
+
+            // OPE-1316 — before telling anyone we couldn't use their link, check
+            // whether that exact link is an event we already list (reply A), and
+            // otherwise say what actually happened to it (B or C). Placed after
+            // the downgrade above so a downgraded row is resolved the same way.
+            if (replyKind === "unfetchable-url") {
+              const link =
+                (typeof params.attemptedUrl === "string" ? params.attemptedUrl : null) ??
+                rows[0].parsedUrl ??
+                null;
+              const listed = await findListedEventByExactLink(db, link);
+              const decision = decideLinkReply({
+                link,
+                linkOutcome: params.linkOutcome as LinkOutcome | undefined,
+                listed,
+                params,
+              });
+              replyKind = decision.kind;
+              params = decision.params;
+              if (decision.flagForReview) {
+                // SET only — never clears an operator's own flag. B's "a person
+                // will take a look" is true only because of this write.
+                await db
+                  .update(inboundEmails)
+                  .set({ flaggedForReview: 1 })
+                  .where(eq(inboundEmails.id, messageRowId));
+              }
             }
 
             const msg = buildReply(replyKind, rows[0].fromAddress, params);
@@ -3588,7 +3621,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     });
     return {
       replyKind: chooseNoUrlReplyKind({ parsedUrl: url, attemptedProse: !url || hasAttachments }),
-      replyParams: { subject, hasAttachments, ...(url ? { attemptedUrl: url } : {}) },
+      replyParams: {
+        subject,
+        hasAttachments,
+        // OPE-1316 — a refused candidate was extracted from a page that opened.
+        ...(url
+          ? { attemptedUrl: url, linkOutcome: "fetched-no-event" satisfies LinkOutcome }
+          : {}),
+      },
       status: "replied",
       extractFailReason: refusedReason(refused),
     };
@@ -5510,7 +5550,20 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           parsedUrl: triedUrl,
           attemptedProse: hasAttachments,
         }),
-        replyParams: { subject, hasAttachments, ...(triedUrl ? { attemptedUrl: triedUrl } : {}) },
+        replyParams: {
+          subject,
+          hasAttachments,
+          ...(triedUrl ? { attemptedUrl: triedUrl } : {}),
+          // OPE-1316 — what this branch OBSERVED about the link, so the reply
+          // can say "we opened it" (B) or "we couldn't open it" (C) truthfully.
+          ...(triedUrl
+            ? refusedCandidates.length > 0 || extractFailure
+              ? { linkOutcome: "fetched-no-event" satisfies LinkOutcome }
+              : sourceFailures.some((f) => f.kind === "fetch-failed")
+                ? { linkOutcome: "fetch-failed" satisfies LinkOutcome }
+                : {}
+            : {}),
+        },
         status: "replied",
         // OPE-174 — same telemetry gap as the single-source no-URL branch: record
         // the bounce reason. `prose-extract-failed` covers the attachments-OCR'd-
