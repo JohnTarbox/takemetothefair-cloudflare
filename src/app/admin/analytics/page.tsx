@@ -2916,8 +2916,8 @@ async function RecommendationsTab({
                             </span>
                             {!focused ? (
                               <Link
-                                href={ruleHref(1)}
                                 prefetch={false}
+                                href={ruleHref(1)}
                                 className="text-royal hover:underline"
                               >
                                 View all {fmt(count)}
@@ -2926,8 +2926,8 @@ async function RecommendationsTab({
                               <>
                                 {win.page > 1 && (
                                   <Link
-                                    href={ruleHref(win.page - 1)}
                                     prefetch={false}
+                                    href={ruleHref(win.page - 1)}
                                     className="text-royal hover:underline"
                                   >
                                     ← Previous {RULE_PAGE_SIZE}
@@ -2938,8 +2938,8 @@ async function RecommendationsTab({
                                 </span>
                                 {win.page < win.pageCount && (
                                   <Link
-                                    href={ruleHref(win.page + 1)}
                                     prefetch={false}
+                                    href={ruleHref(win.page + 1)}
                                     className="text-royal hover:underline"
                                   >
                                     Next {RULE_PAGE_SIZE} →
