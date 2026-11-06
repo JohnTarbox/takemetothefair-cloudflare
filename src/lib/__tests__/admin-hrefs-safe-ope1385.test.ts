@@ -122,6 +122,21 @@ const EXEMPT: Record<string, { count: number; why: string }> = {
     count: 1,
     why: "/admin/analytics?tab=indexnow&… via URLSearchParams",
   },
+  // OPE-1574 — Recommendations "View all" / Previous / Next. ruleHref() is a
+  // fixed /admin/analytics?tab=recommendations&rule=<encodeURIComponent(id)>
+  // path plus an integer page; it can never carry a stored URL.
+  "src/app/admin/analytics/page.tsx::ruleHref(1)": {
+    count: 1,
+    why: "OPE-1574 fixed recommendations path + encoded rule id",
+  },
+  "src/app/admin/analytics/page.tsx::ruleHref(win.page - 1)": {
+    count: 1,
+    why: "OPE-1574 fixed recommendations path + encoded rule id + integer page",
+  },
+  "src/app/admin/analytics/page.tsx::ruleHref(win.page + 1)": {
+    count: 1,
+    why: "OPE-1574 fixed recommendations path + encoded rule id + integer page",
+  },
   "src/app/admin/analytics/page.tsx::p.href": {
     count: 1,
     why: "verdict problems; internal routes",
