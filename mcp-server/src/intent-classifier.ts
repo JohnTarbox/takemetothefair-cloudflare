@@ -30,13 +30,15 @@ import {
   buildUserPrompt,
 } from "./intent-classifier-prompt";
 
-/** 9-intent taxonomy + the unclear bucket. See spec §C.1. */
+/** 10-intent taxonomy + the unclear bucket. See spec §C.1. `event_question`
+ *  added by OPE-1248 (v7). */
 export type ClassifiedIntent =
   | "new_event"
   | "source_suggestion"
   | "correction"
   | "claim_request"
   | "vendor_inquiry"
+  | "event_question"
   | "support"
   | "press"
   | "unsubscribe"
@@ -395,6 +397,7 @@ const VALID_INTENTS: ClassifiedIntent[] = [
   "correction",
   "claim_request",
   "vendor_inquiry",
+  "event_question",
   "support",
   "press",
   "unsubscribe",

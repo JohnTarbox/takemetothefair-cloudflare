@@ -38,6 +38,8 @@
 export const ACK_TERMINATING_INTENTS = [
   "support",
   "vendor_inquiry",
+  // OPE-1248 — a waiting reader must surface the same day.
+  "event_question",
   "unclear",
   "correction",
   "claim_request",

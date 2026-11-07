@@ -33,6 +33,7 @@ const VALID_INTENTS = new Set([
   "correction",
   "claim_request",
   "vendor_inquiry",
+  "event_question",
   "support",
   "press",
 ]);

@@ -82,6 +82,8 @@ export const FANOUT_REPLY_RANK: Record<EmailIntent, number> = {
   // the child that speaks for a fan-out.
   list_subscription: 0,
   vendor_inquiry: 60,
+  // OPE-1248 — a question about one event; ranks just above general support.
+  event_question: 35,
   source_suggestion: 50,
   press: 40,
   support: 30,
