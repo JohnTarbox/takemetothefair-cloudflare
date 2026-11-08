@@ -310,6 +310,22 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1580 — a person posted a blank vendor form to an event page. DORMANT
+    // (enabled_at NULL, drizzle/0397) until the first post gives a real rate.
+    name: "event-document-post",
+    ownerOpe: "OPE-1580",
+    label: "post_event_document → event_document.posted",
+    priority: "P1",
+    expectedWindowHours: 2160,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "event_document.posted")
+      ),
+  },
+  {
     // OPE-328 — gemba@ observations queued for an agent to post to Linear.
     // DORMANT (enabled_at NULL, drizzle/0348) until the gemba@ Email Routing
     // rule exists; then a month without one row means the lane went dark.
