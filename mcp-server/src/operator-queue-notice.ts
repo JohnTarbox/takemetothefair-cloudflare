@@ -31,7 +31,9 @@
  * seen it and has not got to it yet — and re-nagging that is what trains
  * someone to filter the sender.
  */
-import { and, eq, gte, isNull, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, inArray, lte, not, sql } from "drizzle-orm";
+import { DISPOSED_INBOUND_STATUSES } from "@takemetothefair/constants";
+import { isOperatorAddress } from "./test-addresses.js";
 import {
   clearDigestState,
   recordDigestSent,
@@ -66,6 +68,9 @@ import {
 const SOURCE = "mcp:schedule:operator-queue-notice";
 /** OPE-1585 — this digest's row in `digest_change_state`. */
 const DIGEST_KEY = "operator-queue";
+/** OPE-1584 — older held photos stay on the inbound-triage queue; this line is
+ *  for recent batches. */
+const HELD_PHOTO_DAYS = 30;
 
 /** OPE-1290 — how far ahead an unpinned venue becomes an operator task. */
 export const UNPINNED_IMMINENT_DAYS = 7;
@@ -155,6 +160,8 @@ export interface OperatorQueueCounts {
    * moving toward them, not by sitting still.
    */
   imminentTentative: number;
+  /** OPE-1584 — the operator's own photos held in the last HELD_PHOTO_DAYS. */
+  heldOperatorPhotos: number;
   /**
    * OPE-761 — inbound emails hibernating on the workflow's `admin-decision`
    * pause (`status='waiting'`) past the SLA. Each is a person who wrote to us
@@ -228,6 +235,7 @@ export function decideOperatorQueueNotice(
     | "agedClaims"
     | "agedReplies"
     | "imminentTentative"
+    | "heldOperatorPhotos"
     | "ungatedReplies"
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
@@ -258,6 +266,7 @@ export function totalWaiting(
     | "agedClaims"
     | "agedReplies"
     | "imminentTentative"
+    | "heldOperatorPhotos"
     | "ungatedReplies"
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
@@ -282,6 +291,7 @@ export function totalWaiting(
     (counts.agedClaims ?? 0) +
     (counts.agedReplies ?? 0) +
     (counts.imminentTentative ?? 0) +
+    (counts.heldOperatorPhotos ?? 0) +
     (counts.ungatedReplies ?? 0) +
     (counts.pendingOperatorDrafts ?? 0) +
     // OPE-761 is the fifth term, and this file's own warning above is why it
@@ -546,6 +556,47 @@ export async function readOperatorQueues(
   // Measured over all history 2026-09-02: ONE row has any skip at all — the
   // specimen — against 94 rows carrying attachments. So the expected steady
   // state is zero, which is what makes a non-zero worth an email.
+  // OPE-1584 — the operator's held photos, one line per day's batch. This is
+  // what replaces the per-photo hold email he used to get.
+  let heldOperatorPhotos = 0;
+  try {
+    const held = await db
+      .select({
+        receivedAt: inboundEmails.receivedAt,
+        attachmentCount: inboundEmails.attachmentCount,
+        fromAddress: inboundEmails.fromAddress,
+      })
+      .from(inboundEmails)
+      .where(
+        and(
+          eq(inboundEmails.replyKind, "photo-intake-unresolved"),
+          isNull(inboundEmails.resultingEventId),
+          gte(inboundEmails.receivedAt, new Date(now.getTime() - HELD_PHOTO_DAYS * 86_400_000)),
+          not(inArray(inboundEmails.status, [...DISPOSED_INBOUND_STATUSES]))
+        )
+      );
+    const byDay = new Map<string, number>();
+    // Same predicate that silenced the email, so a batch can't be in neither.
+    for (const row of held.filter((r) => isOperatorAddress(r.fromAddress))) {
+      const day = row.receivedAt.toISOString().slice(0, 10);
+      byDay.set(day, (byDay.get(day) ?? 0) + Math.max(1, row.attachmentCount ?? 0));
+    }
+    for (const [day, photos] of [...byDay].sort()) {
+      heldOperatorPhotos += photos;
+      lines.push(
+        `${photos} of your photos from ${day} are held: no GPS / no fair match — ` +
+          `resolve at https://meetmeatthefair.com/admin/inbound-emails`
+      );
+    }
+  } catch (error) {
+    await logError(db, {
+      level: "warn",
+      source: SOURCE,
+      message: "[operator-queue] held-photo read failed; digest sent without that line",
+      error,
+    });
+  }
+
   let droppedRealAttachments = 0;
   let refusedFormatAttachments = 0;
   try {
@@ -773,6 +824,7 @@ export async function readOperatorQueues(
     agedClaims: claims.length,
     agedReplies: replies.length,
     imminentTentative: tentative.length,
+    heldOperatorPhotos,
     ungatedReplies,
     pendingOperatorDrafts,
     agedAwaitingDecision,
@@ -845,6 +897,7 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
       agedClaims: counts.agedClaims,
       agedReplies: counts.agedReplies,
       imminentTentative: counts.imminentTentative,
+      heldOperatorPhotos: counts.heldOperatorPhotos,
       ungatedReplies: counts.ungatedReplies,
       pendingOperatorDrafts: counts.pendingOperatorDrafts,
       agedAwaitingDecision: counts.agedAwaitingDecision,

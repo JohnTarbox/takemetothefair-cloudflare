@@ -40,6 +40,7 @@ import type { HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
 import type { InboundEmail } from "@takemetothefair/db-schema";
 import { parsePlusSegment } from "../email-intents.js";
 import { logError } from "../logger.js";
+import { isOperatorAddress } from "../test-addresses.js";
 import { chunkedInArray, createSlug } from "@takemetothefair/utils";
 import { PUBLIC_EVENT_STATUSES } from "@takemetothefair/constants";
 import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
@@ -1391,6 +1392,9 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
 
   // Held: name the reason and tell John exactly how to fix it. Never guess.
   return {
+    // OPE-1584 — the operator knows he sent these. The row stays classified and
+    // reachable; the line in the operator-queue digest replaces the email.
+    ...(isOperatorAddress(row.fromAddress) ? { suppressReply: true } : {}),
     replyKind: "photo-intake-unresolved",
     replyParams: {
       subject: row.subject ?? "",
