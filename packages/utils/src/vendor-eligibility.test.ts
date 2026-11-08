@@ -20,26 +20,28 @@ describe("vendorEligibilityLine (OPE-1564)", () => {
 
   it("names the org for MEMBERS_ONLY — John's sentence for the Craftworkers shop", () => {
     expect(vendorEligibilityLine("MEMBERS_ONLY", "The Craftworkers' Guild")).toBe(
-      "Vendors must be members of The Craftworkers' Guild."
+      "To be a vendor, you must be a member of The Craftworkers' Guild."
     );
   });
 
   it("does not double a trailing period on the stored org name", () => {
     expect(vendorEligibilityLine("MEMBERS_ONLY", "Guild Inc.")).toBe(
-      "Vendors must be members of Guild Inc."
+      "To be a vendor, you must be a member of Guild Inc."
     );
   });
 
   it("still says members-only when no org is recorded", () => {
     expect(vendorEligibilityLine("MEMBERS_ONLY", "  ")).toBe(
-      "Vendors must be members of the organizing group."
+      "To be a vendor, you must be a member of the organizing group."
     );
   });
 
   it("states the selection method for JURIED / INVITATION_ONLY, never an org (no how-to-join)", () => {
-    expect(vendorEligibilityLine("JURIED", "Some Jury")).toBe("Vendor spaces are juried.");
+    expect(vendorEligibilityLine("JURIED", "Some Jury")).toBe(
+      "To be a vendor, you must be accepted by the show's jury."
+    );
     expect(vendorEligibilityLine("INVITATION_ONLY", "Some Org")).toBe(
-      "Vendor spaces are by invitation only."
+      "To be a vendor, you must be invited by the organizer."
     );
   });
 

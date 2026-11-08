@@ -1277,7 +1277,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .nullable()
         .optional()
         .describe(
-          `OPE-1564: the organization a MEMBERS_ONLY vendor must belong to, as it should read in "Vendors must be members of <org>." (≤${VENDOR_ELIGIBILITY_ORG_MAX} chars). null clears it.`
+          `OPE-1564: the organization a MEMBERS_ONLY vendor must belong to, as it should read in "To be a vendor, you must be a member of <org>." (≤${VENDOR_ELIGIBILITY_ORG_MAX} chars). null clears it.`
         ),
       parking_notes: PARKING_NOTES_PARAM,
       parking_notes_evidence: VISITOR_NOTE_EVIDENCE_PARAM,
@@ -5939,8 +5939,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // no longer there.
       const merged = (column: string) =>
         (column in updates ? updates[column] : (promoter as Record<string, unknown>)[column]) as
-          | string
-          | null;
+          string | null;
       const enrichment = computePromoterEnrichment(
         {
           website: merged("website"),
