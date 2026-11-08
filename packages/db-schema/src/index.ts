@@ -5118,6 +5118,16 @@ export const kpiStateHistory = sqliteTable(
   (t) => [index("idx_kpi_state_history_name_at").on(t.kpiName, t.computedAt)]
 );
 
+// OPE-1585 (drizzle/0395) — what each change-gated operator digest last
+// reported. A digest sends only when today's counts differ from this row by
+// more than drift (see mcp-server/src/digest-change-gate.ts).
+export const digestChangeState = sqliteTable("digest_change_state", {
+  key: text("key").primaryKey(),
+  countsJson: text("counts_json").notNull(),
+  severity: integer("severity").notNull().default(0),
+  lastSentAt: integer("last_sent_at", { mode: "timestamp" }).notNull(),
+});
+
 // A3 / K2 part 7 (drizzle/0099, analyst 2026-06-01 EVE). Daily snapshot
 // rows from the MCP Worker's dedup-sweep canary. Each row records the
 // cluster counts from GET /api/admin/duplicates/sweep at the time of

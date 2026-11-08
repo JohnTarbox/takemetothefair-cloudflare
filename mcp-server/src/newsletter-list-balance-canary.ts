@@ -57,6 +57,7 @@ import type { Env } from "./index.js";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
 import { listBalance } from "./newsletter-list-balance.js";
+import { isRealAddressSql } from "./test-addresses.js";
 
 const SOURCE = "mcp:schedule:newsletter-list-balance";
 
@@ -136,7 +137,7 @@ export async function checkNewsletterListBalance(
   // "balanced, nothing to say" from "not running", and that distinction is the
   // entire reason the defect below went unseen for five to seven days.
   try {
-    const note = `confirmed_active=${balance.confirmed_active} on_any_list=${balance.on_any_list} orphaned=${balance.orphaned}`;
+    const note = `confirmed_active=${balance.confirmed_active} on_any_list=${balance.on_any_list} orphaned=${balance.orphaned} excluded_test_orphans=${balance.excluded_test_orphans}`;
     await db
       .insert(agentHeartbeats)
       .values({
@@ -205,6 +206,7 @@ export async function checkNewsletterListBalance(
     const rows = await db.all<{ email: string }>(sql`
       SELECT s.email FROM newsletter_subscribers s
        WHERE s.confirmed = 1 AND s.unsubscribed = 0
+         AND ${isRealAddressSql(sql`s.email`)}
          AND NOT EXISTS (
            SELECT 1 FROM newsletter_list_subscriptions l
             WHERE l.subscriber_id = s.id AND l.unsubscribed_at IS NULL)

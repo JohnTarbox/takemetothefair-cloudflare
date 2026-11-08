@@ -463,6 +463,12 @@ const SCHEMA_SQL = `
     checked_at INTEGER NOT NULL
   );
 
+  CREATE TABLE digest_change_state (
+    key TEXT PRIMARY KEY NOT NULL,
+    counts_json TEXT NOT NULL,
+    severity INTEGER NOT NULL DEFAULT 0,
+    last_sent_at INTEGER NOT NULL
+  );
   CREATE TABLE weekly_inventory_state (
     id TEXT PRIMARY KEY,
     last_sent_date TEXT,

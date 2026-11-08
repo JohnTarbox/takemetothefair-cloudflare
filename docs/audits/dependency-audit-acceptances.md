@@ -52,3 +52,19 @@ Traced from `calendar-contract/dist/index.js` and `calendar-react/dist/index.js`
 - **Any new runtime call** to `validateEvent` / `validateWindow`, or a `validateConfig`
   call that passes request-derived data. Either one makes this reachable, and the
   acceptance no longer holds.
+
+---
+
+## GHSA-fgmj-fm8m-jvvx — echarts < 6.1.0 (moderate)
+
+- **Accepted:** 2026-11-08, OPE-1577.
+- **What the audit reports:** `echarts <6.1.0`, moderate, cross-site scripting. The fix is a major bump to 6.1.0.
+- **The advisory:** the built-in tooltip of the **Lines** series (`series.type: "lines"`) renders `series.data[i].name` as raw HTML when no custom `tooltip.formatter` is set.
+
+### Why it is unreachable here
+
+`src/components/admin/charts/echarts-core.ts` is the only module that imports `echarts`, and it registers `LineChart` (the ordinary line chart), never `LinesChart`. An unregistered series type cannot render. `src/lib/charts/__tests__/echarts-core-no-lines.test.ts` fails if `LinesChart` is ever imported there.
+
+### What ends this acceptance
+
+Registering `LinesChart`, or moving to echarts 6.1.0 or later (Dependabot #1714), which also changes the default chart theme and needs a visual check of `/admin/analytics`.
