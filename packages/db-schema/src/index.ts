@@ -3576,6 +3576,9 @@ export const emailSendLedger = sqliteTable(
     // viewer shows full content (not just metadata). Inline; admin-gated read.
     bodyHtml: text("body_html"),
     bodyText: text("body_text"),
+    // OPE-1579 (drizzle/0396) — JSON [{key, filename, type, size}] of the files
+    // this email carried. NULL = none.
+    attachmentsJson: text("attachments_json"),
     // OPE-177 — DOWNSTREAM delivery outcome, from the Cloudflare Email Sending
     // event subscription. Deliberately a SEPARATE column from `status`, which
     // stays the outcome of the send ATTEMPT.

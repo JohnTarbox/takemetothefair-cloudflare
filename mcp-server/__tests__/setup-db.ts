@@ -1065,6 +1065,7 @@ const SCHEMA_SQL = `
     provider TEXT,
     body_html TEXT,
     body_text TEXT,
+    attachments_json TEXT,
     -- OPE-177 — downstream delivery outcome, separate from status (which
     -- stays the send-attempt outcome; see drizzle/0193).
     delivery_status TEXT,

@@ -27,6 +27,12 @@ import { logError } from "../logger.js";
 import { MANUAL_REPLY_SOURCE } from "../support-obligations-close.js";
 import { jsonContent } from "../helpers.js";
 import { isEmailSuppressed } from "./admin-send-vendor-email.js";
+import {
+  MAX_ATTACHMENTS_PER_EMAIL,
+  resolveAttachments,
+  type AttachmentRequest,
+  type JobAttachment,
+} from "../email-attachments.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -48,6 +54,7 @@ interface EmailJobMessage {
   inboundEmailId?: string;
   inReplyTo?: string;
   references?: string;
+  attachments?: JobAttachment[];
 }
 
 export interface ReplyDeps {
@@ -55,6 +62,8 @@ export interface ReplyDeps {
   /** EMAIL_REPLY_ENABLED === "true". When false, nothing is sent (OPE-6 gate). */
   replyEnabled: boolean;
   actorUserId: string;
+  /** OPE-1579 — where stored attachments are validated from. */
+  bucket?: R2Bucket;
 }
 
 export interface ReplyArgs {
@@ -62,10 +71,16 @@ export interface ReplyArgs {
   subject?: string;
   body: string;
   html?: string;
+  /** OPE-1579 — stored files to attach, by reference. */
+  attachments?: AttachmentRequest[];
 }
 
 export type ReplyResult =
-  | { ok: false; reason: "disabled" | "no_queue" | "not_found" | "suppressed"; message: string }
+  | {
+      ok: false;
+      reason: "disabled" | "no_queue" | "not_found" | "suppressed" | "attachment_refused";
+      message: string;
+    }
   | { ok: true; to: string; subject: string; inboundEmailId: string };
 
 function escapeHtml(s: string): string {
@@ -172,7 +187,10 @@ export async function handleReplyToInbound(
     return {
       ok: false,
       reason: "disabled",
-      message: refusedReplyMessage(draftId),
+      // OPE-1579 — the draft table holds text only, so say what it didn't keep.
+      message: args.attachments?.length
+        ? `${refusedReplyMessage(draftId)} The draft does NOT include the requested attachments.`
+        : refusedReplyMessage(draftId),
     };
   }
   if (!deps.emailJobs) {
@@ -212,6 +230,20 @@ export async function handleReplyToInbound(
     };
   }
 
+  // OPE-1579 — all or nothing, and before anything is queued or marked replied.
+  let attachments: JobAttachment[] = [];
+  if (args.attachments?.length) {
+    const resolved = await resolveAttachments(db, deps.bucket, args.attachments);
+    if (!resolved.ok) {
+      return {
+        ok: false,
+        reason: "attachment_refused",
+        message: `${resolved.message} Nothing was sent.`,
+      };
+    }
+    attachments = resolved.attachments;
+  }
+
   const subject = (args.subject?.trim() || replySubject(row.subject)).slice(0, 200);
   const text = args.body;
   const html = args.html?.trim() ? args.html : textToHtml(args.body);
@@ -225,6 +257,7 @@ export async function handleReplyToInbound(
     source: REPLY_SOURCE,
     inboundEmailId: row.id,
     ...(row.messageId ? { inReplyTo: row.messageId, references: row.messageId } : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
   };
   await deps.emailJobs.send(job);
 
@@ -240,7 +273,12 @@ export async function handleReplyToInbound(
     actorUserId: deps.actorUserId,
     targetType: "inbound_email",
     targetId: row.id,
-    payloadJson: JSON.stringify({ to: row.fromAddress, subject, via: "mcp" }),
+    payloadJson: JSON.stringify({
+      to: row.fromAddress,
+      subject,
+      via: "mcp",
+      ...(attachments.length > 0 ? { attachments } : {}),
+    }),
     createdAt: new Date(),
   });
 
@@ -254,6 +292,7 @@ interface ReplyToolEnv {
   EMAIL_JOBS?: { send: (msg: EmailJobMessage) => Promise<void> };
   /** OPE-6 gate. Must equal "true" to actually send. Shipped OFF. */
   EMAIL_REPLY_ENABLED?: string;
+  VENDOR_ASSETS?: R2Bucket;
 }
 
 export function registerReplyToInboundEmailTool(
@@ -285,6 +324,20 @@ export function registerReplyToInboundEmailTool(
         .string()
         .optional()
         .describe("Optional HTML body. When omitted, HTML is derived from `body`."),
+      attachments: z
+        .array(
+          z.object({
+            inbound_email_id: z.string().min(1),
+            index: z.number().int().min(0),
+          })
+        )
+        .max(MAX_ATTACHMENTS_PER_EMAIL)
+        .optional()
+        .describe(
+          "Stored files to attach: an entry of that email's attachment_refs, by 0-based index. " +
+            "Images and PDFs only, 18 MiB total. CHECK EACH FILE FIRST: inbound attachments can " +
+            "be filled-in forms with someone's personal details. A bad entry refuses the whole reply."
+        ),
     },
     async (params) => {
       const result = await handleReplyToInbound(
@@ -293,12 +346,14 @@ export function registerReplyToInboundEmailTool(
           emailJobs: env?.EMAIL_JOBS,
           replyEnabled: env?.EMAIL_REPLY_ENABLED === "true",
           actorUserId: auth.userId,
+          bucket: env?.VENDOR_ASSETS,
         },
         {
           inboundEmailId: params.inbound_email_id,
           subject: params.subject,
           body: params.body,
           html: params.html,
+          attachments: params.attachments,
         }
       );
 
