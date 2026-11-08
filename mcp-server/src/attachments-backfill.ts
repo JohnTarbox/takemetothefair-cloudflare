@@ -77,7 +77,8 @@ export async function backfillSkippedAttachments(
   const object = await bucket.get(eml.key);
   if (!object) return fail(`stored .eml is missing from R2: ${eml.key}`);
 
-  const parsed = await PostalMime.parse(await object.arrayBuffer(), POSTAL_MIME_OPTIONS);
+  const raw = await object.arrayBuffer();
+  const parsed = await PostalMime.parse(raw, POSTAL_MIME_OPTIONS);
   const parts = parsed.attachments.map((a, i) => ({
     name: sanitizeAttachmentName(a.filename ?? null, i),
     bytes: toBytes(a.content),
