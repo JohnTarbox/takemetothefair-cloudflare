@@ -44,6 +44,7 @@ import { dedupSweepSnapshots } from "@takemetothefair/db-schema";
 import type { Env } from "./index.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
+import { recordDigestSent, shouldSendDigest, type DigestSnapshot } from "./digest-change-gate.js";
 
 /** Surface this canary monitors. Events is the original tenant; venues +
  *  promoters joined in B/DQ1 (2026-06-06). */
@@ -339,6 +340,20 @@ export async function runScheduledDedupSweepCanary(
     return;
   }
 
+  // OPE-1585 — the tier says the queue grew; this says whether the operator
+  // has already been told about roughly this many clusters.
+  const digestKey = `dedup:${surface}`;
+  const digestSnapshot: DigestSnapshot = {
+    counts: { clusters: snapshot.totalClusters },
+    severity: isRed ? 2 : 1,
+  };
+  if (!(await shouldSendDigest(db, digestKey, digestSnapshot, SOURCE))) {
+    console.log(
+      `[cron] dedup-sweep-canary[${surface}] ${isRed ? "RED" : "YELLOW"} unchanged since last digest — total_clusters=${snapshot.totalClusters}, staying quiet`
+    );
+    return;
+  }
+
   // 6. Build alert payload + dispatch to whichever channels are configured.
   // Both SLACK_WEBHOOK_URL_TECHNICAL and ALERT_EMAIL_TECHNICAL are
   // independent optional secrets on the MCP Worker. With neither set,
@@ -419,6 +434,10 @@ export async function runScheduledDedupSweepCanary(
     console.log(
       `[cron] dedup-sweep-canary[${surface}] ${tier} — no push channels configured (snapshot still written); ${detail}`
     );
+  }
+
+  if (webhookUrl || alertEmail) {
+    await recordDigestSent(db, digestKey, digestSnapshot, new Date(), SOURCE);
   }
 
   // 7. Update debounce marker on YELLOW dispatches (success or fail —
