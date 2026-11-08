@@ -95,9 +95,9 @@ describe("decideListBalanceAlert — the debounce, and what it deliberately omit
 
 describe("the canary, end to end, on an induced imbalance", () => {
   it("alerts, and names the people", async () => {
-    addSubscriber("s-1", "mailed@example.com", { onList: true });
-    addSubscriber("s-2", "orphan-a@example.com", { onList: false });
-    addSubscriber("s-3", "orphan-b@example.com", { onList: false });
+    addSubscriber("s-1", "mailed@yahoo.test", { onList: true });
+    addSubscriber("s-2", "orphan-a@yahoo.test", { onList: false });
+    addSubscriber("s-3", "orphan-b@yahoo.test", { onList: false });
 
     await checkNewsletterListBalance(db, env, NOW);
 
@@ -106,14 +106,14 @@ describe("the canary, end to end, on an induced imbalance", () => {
     expect(sent[0].source).toBe(CANARY_EMAIL_SOURCE);
     expect(sent[0].subject).toContain("2 confirmed subscribers");
     // An operator cannot act on "orphaned=2"; the remedy is per-address.
-    expect(sent[0].text).toContain("orphan-a@example.com");
-    expect(sent[0].text).toContain("orphan-b@example.com");
-    expect(sent[0].text).not.toContain("mailed@example.com");
+    expect(sent[0].text).toContain("orphan-a@yahoo.test");
+    expect(sent[0].text).toContain("orphan-b@yahoo.test");
+    expect(sent[0].text).not.toContain("mailed@yahoo.test");
   });
 
   it("says nothing when every confirmed subscriber is on a list", async () => {
-    addSubscriber("s-1", "a@example.com", { onList: true });
-    addSubscriber("s-2", "b@example.com", { onList: true });
+    addSubscriber("s-1", "a@yahoo.test", { onList: true });
+    addSubscriber("s-2", "b@yahoo.test", { onList: true });
 
     await checkNewsletterListBalance(db, env, NOW);
 
@@ -137,7 +137,7 @@ describe("the canary, end to end, on an induced imbalance", () => {
   });
 
   it("stamps the run even on a healthy day — the probe's whole point", async () => {
-    addSubscriber("s-1", "a@example.com", { onList: true });
+    addSubscriber("s-1", "a@yahoo.test", { onList: true });
 
     await checkNewsletterListBalance(db, env, NOW);
 
@@ -153,7 +153,7 @@ describe("the canary, end to end, on an induced imbalance", () => {
   });
 
   it("does not nag twice on the same UTC day", async () => {
-    addSubscriber("s-2", "orphan@example.com", { onList: false });
+    addSubscriber("s-2", "orphan@yahoo.test", { onList: false });
     // A ledgered send earlier today, as the real mailer would leave.
     await db.insert(emailSendLedger).values({
       messageId: "already-sent-today",
@@ -169,7 +169,7 @@ describe("the canary, end to end, on an induced imbalance", () => {
   });
 
   it("nags again the NEXT day while the orphan is still stranded", async () => {
-    addSubscriber("s-2", "orphan@example.com", { onList: false });
+    addSubscriber("s-2", "orphan@yahoo.test", { onList: false });
     await db.insert(emailSendLedger).values({
       messageId: "sent-yesterday",
       sentAt: new Date("2026-08-27T06:00:00Z"),
@@ -186,7 +186,7 @@ describe("the canary, end to end, on an induced imbalance", () => {
   });
 
   it("a FAILED send yesterday does not count as having alerted", async () => {
-    addSubscriber("s-2", "orphan@example.com", { onList: false });
+    addSubscriber("s-2", "orphan@yahoo.test", { onList: false });
     await db.insert(emailSendLedger).values({
       messageId: "failed-today",
       sentAt: new Date("2026-08-28T00:05:00Z"),
@@ -198,6 +198,42 @@ describe("the canary, end to end, on an induced imbalance", () => {
     await checkNewsletterListBalance(db, env, NOW);
 
     // The debounce asks "was the operator told?", not "did we try".
+    expect(sent).toHaveLength(1);
+  });
+});
+
+describe("test addresses (OPE-1583)", () => {
+  it("sends nothing while the only orphans are test addresses, and says it excluded them", async () => {
+    addSubscriber("t1", "jtarboxme+ope1145v@gmail.com", { onList: false });
+    addSubscriber("t2", "JTARBOXME+ope1107@gmail.com", { onList: false });
+    addSubscriber("t3", "claude-deploy-test-1@example.com", { onList: false });
+
+    await checkNewsletterListBalance(db, env, NOW);
+
+    expect(sent).toHaveLength(0);
+    const [beat] = await db.select().from(agentHeartbeats);
+    expect(beat.note).toContain("orphaned=0");
+    // The landmark: the filter saw three, so the zero is not a dead query.
+    expect(beat.note).toContain("excluded_test_orphans=3");
+  });
+
+  it("still alerts for one real orphan, and names only the real one", async () => {
+    addSubscriber("t1", "jtarboxme+ope1145v@gmail.com", { onList: false });
+    addSubscriber("r1", "real.person@gmail.com", { onList: false });
+
+    await checkNewsletterListBalance(db, env, NOW);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].subject).toContain("1 confirmed subscriber");
+    expect(sent[0].text).toContain("real.person@gmail.com");
+    expect(sent[0].text).not.toContain("jtarboxme+");
+  });
+
+  it("the operator's bare address is not a test address", async () => {
+    addSubscriber("o1", "jtarboxme@gmail.com", { onList: false });
+
+    await checkNewsletterListBalance(db, env, NOW);
+
     expect(sent).toHaveLength(1);
   });
 });

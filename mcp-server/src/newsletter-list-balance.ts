@@ -19,12 +19,18 @@
  */
 import { sql } from "drizzle-orm";
 import type { Db } from "./db.js";
+import { isRealAddressSql } from "./test-addresses.js";
 
 export interface NewsletterListBalance {
   confirmed_active: number;
   on_any_list: number;
-  /** The actionable figure: people receiving nothing. Should be 0. */
+  /** The actionable figure: real people receiving nothing. Should be 0. */
   orphaned: number;
+  /**
+   * OPE-1583 — orphans left out of `orphaned` because they are test addresses.
+   * Reported so a "0 orphaned" can be told apart from a filter eating everyone.
+   */
+  excluded_test_orphans: number;
   balanced: boolean;
 }
 
@@ -43,6 +49,13 @@ export async function listBalance(db: Db): Promise<NewsletterListBalance> {
       orphaned: sql<number>`(
         SELECT COUNT(*) FROM newsletter_subscribers s
          WHERE s.confirmed = 1 AND s.unsubscribed = 0
+           AND ${isRealAddressSql(sql`s.email`)}
+           AND NOT EXISTS (
+             SELECT 1 FROM newsletter_list_subscriptions l
+              WHERE l.subscriber_id = s.id AND l.unsubscribed_at IS NULL))`,
+      allOrphans: sql<number>`(
+        SELECT COUNT(*) FROM newsletter_subscribers s
+         WHERE s.confirmed = 1 AND s.unsubscribed = 0
            AND NOT EXISTS (
              SELECT 1 FROM newsletter_list_subscriptions l
               WHERE l.subscriber_id = s.id AND l.unsubscribed_at IS NULL))`,
@@ -56,6 +69,7 @@ export async function listBalance(db: Db): Promise<NewsletterListBalance> {
     confirmed_active: confirmedActive,
     on_any_list: onAnyList,
     orphaned,
+    excluded_test_orphans: Number(row?.allOrphans ?? 0) - orphaned,
     balanced: orphaned === 0,
   };
 }
