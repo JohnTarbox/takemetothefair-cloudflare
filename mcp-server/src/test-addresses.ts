@@ -24,3 +24,18 @@ export function isRealAddressSql(email: SQL): SQL {
     sql` AND `
   );
 }
+
+/**
+ * OPE-1584 — the operator's own sending addresses. A plus-tag is the same
+ * mailbox. Every photo hold notice ever sent went to one of these two.
+ */
+export const OPERATOR_ADDRESSES = ["jtarboxme@gmail.com", "admin@takemetothefair.com"] as const;
+
+export function isOperatorAddress(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const normal = email
+    .trim()
+    .toLowerCase()
+    .replace(/\+[^@]*@/, "@");
+  return (OPERATOR_ADDRESSES as readonly string[]).includes(normal);
+}
