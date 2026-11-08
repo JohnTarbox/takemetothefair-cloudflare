@@ -259,8 +259,10 @@ describe("the notice, end to end, on real backdated rows", () => {
     expect(sent).toHaveLength(0);
   });
 
-  it("sends again the next day while the item is still undecided", async () => {
-    // "Exactly one alert per day until decided" — the acceptance wording.
+  it("sends on a later day when no digest state has been recorded yet", async () => {
+    // OPE-1585 replaced OPE-599's "one alert per day until decided": repeat
+    // days are now gated in digest-change-gate.test.ts. A ledger row alone (the
+    // first run after that deploy) must not suppress the digest.
     seedClaim("c-1", "PENDING", 36);
     await db.insert(emailSendLedger).values({
       messageId: "sent-yesterday",

@@ -33,6 +33,13 @@
  */
 import { and, eq, gte, isNull, inArray, lte, sql } from "drizzle-orm";
 import {
+  clearDigestState,
+  recordDigestSent,
+  shouldSendDigest,
+  type DigestSnapshot,
+} from "./digest-change-gate.js";
+import { ageBucket } from "./inbound-exception-notice.js";
+import {
   entityClaims,
   pendingEmailReplies,
   emailSendLedger,
@@ -57,6 +64,8 @@ import {
 } from "./events/tentative-queue.js";
 
 const SOURCE = "mcp:schedule:operator-queue-notice";
+/** OPE-1585 — this digest's row in `digest_change_state`. */
+const DIGEST_KEY = "operator-queue";
 
 /** OPE-1290 — how far ahead an unpinned venue becomes an operator task. */
 export const UNPINNED_IMMINENT_DAYS = 7;
@@ -796,6 +805,7 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
 
   if (totalWaiting(counts) <= 0) {
     console.log("[cron] operator-queue-notice — queues clear, staying quiet");
+    await clearDigestState(db, DIGEST_KEY, SOURCE);
     return;
   }
 
@@ -824,6 +834,30 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
 
   if (!decideOperatorQueueNotice(counts, alreadySentToday)) {
     console.log("[cron] operator-queue-notice — already alerted today");
+    return;
+  }
+
+  // OPE-1585 — a standing queue is news once. It reappears when the counts
+  // move past drift or the oldest item crosses an age threshold; Monday's
+  // inventory carries it in between.
+  const digestSnapshot: DigestSnapshot = {
+    counts: {
+      agedClaims: counts.agedClaims,
+      agedReplies: counts.agedReplies,
+      imminentTentative: counts.imminentTentative,
+      ungatedReplies: counts.ungatedReplies,
+      pendingOperatorDrafts: counts.pendingOperatorDrafts,
+      agedAwaitingDecision: counts.agedAwaitingDecision,
+      droppedRealAttachments: counts.droppedRealAttachments,
+      refusedFormatAttachments: counts.refusedFormatAttachments,
+      venueDateShifts: counts.venueDateShifts,
+      authEmailProblems: counts.authEmailProblems,
+      unpinnedVenueImminent: counts.unpinnedVenueImminent,
+    },
+    severity: ageBucket(counts.oldestDays),
+  };
+  if (!(await shouldSendDigest(db, DIGEST_KEY, digestSnapshot, SOURCE))) {
+    console.log("[cron] operator-queue-notice — unchanged since last digest, staying quiet");
     return;
   }
 
@@ -877,6 +911,7 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
         source: NOTICE_EMAIL_SOURCE,
       });
       console.log(`[cron] operator-queue-notice fired — ${total} waiting to=${alertEmail}`);
+      await recordDigestSent(db, DIGEST_KEY, digestSnapshot, now, SOURCE);
     } catch (error) {
       await logError(db, {
         source: SOURCE,

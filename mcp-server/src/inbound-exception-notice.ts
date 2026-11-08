@@ -40,6 +40,7 @@ import { inboundEmails, inboundExceptionNoticeState } from "@takemetothefair/db-
 import type { Env } from "./index.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
+import { digestChanged } from "./digest-change-gate.js";
 import { NON_ACTIONABLE_EXACT_SENDERS } from "./email-handlers/audit-sender.js";
 import {
   TERMINAL_UNHANDLED_REPLY_KINDS,
@@ -197,8 +198,16 @@ export function decideInboundExceptionNotice(
   // At most one notice a day, whatever else changed. This outranks escalation:
   // a queue crossing a threshold is not worth a second email the same morning.
   if (lastNoticeDate === today) return false;
-  if (lastQueueCount !== null && lastQueueCount === count) {
-    // Count unchanged — speak only if the backlog has aged into a new bucket.
+  // OPE-1585 — "unchanged" tolerates drift, measured from the last NOTICE, so
+  // a queue creeping up by one a day reports when the creep adds up.
+  if (
+    lastQueueCount !== null &&
+    !digestChanged(
+      { counts: { queue: count }, severity: 0 },
+      { counts: { queue: lastQueueCount }, severity: 0 }
+    )
+  ) {
+    // Within drift — speak only if the backlog has aged into a new bucket.
     const escalated = lastOldestAgeBucket !== null && oldestAgeBucket > lastOldestAgeBucket;
     if (!escalated) return false;
   }

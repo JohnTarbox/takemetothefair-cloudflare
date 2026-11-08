@@ -25,14 +25,23 @@ import {
   formatDarkCapabilitiesSection,
   readCapabilityFlags,
 } from "./inventory-dark-capabilities.js";
-import { and, eq, isNull, sql } from "drizzle-orm";
-import { events, promoters, eventDiscrepancies, tunableThresholds } from "./schema.js";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import {
+  dedupSweepSnapshots,
+  events,
+  inboundEmails,
+  promoters,
+  eventDiscrepancies,
+  tunableThresholds,
+} from "./schema.js";
 import type { Env } from "./index.js";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
 import { vendorCategoryWatchRuns, weeklyInventoryState } from "./schema.js";
 import { formatWatchSection, readLatestWatch } from "./vendor-category-watch.js";
 import { countUnterminatedCrossings } from "./inbound/unterminated-crossings.js";
+import { readOperatorQueues, totalWaiting } from "./operator-queue-notice.js";
+import { salvageCandidateWhere } from "./inbound-exception-notice.js";
 
 const SOURCE = "mcp:schedule:weekly-inventory";
 const STATE_KEY = "default";
@@ -173,6 +182,62 @@ export async function readWaitingSubmissions(
     // Cannot be approved as-is at any age — a separate decision, not deeper backlog.
     expired: all.filter((r) => r.startDatePassed),
   };
+}
+
+/**
+ * OPE-1585 — the standing items the daily digests no longer repeat. These
+ * digests now send only when something changes, so this section is the one
+ * place every still-open item is guaranteed to reappear each week.
+ *
+ * Each read fails soft to an "unavailable" line, never to a silent omission:
+ * an inventory that quietly drops a section reads exactly like a clear queue.
+ */
+export async function readStandingItemsSection(db: Db, env: Env, now: Date): Promise<string> {
+  const unavailable = "unavailable this week (read failed)";
+
+  let operator: string;
+  try {
+    const counts = await readOperatorQueues(db, now, env as { EMAIL_REPLY_ENABLED?: string });
+    const total = totalWaiting(counts);
+    operator =
+      total > 0
+        ? `Operator queues: ${total} waiting (oldest ${counts.oldestDays}d)\n` +
+          counts.lines.map((l) => ` • ${l}`).join("\n")
+        : "Operator queues: 0 waiting";
+  } catch {
+    operator = `Operator queues: ${unavailable}`;
+  }
+
+  let inbound: string;
+  try {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(inboundEmails)
+      .where(salvageCandidateWhere);
+    inbound = `Inbound-email triage: ${Number(row?.n ?? 0)} need a human to salvage`;
+  } catch {
+    inbound = `Inbound-email triage: ${unavailable}`;
+  }
+
+  let dedup: string;
+  try {
+    const rows = await db
+      .select({
+        surface: dedupSweepSnapshots.surface,
+        clusters: dedupSweepSnapshots.totalClusters,
+      })
+      .from(dedupSweepSnapshots)
+      .orderBy(desc(dedupSweepSnapshots.snapshotDate))
+      .limit(3);
+    dedup =
+      rows.length > 0
+        ? `Dedup clusters: ${rows.map((r) => `${r.surface} ${r.clusters}`).join(" · ")}`
+        : `Dedup clusters: ${unavailable}`;
+  } catch {
+    dedup = `Dedup clusters: ${unavailable}`;
+  }
+
+  return `\n\nStanding items\n\n${operator}\n\n${inbound}\n\n${dedup}`;
 }
 
 /** `+12` / `-3` / `±0` — the delta is the part worth reading. */
@@ -345,10 +410,13 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
     await readCapabilityFlags(env as unknown as Parameters<typeof readCapabilityFlags>[0])
   );
 
+  const standingText = await readStandingItemsSection(db, env, today);
+
   const textBody =
     `Backlog as of ${todayIso} (Δ vs last Monday):\n\n` +
     rows.map((r) => ` • ${r.label}: ${r.current} (${formatDelta(r.current, r.prior)})`).join("\n") +
     waitingText +
+    standingText +
     watchText +
     darkText +
     `\n\nThis replaces the daily queue notices — alarms still push on condition.\n`;
@@ -365,6 +433,9 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
       )
       .join("") +
     `</table>` +
+    `<pre style="white-space:pre-wrap;font-family:inherit">${standingText
+      .trim()
+      .replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string)}</pre>` +
     (watchText
       ? `<pre style="white-space:pre-wrap;font-family:inherit">${watchText
           .trim()
