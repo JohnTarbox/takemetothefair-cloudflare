@@ -201,7 +201,7 @@ const SOURCE = "mcp:email-handler";
 // OPE-68 attachment-capture caps. Per-attachment size ceiling (skip larger)
 // and a total-count ceiling (only the first N image/PDF attachments) so a
 // pathological many-attachment message can't blow the receive-time budget.
-const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per attachment
+export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per attachment
 /**
  * Payload image/PDF attachments stored per email.
  *
@@ -218,6 +218,15 @@ const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per attachment
  * step-output kill.
  */
 export const ATTACHMENT_MAX_COUNT = 8;
+/**
+ * OPE-1578 — the count above decides what gets READ, not what gets KEPT.
+ *
+ * It used to decide both, so a packet with many enclosures lost its last ones
+ * for good, and those are often the forms. Past ATTACHMENT_MAX_COUNT a payload
+ * is now stored with `ocrSkipped` and left unread. This ceiling is only a bound
+ * on R2 puts per message: Email Routing already rejects anything over 25 MiB.
+ */
+export const ATTACHMENT_MAX_STORED = 40;
 /**
  * OPE-760 — a forwarded message (`message/rfc822`) is a CONTAINER, not content:
  * its only consumer is the DKIM verifier, and OPE-944 hoists the documents
@@ -964,7 +973,8 @@ export async function handleInboundEmail(
         // cuts the other way here: the state IS recorded now (in
         // attachment_skips), so this line is the alert, not a substitute for a
         // fix. The OPE-464 `extract.attachment_lost` emitter reads this shape.
-        const accountedFor = refs.length + skipped.length;
+        // OPE-1578 — a read-only skip is already counted in `refs`.
+        const accountedFor = refs.length + skipped.filter((k) => !isStoredSkip(k)).length;
         if (accountedFor !== attachmentCount) {
           await logError(env.DB, {
             level: "warn",
@@ -1377,6 +1387,9 @@ export interface AttachmentRef {
   name: string;
   mimeType: string;
   size: number;
+  /** OPE-1578 — stored but past ATTACHMENT_MAX_COUNT, so OCR and the photo lane
+   *  leave it alone. It can still be fetched. Absent means normal. */
+  ocrSkipped?: boolean;
 }
 
 /** Minimal attachment shape captured — matches postal-mime's Attachment
@@ -1520,7 +1533,7 @@ export async function discardStoredAttachments(
 
 /** Filesystem-safe attachment name for the R2 key. Collapses anything that
  *  isn't a safe filename char to a dash, trims, and caps length. */
-function sanitizeAttachmentName(name: string | null, index: number): string {
+export function sanitizeAttachmentName(name: string | null, index: number): string {
   const base = (name || `attachment-${index}`).trim();
   const cleaned = base
     .replace(/[^a-zA-Z0-9._-]+/g, "-")
@@ -1555,8 +1568,12 @@ function attachmentBytes(content: ArrayBuffer | Uint8Array | string): Uint8Array
  * `attachment_refs`.
  */
 export type AttachmentSkipReason =
-  /** Past ATTACHMENT_MAX_COUNT. The sender's later attachments are simply gone. */
+  /** Past a quota and NOT stored: furniture or container quota, or
+   *  ATTACHMENT_MAX_STORED. */
   | "over-count-cap"
+  /** OPE-1578 — stored and fetchable, but past ATTACHMENT_MAX_COUNT, so it was
+   *  not read. Deliberately a different string: nothing is lost. */
+  | "ocr-skipped:over-count-cap"
   /** Not image/* or application/pdf — a .docx roster, a calendar invite, a .eml. */
   | "unsupported-type"
   /** Over ATTACHMENT_MAX_BYTES. */
@@ -1569,6 +1586,11 @@ export type AttachmentSkipReason =
   | "unrecognized-content"
   /** The R2 put threw. The only reason here that is unambiguously a fault. */
   | "put-failed";
+
+/** OPE-1578 — true when this skip describes a file we DID store. */
+export function isStoredSkip(skip: Pick<AttachmentSkip, "reason">): boolean {
+  return skip.reason === "ocr-skipped:over-count-cap";
+}
 
 export interface AttachmentSkip {
   /** Position in the ORIGINAL attachment list, so a skip can be lined up
@@ -1626,7 +1648,8 @@ export interface AttachmentCapture {
  * ── OPE-467: it returns the skips, and that is the point ─────────────────
  *
  * The filters did not change. What changed is that they now say so. The
- * function's contract is that `refs.length + skipped.length` equals the number
+ * function's contract is that `refs.length` plus the skips that were not
+ * stored (see `isStoredSkip`) equals the number
  * of attachments handed in — so "we kept fewer than arrived" becomes a
  * checkable statement instead of a subtraction somebody has to think to do.
  *
@@ -1770,7 +1793,7 @@ export async function captureAttachments(
       ? storedContainers >= ATTACHMENT_MAX_CONTAINERS
       : item.furniture
         ? storedFurniture >= ATTACHMENT_MAX_FURNITURE
-        : stored >= ATTACHMENT_MAX_COUNT;
+        : stored >= ATTACHMENT_MAX_STORED;
     if (overQuota) {
       note("over-count-cap");
       continue;
@@ -1789,7 +1812,16 @@ export async function captureAttachments(
         // these is affected.
         httpMetadata: { contentType: storedType, contentDisposition: "attachment" },
       });
-      refs.push({ key, name, mimeType: storedType, size: bytes.byteLength });
+      // OPE-1578 — the count cap now only says whether this gets read.
+      const ocrSkipped = !item.container && !item.furniture && stored >= ATTACHMENT_MAX_COUNT;
+      refs.push({
+        key,
+        name,
+        mimeType: storedType,
+        size: bytes.byteLength,
+        ...(ocrSkipped ? { ocrSkipped: true } : {}),
+      });
+      if (ocrSkipped) note("ocr-skipped:over-count-cap");
       if (item.container) storedContainers++;
       else if (item.furniture) storedFurniture++;
       else stored++;

@@ -22,6 +22,7 @@
 import { describe, it, expect } from "vitest";
 import {
   ATTACHMENT_MAX_COUNT,
+  ATTACHMENT_MAX_STORED,
   captureAttachments,
   isSignatureFurniture,
 } from "../src/email-handler.js";
@@ -147,17 +148,16 @@ describe("captureAttachments — OPE-760 acceptance", () => {
     }
   });
 
-  it("still caps genuine payloads — the quota was raised, not removed", async () => {
-    // LANDMARK against the over-correction: "make the poster fit" must not
-    // become "store everything", or a pathological sender is unbounded.
+  it("still has a hard ceiling, so a pathological sender is bounded", async () => {
+    // OPE-1578 — the read cap no longer decides what is kept, but storage is
+    // still bounded.
     const { bucket } = bucketStub();
-    const many = Array.from({ length: ATTACHMENT_MAX_COUNT + 4 }, (_, i) =>
+    const many = Array.from({ length: ATTACHMENT_MAX_STORED + 4 }, (_, i) =>
       poster(`file-${i}.jpg`, 100_000 + i)
     );
     const { refs, skipped } = await captureAttachments(bucket, "g4", many);
-    expect(refs).toHaveLength(ATTACHMENT_MAX_COUNT);
-    expect(skipped).toHaveLength(4);
-    expect(skipped.every((s) => s.reason === "over-count-cap")).toBe(true);
+    expect(refs).toHaveLength(ATTACHMENT_MAX_STORED);
+    expect(skipped.filter((s) => s.reason === "over-count-cap")).toHaveLength(4);
   });
 
   it("DISCRIMINATOR (ranking): keeps the LARGEST payload when it arrives last", async () => {
@@ -247,7 +247,7 @@ describe("OPE-760 — the skip records whether it was furniture", () => {
     );
     expect(skipped).toHaveLength(1);
     expect(skipped[0].furniture).toBe(false);
-    expect(skipped[0].reason).toBe("over-count-cap");
+    expect(skipped[0].reason).toBe("ocr-skipped:over-count-cap");
   });
 });
 

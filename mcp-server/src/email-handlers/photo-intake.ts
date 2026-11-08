@@ -64,6 +64,8 @@ export interface AttachmentRef {
   name: string;
   mimeType: string;
   size: number;
+  /** OPE-1578 — stored but past the count cap; see email-handler.ts. */
+  ocrSkipped?: boolean;
 }
 
 /** Miles per degree of latitude — for the bounding-box pre-filter only. */
@@ -90,7 +92,11 @@ export function parseRefs(attachmentRefs: string | null): AttachmentRef[] {
 
 export function imageRefs(refs: AttachmentRef[]): AttachmentRef[] {
   return refs.filter(
-    (r) => typeof r?.mimeType === "string" && r.mimeType.toLowerCase().startsWith("image/")
+    (r) =>
+      typeof r?.mimeType === "string" &&
+      r.mimeType.toLowerCase().startsWith("image/") &&
+      // OPE-1578 — past the count cap: kept for retrieval, not processed.
+      !r.ocrSkipped
   );
 }
 
