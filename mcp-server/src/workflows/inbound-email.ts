@@ -3895,6 +3895,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }> = [];
     for (const ref of refs) {
       if (!ref || typeof ref.key !== "string") continue;
+      // OPE-1578 — stored past the count cap: fetchable, but not read.
+      if (ref.ocrSkipped) continue;
       // OPE-189 — record a concrete per-attachment outcome for EVERY path so a
       // 0-source OCR run is diagnosable from error_logs (was invisible: the
       // toMarkdown `format:"error"` variant and the under-threshold drop both fell
@@ -4354,8 +4356,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           // others — which is the `[[feedback_fix_wired_into_one_of_two_parallel_paths]]`
           // failure this codebase keeps re-learning.
           let originalSender:
-            | import("../email-handlers/pipeline-citations.js").OriginalSenderContext
-            | undefined;
+            import("../email-handlers/pipeline-citations.js").OriginalSenderContext | undefined;
           try {
             const [fwd] = await getDb(this.env.DB)
               .select({
