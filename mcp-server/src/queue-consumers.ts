@@ -15,6 +15,7 @@
 import { lt } from "drizzle-orm";
 import { getDb, type Db } from "./db.js";
 import { indexnowSubmissions, emailSendLedger } from "./schema.js";
+import { loadJobAttachments, type JobAttachment } from "./email-attachments.js";
 import { ledgerEmailSend, wasEmailSent } from "./mailer.js";
 import { logError } from "./logger.js";
 import {
@@ -98,6 +99,8 @@ type EmailJobMessage = {
    *  their next reply lands back correlated. */
   inReplyTo?: string;
   references?: string;
+  /** OPE-1579 — references to stored files; the bytes are read at send time. */
+  attachments?: JobAttachment[];
   /**
    * OPE-385 — RFC 8058 one-click unsubscribe headers.
    *
@@ -143,6 +146,8 @@ type ConsumerEnv = {
    *  TypeScript can't distinguish dev (where the binding may be absent)
    *  from prod — at runtime in prod it is always present. */
   EMAIL?: SendEmail;
+  /** OPE-1579 — where a job's attachments are read from. */
+  VENDOR_ASSETS?: R2Bucket;
   INDEXNOW_KEY?: string;
   /** OPE-163 — authoritative customer-facing reply gate. When not "true", any
    *  `reply:*`-source message is NOT sent (recorded as a visible 'stubbed'
@@ -163,9 +168,16 @@ const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
  */
 export async function sendViaCfEmail(
   msg: EmailJobMessage,
-  binding: SendEmail
+  binding: SendEmail,
+  bucket?: R2Bucket
 ): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
   try {
+    let attachments: EmailAttachment[] | undefined;
+    if (msg.attachments?.length) {
+      const loaded = await loadJobAttachments(bucket, msg.attachments);
+      if (!loaded.ok) return loaded;
+      attachments = loaded.files;
+    }
     // OPE-163 — RFC 5322 threading headers when this is a reply to an inbound.
     const headers: Record<string, string> = {};
     if (msg.inReplyTo) headers["In-Reply-To"] = msg.inReplyTo;
@@ -206,6 +218,7 @@ export async function sendViaCfEmail(
       html: msg.html,
       text: msg.text,
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(attachments ? { attachments } : {}),
     });
     return { ok: true, messageId: res.messageId };
   } catch (err) {
@@ -234,6 +247,8 @@ export async function sendViaCfEmail(
  * outcome that was decided on the first attempt.
  */
 const PERMANENT_SEND_ERRORS: RegExp[] = [
+  // OPE-1579 — our own refusal: the stored file is gone, and a retry can't help.
+  /^attachment unavailable: /,
   /has been suppressed due to repeated bounces/i,
   /^Invalid email address\b/i,
   /^no valid recipient in `to`$/,
@@ -319,13 +334,14 @@ export async function handleEmailBatch(
         inboundEmailId: m.body.inboundEmailId ?? null,
         bodyHtml: m.body.html,
         bodyText: m.body.text,
+        attachmentsJson: m.body.attachments?.length ? JSON.stringify(m.body.attachments) : null,
       });
       m.ack();
       console.warn(`[queue:email] reply held (disabled) id=${m.id} → ${maskEmails(m.body.to)}`);
       continue;
     }
 
-    const result = await sendViaCfEmail(m.body, env.EMAIL);
+    const result = await sendViaCfEmail(m.body, env.EMAIL, env.VENDOR_ASSETS);
     if (result.ok) {
       // Record BEFORE ack so a crash in the send→ack window still leaves the
       // sent marker for the redelivery. Upsert (same id overwrites a prior
@@ -343,6 +359,7 @@ export async function handleEmailBatch(
         inboundEmailId: m.body.inboundEmailId ?? null,
         bodyHtml: m.body.html,
         bodyText: m.body.text,
+        attachmentsJson: m.body.attachments?.length ? JSON.stringify(m.body.attachments) : null,
       });
       // OPE-1252 — a manual reply closes the person's obligation only now that
       // the provider accepted it and the `sent` row exists. Before the ack, so a
@@ -386,6 +403,7 @@ export async function handleEmailBatch(
         inboundEmailId: m.body.inboundEmailId ?? null,
         bodyHtml: m.body.html,
         bodyText: m.body.text,
+        attachmentsJson: m.body.attachments?.length ? JSON.stringify(m.body.attachments) : null,
       });
       // OPE-1172 — a permanent rejection is decided on the first attempt.
       // Ack it (no retry, no DLQ) and say so once, at warn, instead of four
