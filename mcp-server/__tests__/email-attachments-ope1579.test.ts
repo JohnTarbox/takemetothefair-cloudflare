@@ -136,7 +136,7 @@ describe("reply_to_inbound_email attachments (OPE-1579)", () => {
         index: 0,
       })),
     });
-    expect(many.ok).toBe(false);
+    expect(many.ok === false && many.message).toMatch(/At most 10/);
     expect((await reply(q, bucket, 5)).ok).toBe(false);
     expect((await reply(q, bucket, 0)).ok).toBe(false);
     const unknown = await handleReplyToInbound(db, deps(q, bucket), {
