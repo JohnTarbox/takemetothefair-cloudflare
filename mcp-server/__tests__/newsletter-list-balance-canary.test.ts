@@ -219,13 +219,13 @@ describe("test addresses (OPE-1583)", () => {
 
   it("still alerts for one real orphan, and names only the real one", async () => {
     addSubscriber("t1", "jtarboxme+ope1145v@gmail.com", { onList: false });
-    addSubscriber("r1", "real.person@gmail.com", { onList: false });
+    addSubscriber("r1", "user.alder@gmail.com", { onList: false });
 
     await checkNewsletterListBalance(db, env, NOW);
 
     expect(sent).toHaveLength(1);
     expect(sent[0].subject).toContain("1 confirmed subscriber");
-    expect(sent[0].text).toContain("real.person@gmail.com");
+    expect(sent[0].text).toContain("user.alder@gmail.com");
     expect(sent[0].text).not.toContain("jtarboxme+");
   });
 
