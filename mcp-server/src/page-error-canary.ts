@@ -40,6 +40,11 @@
  * RED bypasses the YELLOW debounce (a real outage shouldn't be muted because
  * a sub-threshold blip 40 min ago already fired YELLOW).
  *
+ * OPE-1582 (2026-11-08) — at most ONE alert per fire. When two or more sources
+ * fire together they go out as a single burst alert listing every source, and
+ * while that alert is open no further per-function alerts are sent. Every
+ * source still gets its own debounce row. See `planAlerts`.
+ *
  * Dispatch channels
  * -----------------
  * Same fan-out as the dedup-sweep canary (PR #306):
@@ -56,7 +61,7 @@
  * logError() and swallowed — never thrown — so a single canary failure
  * doesn't trigger Cloudflare's cron retry.
  */
-import { and, count, eq, gte, inArray, lt } from "drizzle-orm";
+import { and, count, eq, gte, inArray, like, lt } from "drizzle-orm";
 import { pageErrorCanaryState } from "@takemetothefair/db-schema";
 import { errorLogs } from "./schema.js";
 import type { Env } from "./index.js";
@@ -211,6 +216,122 @@ export function decideTier(
   return null;
 }
 
+/** OPE-1582 — how many sources must fire in one tick for it to be one burst. */
+const BURST_MIN_SOURCES = 2;
+
+/** OPE-1582 — the `page_error_canary_state.source` value for the burst-level
+ *  alert. Not a real source, and it can't collide with one: every real source
+ *  matches SOURCE_PATTERN. Lives in the existing (tier, source) table so a
+ *  burst debounces with the same 30/60-min windows, with no migration. */
+const BURST_STATE_SOURCE = "__burst__";
+
+/** Max sources read per tick. This was 5, which silently capped a burst at
+ *  five alerts: the 2026-11-08 09:36Z D1 burst hit 7 loaders and two of them
+ *  never alerted. Stays well under D1's 100-bound-parameter limit, because
+ *  these names feed the state read's `inArray`. */
+const TOP_SOURCES_LIMIT = 25;
+
+export interface FiredSource {
+  source: string;
+  count: number;
+  tier: Tier;
+}
+
+export type AlertPlan =
+  | { kind: "none"; debounced: number }
+  | { kind: "suppressed-by-open-burst"; fired: FiredSource[]; debounced: number }
+  | { kind: "single"; fired: FiredSource; debounced: number }
+  | { kind: "burst"; tier: Tier; fired: FiredSource[]; debounced: number };
+
+/** OPE-1582 — true when an already-sent burst alert covers an alert of `tier`.
+ *  A RED burst covers both tiers for its 30 min. A YELLOW burst covers YELLOW
+ *  for its 60 min but NOT RED, so an escalation still reaches a human (the
+ *  same "RED bypasses YELLOW" rule as decideTier). */
+export function isBurstOpen(
+  tier: Tier,
+  burstRedLastAt: Date | null,
+  burstYellowLastAt: Date | null,
+  now: Date
+): boolean {
+  const redCutoff = new Date(now.getTime() - RED_DEBOUNCE_MINUTES * 60_000);
+  if (burstRedLastAt != null && burstRedLastAt >= redCutoff) return true;
+  if (tier === "RED") return false;
+  const yellowCutoff = new Date(now.getTime() - YELLOW_DEBOUNCE_MINUTES * 60_000);
+  return burstYellowLastAt != null && burstYellowLastAt >= yellowCutoff;
+}
+
+/** OPE-1582 — pure: per-source tiers in, at most ONE alert out.
+ *  `lastAlerted` is keyed `${tier}::${source}`. */
+export function planAlerts(
+  candidates: Array<{ source: string; count: number }>,
+  lastAlerted: Map<string, Date>,
+  now: Date
+): AlertPlan {
+  const fired: FiredSource[] = [];
+  let debounced = 0;
+  for (const c of candidates) {
+    const tier = decideTier(
+      c.count,
+      lastAlerted.get(`RED::${c.source}`) ?? null,
+      lastAlerted.get(`YELLOW::${c.source}`) ?? null,
+      now
+    );
+    if (tier == null) debounced++;
+    else fired.push({ source: c.source, count: c.count, tier });
+  }
+  if (fired.length === 0) return { kind: "none", debounced };
+
+  const tier: Tier = fired.some((f) => f.tier === "RED") ? "RED" : "YELLOW";
+  const burstOpen = isBurstOpen(
+    tier,
+    lastAlerted.get(`RED::${BURST_STATE_SOURCE}`) ?? null,
+    lastAlerted.get(`YELLOW::${BURST_STATE_SOURCE}`) ?? null,
+    now
+  );
+  if (burstOpen) return { kind: "suppressed-by-open-burst", fired, debounced };
+  if (fired.length >= BURST_MIN_SOURCES) return { kind: "burst", tier, fired, debounced };
+  return { kind: "single", fired: fired[0], debounced };
+}
+
+/** OPE-1582 — the burst alert's wording. `isD1` is measured from the window's
+ *  rows, so a burst from a bad deploy is never labelled a D1 problem. */
+export function renderBurstAlert(
+  tier: Tier,
+  fired: FiredSource[],
+  isD1: boolean,
+  totalCount: number
+): { subject: string; slackText: string; textBody: string; htmlBody: string } {
+  const emoji = tier === "RED" ? "🔴" : "🟡";
+  const label = isD1 ? "D1 burst" : "Page-error burst";
+  const sum = fired.reduce((n, f) => n + f.count, 0);
+  const headline = `${sum} errors across ${fired.length} loaders`;
+  const logsUrl = "https://meetmeatthefair.com/admin/logs";
+  const others = totalCount - sum;
+  const othersLine = others > 0 ? `\n+${others} more on sources below the alert threshold.` : "";
+  const lines = fired.map((f) => `  ${f.count}  ${f.source} (${f.tier})`).join("\n");
+  return {
+    subject: `${emoji} ${label}: ${headline} (${WINDOW_MINUTES}m)`,
+    slackText:
+      `${emoji} *${label}* — ${headline} in last ${WINDOW_MINUTES} min\n` +
+      "```\n" +
+      lines +
+      "\n```" +
+      othersLine +
+      `\n<${logsUrl}|Open admin/logs>`,
+    textBody:
+      `${headline} in the last ${WINDOW_MINUTES} minutes.\n\n${lines}\n${othersLine}\n\n` +
+      `No further alerts for these until this one ages out (RED ${RED_DEBOUNCE_MINUTES} min, ` +
+      `YELLOW ${YELLOW_DEBOUNCE_MINUTES} min).\n\nOpen admin/logs: ${logsUrl}\n`,
+    htmlBody:
+      `<p><strong>${emoji} ${label}</strong> — ${headline} in last ${WINDOW_MINUTES} min</p>` +
+      `<ul>${fired
+        .map((f) => `<li>${f.count} — <code>${f.source}</code> (${f.tier})</li>`)
+        .join("")}</ul>` +
+      (others > 0 ? `<p>+${others} more on sources below the alert threshold.</p>` : "") +
+      `<p><a href="${logsUrl}">Open admin/logs</a></p>`,
+  };
+}
+
 /** POST a Slack message via the incoming-webhook URL. No-op if url is
  *  empty/undefined. Mirrors dedup-sweep-canary.postSlackWebhook exactly
  *  rather than refactoring to a shared helper (the two canaries are the
@@ -285,7 +406,7 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
         // Minimum to track via this helper is YELLOW threshold; we rely on
         // the existing decideTier() to actually decide what fires.
         minCount: YELLOW_THRESHOLD,
-        topSourcesLimit: 5,
+        topSourcesLimit: TOP_SOURCES_LIMIT,
       })
     );
     totalCount = burst.totalErrors;
@@ -329,7 +450,7 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
     const stateRows = await db
       .select()
       .from(pageErrorCanaryState)
-      .where(inArray(pageErrorCanaryState.source, candidateSourceNames));
+      .where(inArray(pageErrorCanaryState.source, [...candidateSourceNames, BURST_STATE_SOURCE]));
     for (const row of stateRows) {
       debounceByKey.set(`${row.tier}::${row.source}`, row.lastAlertedAt);
     }
@@ -345,90 +466,65 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
 
   const webhookUrl = env.SLACK_WEBHOOK_URL_TECHNICAL;
   const alertEmail = env.ALERT_EMAIL_TECHNICAL;
-  let firedCount = 0;
-  let skippedDebouncedCount = 0;
 
-  for (const cs of candidateSources) {
-    const src = cs.source!;
-    const redLast = debounceByKey.get(`RED::${src}`) ?? null;
-    const yellowLast = debounceByKey.get(`YELLOW::${src}`) ?? null;
-    const tier = decideTier(cs.count, redLast, yellowLast, now);
-    if (tier == null) {
-      skippedDebouncedCount++;
-      continue;
-    }
-    firedCount++;
-    const emoji = tier === "RED" ? "🔴" : "🟡";
-
-    const slackText =
-      `${emoji} *Page-error canary ${tier}* — \`${src}\` got ${cs.count} errors in last ${WINDOW_MINUTES} min` +
-      `\n<https://meetmeatthefair.com/admin/logs|Open admin/logs>`;
-
+  // Exactly one Slack post + one email per fire (OPE-1582), whatever `plan` is.
+  async function dispatch(
+    tier: Tier,
+    label: string,
+    context: Record<string, unknown>,
+    alert: { slackText: string; subject: string; textBody: string; htmlBody: string }
+  ): Promise<void> {
     if (webhookUrl) {
-      const dispatch = await postSlackWebhook(webhookUrl, slackText);
-      if (!dispatch.ok) {
+      const result = await postSlackWebhook(webhookUrl, alert.slackText);
+      if (!result.ok) {
         await logError(env.DB, {
           source: SOURCE,
-          message: `${tier} Slack dispatch failed for ${src}: ${dispatch.error}`,
+          message: `${tier} Slack dispatch failed for ${label}: ${result.error}`,
           sessionId,
-          context: { tier, src, count: cs.count },
+          context,
         });
       } else {
-        console.log(`[cron] page-error-canary ${tier} → Slack — src=${src} count=${cs.count}`);
+        console.log(`[cron] page-error-canary ${tier} → Slack — ${label}`);
       }
     }
 
     if (alertEmail && env.EMAIL_JOBS) {
-      const subject = `${emoji} Page-error canary ${tier}: ${src} (${cs.count} in ${WINDOW_MINUTES}m)`;
-      const textBody =
-        `${cs.count} errors on \`${src}\` in the last ${WINDOW_MINUTES} minutes.\n\n` +
-        `Open admin/logs: https://meetmeatthefair.com/admin/logs\n`;
-      const htmlBody =
-        `<p><strong>${emoji} Page-error canary ${tier}</strong> — ${cs.count} errors on <code>${src}</code> in last ${WINDOW_MINUTES} min</p>` +
-        `<p><a href="https://meetmeatthefair.com/admin/logs">Open admin/logs</a></p>`;
       try {
         await env.EMAIL_JOBS.send({
           to: alertEmail,
-          subject,
-          text: textBody,
-          html: htmlBody,
+          subject: alert.subject,
+          text: alert.textBody,
+          html: alert.htmlBody,
           source: `page-error-canary:${tier.toLowerCase()}`,
         });
       } catch (error) {
         await logError(env.DB, {
           source: SOURCE,
-          message: `${tier} email enqueue failed for ${src}`,
+          message: `${tier} email enqueue failed for ${label}`,
           error,
           sessionId,
-          context: { tier, src, count: cs.count, alertEmail },
+          context: { ...context, alertEmail },
         });
       }
     } else if (alertEmail && !env.EMAIL_JOBS) {
-      // One warn per fire would be noisy across sources; emit once
-      // per cron invocation by checking firedCount.
-      if (firedCount === 1) {
-        await logError(env.DB, {
-          level: "warn",
-          source: SOURCE,
-          message: "ALERT_EMAIL_TECHNICAL is set but EMAIL_JOBS queue binding is missing",
-          sessionId,
-        });
-      }
+      await logError(env.DB, {
+        level: "warn",
+        source: SOURCE,
+        message: "ALERT_EMAIL_TECHNICAL is set but EMAIL_JOBS queue binding is missing",
+        sessionId,
+      });
     }
+  }
 
-    // Upsert the per-(tier, source) debounce row.
+  // Upsert one (tier, source) debounce row.
+  async function stamp(tier: Tier, src: string, lastCount: number): Promise<void> {
     try {
       await db
         .insert(pageErrorCanaryState)
-        .values({
-          tier,
-          source: src,
-          lastAlertedAt: now,
-          lastCount: cs.count,
-        })
+        .values({ tier, source: src, lastAlertedAt: now, lastCount })
         .onConflictDoUpdate({
           target: [pageErrorCanaryState.tier, pageErrorCanaryState.source],
-          set: { lastAlertedAt: now, lastCount: cs.count },
+          set: { lastAlertedAt: now, lastCount },
         });
     } catch (error) {
       await logError(env.DB, {
@@ -436,27 +532,131 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
         message: `${tier} debounce row upsert failed for ${src}`,
         error,
         sessionId,
-        context: { tier, src, count: cs.count },
+        context: { tier, src, count: lastCount },
       });
     }
   }
 
-  if (firedCount === 0) {
+  const plan = planAlerts(
+    candidateSources.map((c) => ({ source: c.source!, count: c.count })),
+    debounceByKey,
+    now
+  );
+
+  if (plan.kind === "none") {
     console.log(
-      `[cron] page-error-canary all-debounced — ${skippedDebouncedCount} sources crossed ` +
+      `[cron] page-error-canary all-debounced — ${plan.debounced} sources crossed ` +
         `but every (tier, source) within debounce window; no alert fired`
     );
-  } else {
+    return;
+  }
+
+  if (plan.kind === "suppressed-by-open-burst") {
+    // Deliberately NOT stamped: if a source is still failing once the burst
+    // alert ages out, it must be able to alert again.
     console.log(
-      `[cron] page-error-canary fired=${firedCount} debounced=${skippedDebouncedCount} ` +
+      `[cron] page-error-canary suppressed by open burst alert — ` +
+        plan.fired.map((f) => `${f.source}=${f.count}`).join(", ")
+    );
+    return;
+  }
+
+  if (plan.kind === "single") {
+    const { source: src, count: n, tier } = plan.fired;
+    const emoji = tier === "RED" ? "🔴" : "🟡";
+    await dispatch(
+      tier,
+      `src=${src} count=${n}`,
+      { tier, src, count: n },
+      {
+        slackText:
+          `${emoji} *Page-error canary ${tier}* — \`${src}\` got ${n} errors in last ${WINDOW_MINUTES} min` +
+          `\n<https://meetmeatthefair.com/admin/logs|Open admin/logs>`,
+        subject: `${emoji} Page-error canary ${tier}: ${src} (${n} in ${WINDOW_MINUTES}m)`,
+        textBody:
+          `${n} errors on \`${src}\` in the last ${WINDOW_MINUTES} minutes.\n\n` +
+          `Open admin/logs: https://meetmeatthefair.com/admin/logs\n`,
+        htmlBody:
+          `<p><strong>${emoji} Page-error canary ${tier}</strong> — ${n} errors on <code>${src}</code> in last ${WINDOW_MINUTES} min</p>` +
+          `<p><a href="https://meetmeatthefair.com/admin/logs">Open admin/logs</a></p>`,
+      }
+    );
+    await stamp(tier, src, n);
+    console.log(
+      `[cron] page-error-canary fired=1 debounced=${plan.debounced} ` +
         `(window=${WINDOW_MINUTES}m, total=${totalCount})`
     );
+    return;
+  }
+
+  // plan.kind === "burst"
+  const isD1 = await windowIsMostlyD1(db, windowStart, now, totalCount, SOURCE, env, sessionId);
+  await dispatch(
+    plan.tier,
+    `burst of ${plan.fired.length} sources`,
+    { tier: plan.tier, sources: plan.fired.length, isD1 },
+    renderBurstAlert(plan.tier, plan.fired, isD1, totalCount)
+  );
+  // Every source is still stamped, so per-source debounce keeps its meaning
+  // and the state table records each one that alerted.
+  for (const f of plan.fired) await stamp(f.tier, f.source, f.count);
+  await stamp(
+    plan.tier,
+    BURST_STATE_SOURCE,
+    plan.fired.reduce((n, f) => n + f.count, 0)
+  );
+  console.log(
+    `[cron] page-error-canary burst fired sources=${plan.fired.length} ` +
+      `debounced=${plan.debounced} isD1=${isD1} (window=${WINDOW_MINUTES}m, total=${totalCount})`
+  );
+}
+
+/** OPE-1582 — does this window's page-error set look like D1 saturation?
+ *  Measured, so the alert's "D1" label is a finding. Failsoft: a failed read
+ *  only costs the label. Only runs when a burst is about to be sent. */
+async function windowIsMostlyD1(
+  db: Db,
+  since: Date,
+  until: Date,
+  totalCount: number,
+  source: string,
+  env: Env,
+  sessionId: string
+): Promise<boolean> {
+  try {
+    const [row] = await db
+      .select({ n: count() })
+      .from(errorLogs)
+      .where(
+        and(
+          gte(errorLogs.timestamp, since),
+          lt(errorLogs.timestamp, until),
+          eq(errorLogs.level, "error"),
+          like(errorLogs.source, SOURCE_PATTERN),
+          like(errorLogs.message, "%D1_ERROR%")
+        )
+      );
+    return totalCount > 0 && Number(row?.n ?? 0) * 2 >= totalCount;
+  } catch (error) {
+    await logError(env.DB, {
+      level: "warn",
+      source,
+      message: "burst D1-share read failed (alert still sends, without the D1 label)",
+      error,
+      sessionId,
+    });
+    return false;
   }
 }
 
 // Exported for unit tests.
 export const __test = {
   decideTier,
+  isBurstOpen,
+  planAlerts,
+  renderBurstAlert,
+  BURST_STATE_SOURCE,
+  BURST_MIN_SOURCES,
   postSlackWebhook,
   RED_THRESHOLD,
   YELLOW_THRESHOLD,
