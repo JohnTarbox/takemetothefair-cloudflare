@@ -4620,6 +4620,8 @@ export const vendorClaimEvidence = sqliteTable(
     /** Operator triage, independent of the claim's own approve/reject. */
     reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
     reviewedBy: text("reviewed_by"),
+    /** OPE-1599 (drizzle/0399) — LOOKS_REAL | SUSPENDED | SPAM. NULL = not reviewed. */
+    reviewDecision: text("review_decision", { enum: ["LOOKS_REAL", "SUSPENDED", "SPAM"] }),
   },
   (t) => [
     // One evidence row per vendor — the registration mints the listing once.
