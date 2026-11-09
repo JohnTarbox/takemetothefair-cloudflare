@@ -83,7 +83,39 @@ export const WEAK_NAME_WORDS = new Set([
   "community",
   "local",
   "registration",
+  // A school's name is the identifying part, and it is often under 4 letters
+  // ("CVU") so the tokenizer drops it, leaving only these two.
+  "high",
+  "middle",
+  "elementary",
+  "school",
 ]);
+
+/**
+ * OPE-1571 — the state a sender put in the SUBJECT, as a two-letter code. The
+ * subject only: a body carries signature blocks and forwarded addresses, which
+ * say where the sender is, not where the event is. Two-letter codes need a
+ * comma ("Gardiner, ME"), because a bare uppercase "ME" is also a word.
+ */
+const STATE_NAMES: ReadonlyArray<[string, string]> = [
+  ["maine", "ME"],
+  ["new hampshire", "NH"],
+  ["vermont", "VT"],
+  ["massachusetts", "MA"],
+  ["connecticut", "CT"],
+  ["rhode island", "RI"],
+  ["new york", "NY"],
+];
+
+export function statesNamedInSubject(subject: string | null): Set<string> {
+  const out = new Set<string>();
+  const padded = ` ${norm(subject ?? "")} `;
+  for (const [name, code] of STATE_NAMES) {
+    if (padded.includes(` ${name} `)) out.add(code);
+  }
+  for (const m of (subject ?? "").matchAll(/,\s*(ME|NH|VT|MA|CT|RI|NY)\b/g)) out.add(m[1]);
+  return out;
+}
 
 export type TextMatchOutcome =
   | "matched"
@@ -102,6 +134,8 @@ export interface TextMatchCandidateInput {
   startDate: number | null;
   endDate: number | null;
   city: string | null;
+  /** The venue's two-letter state. Absent = unknown, never a disagreement. */
+  state?: string | null;
   promoterName: string | null;
 }
 
@@ -219,6 +253,7 @@ export function scoreCandidates(
   const monthDays = mentionedMonthDays(text);
   const years = mentionedYears(text);
   const lowerText = ` ${norm(text)} `;
+  const subjectStates = statesNamedInSubject(input.subject);
 
   return candidates.map((c) => {
     const reasons: string[] = [];
@@ -250,7 +285,13 @@ export function scoreCandidates(
     const promoterNamed = promoterNorm.length >= 6 && lowerText.includes(` ${promoterNorm} `);
     // OPE-1571 — only weak words shared: the name alone does not identify it.
     const weakOnly = bestHits.length > 0 && bestHits.every((t) => WEAK_NAME_WORDS.has(t));
-    const eligible = best >= MIN_NAME_CONTAINMENT && (!weakOnly || townNamed || promoterNamed);
+    // OPE-1571 — the subject names a state and this event is somewhere else.
+    // Naming the event's own town overrides it: "Maine Made Crafts at Topsfield"
+    // uses "Maine" as part of a business name.
+    const stateConflict =
+      subjectStates.size > 0 && !!c.state && !subjectStates.has(c.state) && !townNamed;
+    const eligible =
+      best >= MIN_NAME_CONTAINMENT && (!weakOnly || townNamed || promoterNamed) && !stateConflict;
     reasons.push(
       `name ${Math.round(best * 100)}% (${bestMatched} token${bestMatched === 1 ? "" : "s"}${bestName !== c.name ? `, via variant "${bestName}"` : ""})`
     );
@@ -258,6 +299,9 @@ export function scoreCandidates(
       reasons.push(
         `only common words shared (${bestHits.join(", ")}) and neither town nor promoter named`
       );
+    }
+    if (stateConflict) {
+      reasons.push(`subject names ${[...subjectStates].join("/")}, event is in ${c.state}`);
     }
 
     let score = best;
@@ -392,6 +436,7 @@ export async function matchEventFromText(
         startDate: events.startDate,
         endDate: events.endDate,
         city: venues.city,
+        state: venues.state,
         promoterName: promoters.companyName,
       })
       .from(events)
@@ -411,6 +456,7 @@ export async function matchEventFromText(
         startDate: e.startDate ? Math.floor(e.startDate.getTime() / 1000) : null,
         endDate: e.endDate ? Math.floor(e.endDate.getTime() / 1000) : null,
         city: e.city,
+        state: e.state,
         promoterName: e.promoterName,
       });
     }
