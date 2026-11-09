@@ -16,7 +16,9 @@
  *   INVITATION_ONLY  — sellers are invited; there is no open application.
  *
  * John's ruling (2026-11-02): such a show stays listed as a vendor
- * opportunity, with one plain statement. No how-to-join copy.
+ * opportunity, with one plain statement. No how-to-join copy. The MEMBERS_ONLY
+ * wording is John's exact sentence (decision 2026-11-08); the JURIED and
+ * INVITATION_ONLY lines follow the same form and are not yet ruled on.
  */
 
 export const VENDOR_ELIGIBILITY_VALUES = [
@@ -54,12 +56,12 @@ export function vendorEligibilityLine(
       // A trailing period on the stored name would double up with ours.
       const name = (org ?? "").trim().replace(/\.+$/, "");
       return name
-        ? `Vendors must be members of ${name}.`
-        : "Vendors must be members of the organizing group.";
+        ? `To be a vendor, you must be a member of ${name}.`
+        : "To be a vendor, you must be a member of the organizing group.";
     }
     case "JURIED":
-      return "Vendor spaces are juried.";
+      return "To be a vendor, you must be accepted by the show's jury.";
     case "INVITATION_ONLY":
-      return "Vendor spaces are by invitation only.";
+      return "To be a vendor, you must be invited by the organizer.";
   }
 }
