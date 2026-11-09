@@ -223,6 +223,11 @@ export default function AdminInboundEmailsPage() {
   const [senders, setSenders] = useState<SenderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("");
+  // OPE-1603 — the dashboard tile opens this page already filtered.
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("status");
+    if (fromUrl) setStatusFilter(fromUrl);
+  }, []);
   const [intentFilter, setIntentFilter] = useState<string>("");
   const [sinceHours, setSinceHours] = useState<number>(168);
   const [retrying, setRetrying] = useState<string | null>(null);

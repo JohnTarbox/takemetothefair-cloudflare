@@ -37,6 +37,7 @@ interface Event {
   venue: { name: string } | null;
   promoter: { companyName: string } | null;
   blogPostCount: number;
+  _count?: { eventVendors: number };
   // Pre-ingest gate trace. JSON array of short reason codes (e.g.
   // ["source_tier_3_aggregator", "start_equals_deadline"]) populated by
   // evaluateGates() when the row routed to PENDING_REVIEW. NULL = no gate
@@ -83,6 +84,7 @@ export default function AdminEventsPage() {
   // Separate from flagFilter (which targets gateFlags) — reviewFlagFilter
   // targets flagged_for_review, the post-ingest operator queue.
   const [reviewFlagFilter, setReviewFlagFilter] = useState<string>("all");
+  const [rosterFilter, setRosterFilter] = useState<string>("all");
 
   useEffect(() => {
     fetchEvents();
@@ -207,6 +209,10 @@ export default function AdminEventsPage() {
     const isReviewFlagged = Boolean(e.flaggedForReview);
     if (reviewFlagFilter === "flagged" && !isReviewFlagged) return false;
     if (reviewFlagFilter === "clean" && isReviewFlagged) return false;
+    // OPE-1603 — replaces the dashboard's "Manage Event Vendors" list.
+    const hasRoster = (e._count?.eventVendors ?? 0) > 0;
+    if (rosterFilter === "has-roster" && !hasRoster) return false;
+    if (rosterFilter === "no-roster" && hasRoster) return false;
     return true;
   });
 
@@ -292,16 +298,28 @@ export default function AdminEventsPage() {
           <option value="flagged">Needs review</option>
           <option value="clean">Review-clean only</option>
         </select>
+        <select
+          value={rosterFilter}
+          onChange={(e) => setRosterFilter(e.target.value)}
+          className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground bg-card"
+          title="Filter by whether any vendor is linked to the event"
+        >
+          <option value="all">All (roster)</option>
+          <option value="has-roster">Has roster</option>
+          <option value="no-roster">No roster</option>
+        </select>
         {(statusFilter !== "all" ||
           venueFilter !== "all" ||
           flagFilter !== "all" ||
-          reviewFlagFilter !== "all") && (
+          reviewFlagFilter !== "all" ||
+          rosterFilter !== "all") && (
           <button
             onClick={() => {
               setStatusFilter("all");
               setVenueFilter("all");
               setFlagFilter("all");
               setReviewFlagFilter("all");
+              setRosterFilter("all");
             }}
             className="text-sm text-royal hover:underline"
           >

@@ -4,7 +4,9 @@
  */
 
 import { and, count, eq, gte, lt } from "drizzle-orm";
-import { events, vendors, venues } from "@/lib/db/schema";
+import { eventVendors, events, promoters, users, vendors, venues } from "@/lib/db/schema";
+import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { realUserWhere } from "@takemetothefair/db-schema";
 import { trendOf, type Db } from "./shared";
 import { activeVenuesBasis, liveVendorsBasis, publicEventsBasis } from "./catalog-basis";
 import {
@@ -30,6 +32,9 @@ export async function loadCatalogGrowth(
     eventsPrior,
     venuesPrior,
     vendorsPrior,
+    promotersTotal,
+    usersTotal,
+    eventVendorLinksTotal,
   ] = await Promise.all([
     db.select({ c: count() }).from(events).where(publicEventsBasis()),
     db.select({ c: count() }).from(venues).where(activeVenuesBasis()),
@@ -76,6 +81,12 @@ export async function loadCatalogGrowth(
           lt(vendors.createdAt, priorEndDate)
         )
       ),
+    // OPE-1603 — moved from the /admin dashboard. Not part of `total`, which is
+    // what "new in window" compares against.
+    db.select({ c: count() }).from(promoters),
+    // OPE-292 — real people only; most rows are placeholder owner accounts.
+    db.select({ c: count() }).from(users).where(realUserWhere()),
+    db.select({ c: count() }).from(eventVendors).where(isPublicVendorStatus()),
   ]);
 
   const totals = {
@@ -88,7 +99,13 @@ export async function loadCatalogGrowth(
     (eventsPrior[0]?.c ?? 0) + (venuesPrior[0]?.c ?? 0) + (vendorsPrior[0]?.c ?? 0);
 
   return {
-    totals: { ...totals, total: totals.events + totals.venues + totals.vendors },
+    totals: {
+      ...totals,
+      total: totals.events + totals.venues + totals.vendors,
+      promoters: promotersTotal[0]?.c ?? 0,
+      users: usersTotal[0]?.c ?? 0,
+      eventVendorLinks: eventVendorLinksTotal[0]?.c ?? 0,
+    },
     newInWindow,
     newInPriorWindow,
     trend: trendOf(newInWindow, newInPriorWindow),

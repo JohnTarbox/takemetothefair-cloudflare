@@ -57,7 +57,15 @@ export type ConversionsCard = Delta & {
 };
 
 export type CatalogGrowthCard = {
-  totals: { events: number; venues: number; vendors: number; total: number };
+  totals: {
+    events: number;
+    venues: number;
+    vendors: number;
+    total: number;
+    promoters: number;
+    users: number;
+    eventVendorLinks: number;
+  };
   newInWindow: number;
   newInPriorWindow: number;
   trend: Trend;
