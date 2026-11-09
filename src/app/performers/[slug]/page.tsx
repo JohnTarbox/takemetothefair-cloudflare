@@ -1,3 +1,4 @@
+import { cache } from "react";
 /**
  * OPE-115 — public performer page `/performers/{slug}` (PLURAL per the URL-scheme
  * rule). Bio + image + website/social + category/home base + Upcoming/Past
@@ -88,12 +89,13 @@ const CATEGORY_LABEL: Record<string, string> = {
  * OPE-790 rework — one jittered retry on a Cloudflare-side D1 blip (a performer
  * page hit "Network connection lost" on 10-04). Wraps a PURE read: the view
  * counter lives in `countPerformerView`, never retried.
+ *
+ * OPE-1601 — `cache` so `generateMetadata` and the page share one read per
+ * request. Two reads meant two `error_logs` rows for one failed page view.
  */
-function getPerformer(slug: string) {
-  return withD1ReadLogged("app/performers/[slug]/page.tsx:getPerformer", () =>
-    getPerformerOnce(slug)
-  );
-}
+const getPerformer = cache((slug: string) =>
+  withD1ReadLogged("app/performers/[slug]/page.tsx:getPerformer", () => getPerformerOnce(slug))
+);
 
 /**
  * OPE-796 — count the view (performers.view_count feeds the weekly digest's

@@ -1,3 +1,4 @@
+import { cache } from "react";
 /**
  * Public promoter page — listing of all events the promoter has hosted (or
  * is hosting), with their contact / website info and an upcoming-vs-past
@@ -52,7 +53,8 @@ interface Props {
   params: Promise<{ slug: string }>;
 }
 
-async function getPromoter(slug: string) {
+// OPE-1601 — `cache`: generateMetadata and the page share one read per request.
+const getPromoter = cache(async function getPromoter(slug: string) {
   const db = getCloudflareDb();
 
   try {
@@ -143,7 +145,7 @@ async function getPromoter(slug: string) {
     const { FetchError } = await import("@/lib/errors/fetch-error");
     throw new FetchError("app/promoters/[slug]/page.tsx:getPromoter", e);
   }
-}
+});
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
