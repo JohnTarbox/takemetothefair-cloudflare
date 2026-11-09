@@ -1,49 +1,6 @@
 import Link from "next/link";
-import {
-  LayoutDashboard,
-  Calendar,
-  MapPin,
-  Store,
-  Users,
-  ClipboardList,
-  ShieldCheck,
-  Megaphone,
-  Download,
-  GitMerge,
-  Link2,
-  Database,
-  FileWarning,
-  FileText,
-  BarChart3,
-  Inbox,
-  Send,
-} from "lucide-react";
 import { requireAdmin } from "@/lib/require-admin";
-
-const adminNav = [
-  { name: "Dashboard", href: "/admin", icon: LayoutDashboard },
-  { name: "Events", href: "/admin/events", icon: Calendar },
-  { name: "Import Events", href: "/admin/import", icon: Download },
-  { name: "Import from URL", href: "/admin/import-url", icon: Link2 },
-  { name: "Venues", href: "/admin/venues", icon: MapPin },
-  { name: "Vendors", href: "/admin/vendors", icon: Store },
-  { name: "Vendor Claim", href: "/admin/vendor-claim-leaderboard", icon: Store },
-  { name: "Claim Review", href: "/admin/claims", icon: ShieldCheck },
-  { name: "Promoters", href: "/admin/promoters", icon: Megaphone },
-  { name: "Promoter Quality", href: "/admin/promoter-quality", icon: Megaphone },
-  { name: "Users", href: "/admin/users", icon: Users },
-  { name: "Submissions", href: "/admin/submissions", icon: ClipboardList },
-  { name: "Inbound Emails", href: "/admin/inbound-emails", icon: Inbox },
-  { name: "Sent Emails", href: "/admin/sent-emails", icon: Send },
-  { name: "Duplicates", href: "/admin/duplicates", icon: GitMerge },
-  { name: "Duplicate Flags", href: "/admin/duplicates/flags", icon: GitMerge },
-  { name: "Blog Coverage", href: "/admin/coverage", icon: FileText },
-  { name: "Blog Posts", href: "/admin/blog", icon: FileText },
-  { name: "Stuck URLs", href: "/admin/stuck-urls", icon: BarChart3 },
-  { name: "Analytics", href: "/admin/analytics", icon: BarChart3 },
-  { name: "Database", href: "/admin/database", icon: Database },
-  { name: "Error Logs", href: "/admin/logs", icon: FileWarning },
-];
+import { adminNavGroups } from "./admin-nav";
 
 // OPE-1380 — a nonce-CSP route (src/lib/csp.ts): it must render per request,
 // or the HTML carries no nonce and every script on it is blocked. Guarded by
@@ -70,17 +27,24 @@ function renderShell(children: React.ReactNode) {
               admin page load. During the 2026-11-04 01:43Z D1 overload those
               prefetches returned 503 alongside the page itself. Guarded by
               src/app/admin/__tests__/admin-link-prefetch.test.ts. */}
-          <nav className="p-4 space-y-1">
-            {adminNav.map((item) => (
-              <Link
-                prefetch={false}
-                key={item.name}
-                href={item.href}
-                className="flex items-center gap-3 px-3 py-2 text-foreground rounded-lg hover:bg-muted transition-colors"
-              >
-                <item.icon className="w-5 h-5" />
-                {item.name}
-              </Link>
+          <nav className="p-4 space-y-4">
+            {adminNavGroups.map((group) => (
+              <div key={group.label} role="group" aria-label={group.label} className="space-y-1">
+                <p className="px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {group.label}
+                </p>
+                {group.items.map((item) => (
+                  <Link
+                    prefetch={false}
+                    key={item.name}
+                    href={item.href}
+                    className="flex items-center gap-3 px-3 py-2 text-foreground rounded-lg hover:bg-muted transition-colors"
+                  >
+                    <item.icon className="w-5 h-5" />
+                    {item.name}
+                  </Link>
+                ))}
+              </div>
             ))}
           </nav>
         </aside>
