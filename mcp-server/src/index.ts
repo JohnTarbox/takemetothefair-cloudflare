@@ -79,6 +79,7 @@ import {
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledNearDuplicateSweep } from "./near-duplicate-sweep-cron.js";
+import { runScheduledFullDuplicateSweep } from "./full-duplicate-sweep-cron.js";
 import { runScheduledCiTriggerWatchdog } from "./ci-trigger-watchdog.js";
 import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
@@ -1993,6 +1994,9 @@ export default {
         // PTTF / Scarborough fixtures) were never evaluated. Report-only: writes
         // possible_duplicate_of where NULL; the OPE-1117 queue is the reader.
         ["near-duplicate-sweep", () => runScheduledNearDuplicateSweep(env)],
+        // OPE-1597 — compare every venue, event, vendor and promoter, and store
+        // the candidate pairs /admin/duplicates reads. Proposals only.
+        ["full-duplicate-sweep", () => runScheduledFullDuplicateSweep(env)],
         // OPE-1205 — a synced row whose source went quiet (> N days, tunable)
         // stops claiming confirmed dates unless a qualifying citation backs it.
         ["sync-stale-sweep", () => runScheduledSyncStaleSweep(env)],

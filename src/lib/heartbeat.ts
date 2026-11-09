@@ -19,6 +19,7 @@
  */
 import { and, eq, gte, inArray, isNotNull, isNull, notInArray, or, sql } from "drizzle-orm";
 import {
+  entityDuplicateSweepRuns,
   analyticsEvents,
   entityWriteLog,
   adminActions,
@@ -61,6 +62,7 @@ import {
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
+import { FULL_SWEEP_TYPES } from "@/lib/duplicates/full-sweep-types";
 import {
   ENRICH_NOTHING_STAGED_ACTION,
   ENRICH_PROPOSED_ACTION,
@@ -2411,6 +2413,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         adminActions.createdAt,
         eq(adminActions.action, NEAR_DUPLICATE_SWEEP_ACTION)
       ),
+  },
+  {
+    // OPE-1597 — proof the daily full-table similarity sweep still runs for
+    // EVERY entity type. Reads the OLDEST run row, not the newest: vendors is
+    // the type most likely to fail alone, and a newest-row read would stay
+    // green on the other three.
+    name: "entity-duplicate-full-sweep",
+    ownerOpe: "OPE-1597",
+    label: "daily full-table duplicate sweep running for every entity type",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({
+          oldest: sql<number | null>`min(${entityDuplicateSweepRuns.lastRunAt})`,
+          types: sql<number>`count(*)`,
+        })
+        .from(entityDuplicateSweepRuns);
+      if (!r || r.oldest == null || Number(r.types) < FULL_SWEEP_TYPES.length) return null;
+      return new Date(Number(r.oldest) * 1000);
+    },
   },
   {
     // OPE-1152 — proof enrich-on-match still RECORDS a disposition for every
