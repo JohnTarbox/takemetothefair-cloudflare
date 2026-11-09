@@ -62,6 +62,7 @@ import { registerClaimReviewTools, type ClaimReviewEnv } from "./tools/admin-cla
 import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
 import { registerReplayInboundAttachmentTool } from "./tools/admin-replay-inbound-attachment.js";
 import { registerBackfillSkippedAttachmentsTool } from "./tools/admin-backfill-skipped-attachments.js";
+import { registerEventDocumentTools } from "./tools/admin-event-documents.js";
 import {
   registerReplayInboundEmailTool,
   type WorkflowCreateBinding,
@@ -465,6 +466,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // by attending a fair.
         registerReplayInboundAttachmentTool(this.server, db, auth, this.env);
         registerBackfillSkippedAttachmentsTool(this.server, db, auth, this.env);
+        registerEventDocumentTools(this.server, db, auth, this.env);
         // OPE-954 — replay a failed submission with every send held.
         registerReplayInboundEmailTool(
           this.server,
@@ -622,6 +624,7 @@ async function handleLegacyMcpRequest(
       // one an agent uses for direct curl when the tool registry is frozen.
       registerReplayInboundAttachmentTool(server, db, auth, env);
       registerBackfillSkippedAttachmentsTool(server, db, auth, env);
+      registerEventDocumentTools(server, db, auth, env);
       registerReplayInboundEmailTool(
         server,
         db,

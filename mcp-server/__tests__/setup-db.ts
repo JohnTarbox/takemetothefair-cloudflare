@@ -868,6 +868,28 @@ const SCHEMA_SQL = `
   -- The admin reader selects from this unconditionally, so every test using the
   -- shared harness needs it present; without it the reader throws and the
   -- failure looks like a reader bug rather than a missing fixture.
+  CREATE TABLE event_documents (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    r2_key TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    year INTEGER NOT NULL,
+    source_organizer TEXT NOT NULL,
+    source_inbound_email_id TEXT,
+    source_attachment_index INTEGER,
+    source_url TEXT,
+    received_at INTEGER NOT NULL,
+    posted_by TEXT,
+    posted_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'live',
+    withdrawn_reason TEXT,
+    withdrawn_at INTEGER
+  );
+
   CREATE TABLE event_applications (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,

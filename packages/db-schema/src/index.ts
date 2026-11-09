@@ -2140,6 +2140,46 @@ export const eventDataCitations = sqliteTable(
  * discard a working route for two public events; storing them as a URL is a lie
  * about what they are. See the migration for the four values cleaned.
  */
+/**
+ * OPE-1580 — a blank vendor form a person posted to one dated event's page.
+ * Never written automatically. `expires_at` ends it, so a form never carries
+ * over to next year's occurrence.
+ */
+export const eventDocuments = sqliteTable(
+  "event_documents",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    r2Key: text("r2_key").notNull().unique(),
+    displayName: text("display_name").notNull(),
+    /** From the file's bytes, never what the sender declared. */
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    /** One of EVENT_DOCUMENT_KINDS. */
+    kind: text("kind").notNull(),
+    year: integer("year").notNull(),
+    sourceOrganizer: text("source_organizer").notNull(),
+    sourceInboundEmailId: text("source_inbound_email_id"),
+    sourceAttachmentIndex: integer("source_attachment_index"),
+    sourceUrl: text("source_url"),
+    receivedAt: integer("received_at", { mode: "timestamp" }).notNull(),
+    postedBy: text("posted_by"),
+    postedAt: integer("posted_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    /** "live" or "withdrawn". */
+    status: text("status").notNull().default("live"),
+    withdrawnReason: text("withdrawn_reason"),
+    withdrawnAt: integer("withdrawn_at", { mode: "timestamp" }),
+  },
+  (t) => ({
+    byEvent: index("idx_event_documents_event").on(t.eventId, t.status),
+  })
+);
+
 export const eventApplications = sqliteTable(
   "event_applications",
   {
