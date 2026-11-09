@@ -42,6 +42,10 @@ const SCAN_DIRS = [join(ROOT, "src", "app", "admin"), join(ROOT, "src", "compone
 const EXEMPT: Record<string, { count: number; why: string }> = {
   "src/app/admin/page.tsx::stat.href": { count: 1, why: "static dashboard tiles, internal routes" },
   "src/app/admin/layout.tsx::item.href": { count: 1, why: "static nav config, internal routes" },
+  "src/app/admin/duplicates/duplicates-tabs.tsx::tab.href": {
+    count: 1,
+    why: "two-entry TABS constant, internal routes",
+  },
   "src/app/admin/ideas/page.tsx::href": {
     count: 1,
     why: "Chip prop; callers pass /admin/ideas?… literals",
