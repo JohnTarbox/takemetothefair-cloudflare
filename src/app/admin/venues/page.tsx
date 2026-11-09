@@ -1,31 +1,112 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, Eye, MapPin, Search, X, Filter } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, MapPin, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconButton, IconLink } from "@/components/ui/icon-button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  SortableHeader,
-  SortConfig,
-  sortData,
-  getNextSortDirection,
-} from "@/components/ui/sortable-table";
+  AdminPagedTable,
+  type AdminColumn,
+  type AdminFilter,
+} from "@/components/admin/admin-paged-table";
+import type { AdminVenueRow } from "@/lib/admin-list/lists";
 
-interface Venue {
-  id: string;
-  name: string;
-  slug: string;
-  city: string;
-  state: string;
-  status: string;
-  capacity: number | null;
-  latitude: number | null;
-  googlePlaceId: string | null;
-  _count: { events: number };
+const FILTERS: AdminFilter[] = [
+  {
+    param: "status",
+    allLabel: "All statuses",
+    options: [
+      { value: "ACTIVE", label: "Active" },
+      { value: "INACTIVE", label: "Inactive" },
+      { value: "FORMER", label: "Former" },
+    ],
+  },
+  {
+    param: "google",
+    allLabel: "Google: any",
+    options: [{ value: "missing", label: "Missing Google Place ID" }],
+  },
+  {
+    param: "coords",
+    allLabel: "Coordinates: any",
+    options: [{ value: "missing", label: "Missing coordinates" }],
+  },
+];
+
+async function deleteVenue(venue: AdminVenueRow, reload: () => void) {
+  // Include the venue name in the confirm so the operator can
+  // re-confirm they targeted the right row (UX-R2, 2026-06-01 EVE).
+  if (!confirm(`Delete venue "${venue.name}"? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/admin/venues/${venue.id}`, { method: "DELETE" });
+    if (res.ok) reload();
+  } catch (error) {
+    console.error("Failed to delete venue:", error);
+  }
 }
+
+const COLUMNS: AdminColumn<AdminVenueRow>[] = [
+  {
+    key: "name",
+    label: "Venue",
+    sortKey: "name",
+    cell: (v) => <span className="font-medium text-foreground">{v.name}</span>,
+  },
+  {
+    key: "location",
+    label: "Location",
+    sortKey: "location",
+    cell: (v) => (
+      <span className="text-muted-foreground">
+        {v.city}, {v.state}
+      </span>
+    ),
+  },
+  {
+    key: "capacity",
+    label: "Capacity",
+    sortKey: "capacity",
+    cell: (v) => (
+      <span className="text-muted-foreground">{v.capacity?.toLocaleString() || "-"}</span>
+    ),
+  },
+  {
+    key: "events",
+    label: "Events",
+    sortKey: "events",
+    cell: (v) => <span className="text-muted-foreground">{v.eventCount}</span>,
+  },
+  {
+    key: "status",
+    label: "Status",
+    sortKey: "status",
+    cell: (v) => <Badge variant={v.status === "ACTIVE" ? "success" : "default"}>{v.status}</Badge>,
+  },
+  {
+    key: "actions",
+    label: "Actions",
+    align: "right",
+    cell: (v, { reload }) => (
+      <div className="flex items-center justify-end gap-1">
+        <IconLink href={`/venues/${v.slug}`} aria-label={`View ${v.name}`} icon={<Eye />} />
+        <IconLink
+          href={`/admin/venues/${v.id}/edit`}
+          aria-label={`Edit ${v.name}`}
+          icon={<Pencil />}
+        />
+        <IconButton
+          variant="danger"
+          onClick={() => void deleteVenue(v, reload)}
+          aria-label={`Delete ${v.name}`}
+          icon={<Trash2 />}
+        />
+      </div>
+    ),
+  },
+];
 
 interface BackfillPreview {
   venueId: string;
@@ -40,8 +121,9 @@ interface BackfillPreview {
 }
 
 export default function AdminVenuesPage() {
-  const [venues, setVenues] = useState<Venue[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [missingCoordCount, setMissingCoordCount] = useState(0);
+  const [missingGoogleCount, setMissingGoogleCount] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [batchGeocoding, setBatchGeocoding] = useState(false);
   const [batchResult, setBatchResult] = useState<string | null>(null);
   const [backfillingGoogle, setBackfillingGoogle] = useState(false);
@@ -49,45 +131,7 @@ export default function AdminVenuesPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [backfillPreview, setBackfillPreview] = useState<BackfillPreview[]>([]);
   const [selectedVenueIds, setSelectedVenueIds] = useState<Set<string>>(new Set());
-  const [filterMissingGoogle, setFilterMissingGoogle] = useState(false);
-  const [sortConfig, setSortConfig] = useState<SortConfig>({
-    column: "name",
-    direction: "asc",
-  });
-
-  useEffect(() => {
-    fetchVenues();
-  }, []);
-
-  const fetchVenues = async () => {
-    try {
-      const res = await fetch("/api/admin/venues");
-      const data = (await res.json()) as Venue[];
-      setVenues(data);
-    } catch (error) {
-      console.error("Failed to fetch venues:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDelete = async (id: string, name: string) => {
-    // Include the venue name in the confirm so the operator can
-    // re-confirm they targeted the right row (UX-R2, 2026-06-01 EVE).
-    if (!confirm(`Delete venue "${name}"? This cannot be undone.`)) return;
-
-    try {
-      const res = await fetch(`/api/admin/venues/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        setVenues(venues.filter((v) => v.id !== id));
-      }
-    } catch (error) {
-      console.error("Failed to delete venue:", error);
-    }
-  };
-
-  const missingCoordCount = venues.filter((v) => v.latitude == null).length;
-  const missingGoogleCount = venues.filter((v) => v.googlePlaceId == null).length;
+  const refreshVenues = () => setRefreshKey((k) => k + 1);
 
   const handleGooglePreview = async () => {
     setPreviewLoading(true);
@@ -129,7 +173,7 @@ export default function AdminVenuesPage() {
       );
       setBackfillPreview([]);
       setSelectedVenueIds(new Set());
-      fetchVenues();
+      refreshVenues();
     } catch {
       setGoogleBackfillResult("Google backfill failed");
     } finally {
@@ -161,7 +205,7 @@ export default function AdminVenuesPage() {
       const res = await fetch("/api/admin/venues/geocode-batch", { method: "POST" });
       const data = (await res.json()) as { success: number; failed: number; total: number };
       setBatchResult(`Geocoded ${data.success} of ${data.total} venues (${data.failed} failed)`);
-      fetchVenues();
+      refreshVenues();
     } catch {
       setBatchResult("Batch geocode failed");
     } finally {
@@ -169,47 +213,11 @@ export default function AdminVenuesPage() {
     }
   };
 
-  const handleSort = (column: string) => {
-    setSortConfig(getNextSortDirection(sortConfig, column));
-  };
-
-  const filteredVenues = filterMissingGoogle
-    ? venues.filter((v) => v.googlePlaceId == null)
-    : venues;
-
-  const sortedVenues = sortData(filteredVenues, sortConfig, {
-    name: (v) => v.name,
-    location: (v) => `${v.city}, ${v.state}`,
-    capacity: (v) => v.capacity || 0,
-    events: (v) => v._count.events,
-    status: (v) => v.status,
-  });
-
-  if (loading) {
-    return (
-      <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-muted rounded w-1/4"></div>
-        <div className="h-64 bg-muted rounded"></div>
-      </div>
-    );
-  }
-
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-2xl font-bold text-foreground">Manage Venues</h1>
         <div className="flex items-center gap-2">
-          {missingGoogleCount > 0 && (
-            <Button
-              variant={filterMissingGoogle ? "primary" : "outline"}
-              onClick={() => setFilterMissingGoogle(!filterMissingGoogle)}
-            >
-              <Filter className="w-4 h-4 mr-2" />
-              {filterMissingGoogle
-                ? `Missing Google (${missingGoogleCount})`
-                : `Filter Missing Google (${missingGoogleCount})`}
-            </Button>
-          )}
           {missingGoogleCount > 0 && (
             <Button
               variant="outline"
@@ -334,100 +342,20 @@ export default function AdminVenuesPage() {
         </Card>
       )}
 
-      <Card>
-        <CardHeader>
-          <p className="text-sm text-muted-foreground">
-            {filterMissingGoogle
-              ? `${filteredVenues.length} of ${venues.length} venues missing Google Place ID`
-              : `${venues.length} venues total`}
-          </p>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <SortableHeader
-                    column="name"
-                    label="Venue"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="location"
-                    label="Location"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="capacity"
-                    label="Capacity"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="events"
-                    label="Events"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="status"
-                    label="Status"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedVenues.map((venue) => (
-                  <tr key={venue.id} className="border-b border-border">
-                    <td className="py-3 px-4 font-medium text-foreground">{venue.name}</td>
-                    <td className="py-3 px-4 text-muted-foreground">
-                      {venue.city}, {venue.state}
-                    </td>
-                    <td className="py-3 px-4 text-muted-foreground">
-                      {venue.capacity?.toLocaleString() || "-"}
-                    </td>
-                    <td className="py-3 px-4 text-muted-foreground">{venue._count.events}</td>
-                    <td className="py-3 px-4">
-                      <Badge variant={venue.status === "ACTIVE" ? "success" : "default"}>
-                        {venue.status}
-                      </Badge>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center justify-end gap-1">
-                        {/* IconLink + IconButton primitives — type-enforced
-                            aria-label, ≥40px hit area, single interactive
-                            element (no nested Link>Button). UX-R2, 2026-06-01. */}
-                        <IconLink
-                          href={`/venues/${venue.slug}`}
-                          aria-label={`View ${venue.name}`}
-                          icon={<Eye />}
-                        />
-                        <IconLink
-                          href={`/admin/venues/${venue.id}/edit`}
-                          aria-label={`Edit ${venue.name}`}
-                          icon={<Pencil />}
-                        />
-                        <IconButton
-                          variant="danger"
-                          onClick={() => handleDelete(venue.id, venue.name)}
-                          aria-label={`Delete ${venue.name}`}
-                          icon={<Trash2 />}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+      <AdminPagedTable<AdminVenueRow>
+        endpoint="/api/admin/venues"
+        columns={COLUMNS}
+        rowKey={(v) => v.id}
+        noun="venue"
+        searchPlaceholder="Search venues by name or city…"
+        filters={FILTERS}
+        defaultSort={{ column: "name", direction: "asc" }}
+        refreshKey={refreshKey}
+        onData={(data) => {
+          setMissingCoordCount(data.stats?.missingCoords ?? 0);
+          setMissingGoogleCount(data.stats?.missingGoogle ?? 0);
+        }}
+      />
     </div>
   );
 }
