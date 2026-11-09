@@ -432,6 +432,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerReplyToInboundEmailTool(server, db, auth, {
     EMAIL_JOBS: env?.EMAIL_JOBS as { send: (msg: unknown) => Promise<void> } | undefined,
     EMAIL_REPLY_ENABLED: env?.EMAIL_REPLY_ENABLED,
+    // OPE-1579 — this env is hand-picked, so a binding missing here is missing
+    // from the tool even though the Worker has it.
+    VENDOR_ASSETS: env?.VENDOR_ASSETS,
   });
   registerGscMilestoneIngestTool(server, auth, env);
   registerPerformerTools(server, db, auth);
