@@ -29,14 +29,9 @@ import {
   loadBrandVsNonBrand,
   loadKpiStrip90d,
   loadSearchVisibility,
-  loadSearchVisibilitySparkline,
   loadSiteCtr,
 } from "./analytics-overview/search-visibility";
-import {
-  loadConversionRate,
-  loadConversions,
-  loadConversionsSparkline,
-} from "./analytics-overview/conversions";
+import { loadConversionRate, loadConversions } from "./analytics-overview/conversions";
 import { loadCatalogGrowth, loadEnhancedProfileRevenue } from "./analytics-overview/catalog";
 import { loadBlogCoverage, loadRecommendationsSummary } from "./analytics-overview/content";
 import { loadRenderFaultHealth } from "./analytics-overview/fault-health";
@@ -91,9 +86,7 @@ export async function loadOverviewSnapshot(
     recentErrors,
     recommendations,
     blogCoverage,
-    conversionsSparkline,
     publishingSparkline,
-    searchVisibilitySparkline,
     activity,
     siteCtr,
     conversionRate,
@@ -120,9 +113,7 @@ export async function loadOverviewSnapshot(
     loadRecentErrors(db, last24hDate),
     loadRecommendationsSummary(db),
     loadBlogCoverage(db),
-    loadConversionsSparkline(db, sparklineSinceDate),
     loadPublishingSparkline(db, sparklineSinceDate),
-    loadSearchVisibilitySparkline(env),
     loadActivity(db, sinceDate),
     loadSiteCtr(db, days),
     loadConversionRate(db, env, 7),
@@ -156,9 +147,7 @@ export async function loadOverviewSnapshot(
     recentErrors,
     recommendations,
     blogCoverage,
-    conversionsSparkline,
     publishingSparkline,
-    searchVisibilitySparkline,
     activity,
     siteCtr,
     conversionRate,

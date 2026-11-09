@@ -71,7 +71,7 @@ export const adminNavGroups: AdminNavGroup[] = [
     label: "Content & SEO",
     items: [
       { name: "Blog", href: "/admin/blog", icon: FileText },
-      { name: "Stuck URLs", href: "/admin/stuck-urls", icon: BarChart3 },
+      { name: "Search", href: "/admin/analytics?tab=google", icon: BarChart3 },
     ],
   },
   {

@@ -3,7 +3,7 @@
  * with the reason it isn't. A new page.tsx with neither fails this test, which is
  * how 11 routes ended up with no way in.
  */
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { adminNavGroups } from "../admin-nav";
@@ -20,6 +20,7 @@ const NOT_IN_SIDEBAR: Record<string, string> = {
   "/admin/venues/new": "button on Venues",
   "/admin/analytics/automation": "tab on Analytics",
   "/admin/analytics/ga4": "tab on Analytics",
+  "/admin/stuck-urls": "link in the Analytics tab bar, beside Google",
   "/admin/analytics/page": "stray route, removed by OPE-1604",
   "/admin/og-image-sweep": "retired by OPE-1604",
   "/admin/backfill-source-domain": "retired by OPE-1604",
@@ -37,8 +38,10 @@ function adminRoutes(dir = ADMIN_ROOT, route = "/admin"): string[] {
 }
 
 const linked = adminNavGroups.flatMap((group) => group.items.map((item) => item.href));
+/** The route a sidebar link lands on; "Search" is a tab of Analytics. */
+const linkedRoutes = linked.map((href) => href.split("?")[0]);
 const tabbed = adminSections.flatMap((section) => section.tabs.map((tab) => tab.href));
-const reachable = new Set([...linked, ...tabbed]);
+const reachable = new Set([...linkedRoutes, ...tabbed]);
 
 describe("admin sidebar", () => {
   it("has the six groups, in order", () => {
@@ -56,7 +59,7 @@ describe("admin sidebar", () => {
     expect(linked.length).toBeGreaterThan(15);
     expect(new Set(linked).size).toBe(linked.length);
     const routes = new Set(adminRoutes());
-    expect(linked.filter((href) => !routes.has(href))).toEqual([]);
+    expect(linkedRoutes.filter((href) => !routes.has(href))).toEqual([]);
   });
 
   it("reaches every admin page, or says why not", () => {
@@ -65,6 +68,11 @@ describe("admin sidebar", () => {
     expect(routes.length).toBeGreaterThan(35);
     const unreachable = routes.filter((r) => !reachable.has(r) && !(r in NOT_IN_SIDEBAR));
     expect(unreachable).toEqual([]);
+  });
+
+  it("links Stuck URLs from the Analytics tab bar, which its exemption relies on", () => {
+    const page = readFileSync(join(ADMIN_ROOT, "analytics/page.tsx"), "utf8");
+    expect(page).toContain('href="/admin/stuck-urls"');
   });
 
   it("carries no exemption for a page that is gone or now linked", () => {
