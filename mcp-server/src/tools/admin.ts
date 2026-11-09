@@ -890,10 +890,27 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // ── update_event_status ────────────────────────────────────────
   server.tool(
     "update_event_status",
-    "Approve, reject, or change any event's status. Admin only.",
+    "Approve, reject, or change any event's status. Pass `reason` and `evidence_url` to record why, and on what evidence; both are stored with the change and returned by get_event_lifecycle_history. Admin only.",
     {
       event_id: z.string().describe("Event ID"),
       status: z.enum(EVENT_STATUS_ENUM).describe("New event status"),
+      // OPE-1592 — .max() before .transform(), per the free-text rule in CLAUDE.md.
+      reason: z
+        .string()
+        .trim()
+        .min(1)
+        .max(500)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe(
+          "OPE-1592 — why this status is changing, in a sentence (max 500 chars). Stored with the change. Separate from reject_reason, which is a fault family for extractor-created rows."
+        ),
+      evidence_url: z
+        .string()
+        .url()
+        .max(2048)
+        .optional()
+        .describe("OPE-1592 — the page this decision rests on. Stored with the change."),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -1083,6 +1100,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         });
       }
 
+      // OPE-1592 — one object for the audit row and the response, so what the
+      // caller sees echoed is what was stored. Keys are absent when not passed,
+      // which keeps a call without them identical to before.
+      const statusChangeProvenance = {
+        ...(params.reason !== undefined ? { reason: params.reason } : {}),
+        ...(params.evidence_url !== undefined ? { evidence_url: params.evidence_url } : {}),
+      };
+
       // Audit log — material status transitions need to land in admin_actions
       // so the Analytics activity feed and any downstream auditing can see
       // them. Pattern mirrors set_enhanced_profile in this file.
@@ -1098,6 +1123,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           // OPE-450 — so get_event_lifecycle_history can show the keeper a row
           // was rejected against without a second query.
           ...(rejectedAsDuplicateOf ? { rejected_as_duplicate_of: rejectedAsDuplicateOf } : {}),
+          ...statusChangeProvenance,
         }),
         createdAt: new Date(),
       });
@@ -1169,6 +1195,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           jsonContent({
             updated: true,
             event: { id: event.id, name: event.name, previousStatus, newStatus: params.status },
+            ...statusChangeProvenance,
             ...(inboundRepoint && inboundRepoint.repointed.length > 0
               ? {
                   inbound_emails_repointed: {
