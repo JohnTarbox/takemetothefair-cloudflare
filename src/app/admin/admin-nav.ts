@@ -1,7 +1,7 @@
 /**
  * OPE-1602 — the admin sidebar, in the six groups from the 2026-11-09 console
- * review. Pages the review merges into one tab stay as separate entries here
- * until those merges land, each already in the group it will end up in.
+ * review. A merged section is one entry here, pointing at its first tab
+ * (admin-sections.ts).
  *
  * A separate module because a Next layout may only export its reserved names, and
  * the reachability test needs this list.
@@ -22,16 +22,11 @@ import {
   Inbox,
   LayoutDashboard,
   Lightbulb,
-  Link2,
-  Mail,
   MapPin,
   Megaphone,
-  MessagesSquare,
   Mic2,
-  Send,
   ShieldCheck,
   Store,
-  Tags,
   Users,
 } from "lucide-react";
 
@@ -47,15 +42,10 @@ export const adminNavGroups: AdminNavGroup[] = [
     label: "Work queues",
     items: [
       { name: "Submissions", href: "/admin/submissions", icon: ClipboardList },
-      { name: "Claim Review", href: "/admin/claims", icon: ShieldCheck },
-      { name: "Vendor Claim", href: "/admin/vendor-claim-leaderboard", icon: Store },
+      { name: "Claims", href: "/admin/claims", icon: ShieldCheck },
       { name: "Duplicates", href: "/admin/duplicates", icon: GitMerge },
       { name: "Duplicate Flags", href: "/admin/duplicates/flags", icon: GitMerge },
-      { name: "Inbound Emails", href: "/admin/inbound-emails", icon: Inbox },
-      { name: "Sent Emails", href: "/admin/sent-emails", icon: Send },
-      { name: "Correspondents", href: "/admin/correspondents", icon: MessagesSquare },
-      { name: "Classifier Accuracy", href: "/admin/classifier-accuracy", icon: Tags },
-      { name: "Email Source Suggestions", href: "/admin/email-source-suggestions", icon: Mail },
+      { name: "Inbox", href: "/admin/inbound-emails", icon: Inbox },
       { name: "Problem Reports", href: "/admin/problem-reports", icon: AlertTriangle },
     ],
   },
@@ -73,17 +63,14 @@ export const adminNavGroups: AdminNavGroup[] = [
   {
     label: "Ingest",
     items: [
-      { name: "Import Events", href: "/admin/import", icon: Download },
-      { name: "Import from URL", href: "/admin/import-url", icon: Link2 },
-      { name: "Promoter Quality", href: "/admin/promoter-quality", icon: Megaphone },
-      { name: "Source Quality", href: "/admin/source-quality", icon: Gauge },
+      { name: "Import", href: "/admin/import", icon: Download },
+      { name: "Sources", href: "/admin/promoter-quality", icon: Gauge },
     ],
   },
   {
     label: "Content & SEO",
     items: [
-      { name: "Blog Posts", href: "/admin/blog", icon: FileText },
-      { name: "Blog Coverage", href: "/admin/coverage", icon: FileText },
+      { name: "Blog", href: "/admin/blog", icon: FileText },
       { name: "Stuck URLs", href: "/admin/stuck-urls", icon: BarChart3 },
     ],
   },

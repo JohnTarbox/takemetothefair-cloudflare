@@ -290,7 +290,7 @@ export default async function BlogCoveragePage({
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-foreground">Blog coverage</h1>
+        <h1 className="text-2xl font-bold text-foreground">Blog posts</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Per-post reach (clicks/impressions/CTR), age, link footprint, FAQ source, and Google/Bing
           indexation status, plus a per-cluster effectiveness rollup. Sortable; default sort is

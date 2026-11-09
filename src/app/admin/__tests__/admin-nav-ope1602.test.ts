@@ -7,6 +7,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { adminNavGroups } from "../admin-nav";
+import { adminSections, findAdminSection } from "../admin-sections";
 
 const ADMIN_ROOT = join(process.cwd(), "src/app/admin");
 
@@ -22,7 +23,7 @@ const NOT_IN_SIDEBAR: Record<string, string> = {
   "/admin/analytics/page": "stray route, removed by OPE-1604",
   "/admin/og-image-sweep": "retired by OPE-1604",
   "/admin/backfill-source-domain": "retired by OPE-1604",
-  "/admin/snap": "phone tool. The review wants a mobile dashboard link, not built yet (OPE-1602)",
+  "/admin/snap": "phone tool, linked from the dashboard on small screens",
 };
 
 function adminRoutes(dir = ADMIN_ROOT, route = "/admin"): string[] {
@@ -36,6 +37,8 @@ function adminRoutes(dir = ADMIN_ROOT, route = "/admin"): string[] {
 }
 
 const linked = adminNavGroups.flatMap((group) => group.items.map((item) => item.href));
+const tabbed = adminSections.flatMap((section) => section.tabs.map((tab) => tab.href));
+const reachable = new Set([...linked, ...tabbed]);
 
 describe("admin sidebar", () => {
   it("has the six groups, in order", () => {
@@ -50,7 +53,7 @@ describe("admin sidebar", () => {
   });
 
   it("links only to pages that exist, once each", () => {
-    expect(linked.length).toBeGreaterThan(25);
+    expect(linked.length).toBeGreaterThan(15);
     expect(new Set(linked).size).toBe(linked.length);
     const routes = new Set(adminRoutes());
     expect(linked.filter((href) => !routes.has(href))).toEqual([]);
@@ -60,13 +63,31 @@ describe("admin sidebar", () => {
     const routes = adminRoutes();
     // A positive landmark, so a walker that stops finding pages cannot pass.
     expect(routes.length).toBeGreaterThan(35);
-    const unreachable = routes.filter((r) => !linked.includes(r) && !(r in NOT_IN_SIDEBAR));
+    const unreachable = routes.filter((r) => !reachable.has(r) && !(r in NOT_IN_SIDEBAR));
     expect(unreachable).toEqual([]);
   });
 
   it("carries no exemption for a page that is gone or now linked", () => {
     const routes = new Set(adminRoutes());
-    const stale = Object.keys(NOT_IN_SIDEBAR).filter((r) => !routes.has(r) || linked.includes(r));
+    const stale = Object.keys(NOT_IN_SIDEBAR).filter((r) => !routes.has(r) || reachable.has(r));
     expect(stale).toEqual([]);
+  });
+
+  it("gives each merged section one sidebar entry, its first tab, and real pages", () => {
+    expect(adminSections.length).toBe(5);
+    const routes = new Set(adminRoutes());
+    expect(tabbed.length).toBe(new Set(tabbed).size);
+    expect(tabbed.filter((href) => !routes.has(href))).toEqual([]);
+    for (const section of adminSections) {
+      const [first, ...rest] = section.tabs.map((tab) => tab.href);
+      expect(linked).toContain(first);
+      expect(rest.filter((href) => linked.includes(href))).toEqual([]);
+    }
+  });
+
+  it("finds a section by its exact tab path only, so detail pages get no tab bar", () => {
+    expect(findAdminSection("/admin/correspondents")?.label).toBe("Inbox");
+    expect(findAdminSection("/admin/blog/some-post")).toBeUndefined();
+    expect(findAdminSection("/admin/events")).toBeUndefined();
   });
 });

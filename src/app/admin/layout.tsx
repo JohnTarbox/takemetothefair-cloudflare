@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/require-admin";
 import { adminNavGroups } from "./admin-nav";
+import { AdminSectionTabs } from "./admin-section-tabs";
 
 // OPE-1380 — a nonce-CSP route (src/lib/csp.ts): it must render per request,
 // or the HTML carries no nonce and every script on it is blocked. Guarded by
@@ -48,7 +49,10 @@ function renderShell(children: React.ReactNode) {
             ))}
           </nav>
         </aside>
-        <main className="flex-1 p-8">{children}</main>
+        <main className="flex-1 p-8">
+          <AdminSectionTabs />
+          {children}
+        </main>
       </div>
     </div>
   );

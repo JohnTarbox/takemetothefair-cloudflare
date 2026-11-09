@@ -218,6 +218,14 @@ export default async function AdminDashboard() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-foreground mb-8">Admin Dashboard</h1>
+      {/* OPE-1602: a phone tool, so it is linked here on small screens, not in the sidebar. */}
+      <Link
+        prefetch={false}
+        href="/admin/snap"
+        className="md:hidden -mt-4 inline-block mb-6 text-sm font-medium text-royal hover:text-navy"
+      >
+        Snap booth photo
+      </Link>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
         {statCards.map((stat) => (
