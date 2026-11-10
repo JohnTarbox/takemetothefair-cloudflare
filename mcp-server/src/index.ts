@@ -82,6 +82,7 @@ import { runScheduledNearDuplicateSweep } from "./near-duplicate-sweep-cron.js";
 import { runScheduledFullDuplicateSweep } from "./full-duplicate-sweep-cron.js";
 import { runScheduledCiTriggerWatchdog } from "./ci-trigger-watchdog.js";
 import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
+import { runScheduledRepliedLedgerCheck } from "./inbound/replied-without-ledger.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
 import { runScheduledBurstCapSelfTest } from "./burst-cap-selftest-canary.js";
@@ -1814,6 +1815,8 @@ export default {
           // has sat destination-less past the age threshold. The standing
           // backlog stays in the Monday inventory. Failsoft (catches its own).
           ["unterminated-crossing-notice", () => runUnterminatedCrossingNotice(env, getDb(env.DB))],
+          // OPE-1609 — a `replied` row must have a ledger row behind it.
+          ["replied-ledger-check", () => runScheduledRepliedLedgerCheck(env)],
         ]).then(() => undefined)
       );
       return;

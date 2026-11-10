@@ -85,6 +85,11 @@ import {
 import { openObligationIfOwed } from "../email-handlers/open-obligation.js";
 import { runContactLane } from "../inbound/contact-lane.js";
 import { heldSendReason } from "../inbound/replies-suppressed.js";
+import {
+  ledgerSuppressedReply,
+  suppressedAckOutcome,
+  ZERO_CONFIDENCE_UNCLEAR_REASON,
+} from "../email-handlers/ack-suppression.js";
 import { isZeroConfidenceUnclear } from "../email-handlers/automated-mail.js";
 import { inboundEmails, adminActions } from "../schema.js";
 import { logError } from "../logger.js";
@@ -515,6 +520,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
 
     // ───── Step 2: dispatch (per-intent) ────────────────────────────
     let result: HandlerResult;
+    // OPE-1609 — why this row's reply was withheld, for the ledger row below.
+    let replySuppressedReason: string | null = null;
     let caughtError: string | null = null;
 
     // OPE-174 — record which pipeline the classified row was dispatched to.
@@ -853,6 +860,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // source of truth for sends. Inventing a terminal status here would
         // widen an enum read across the inbound sweeps for a cosmetic gain.
         result = { replyKind: "empty-message", status: "replied", suppressReply: true };
+        replySuppressedReason = "empty-message-burst-follower";
       }
     } else if (newsletterLane && (intent === "submit" || intent === "new_event")) {
       // OPE-1286 — the switch-over. The submit pipeline reads one event out of
@@ -1177,6 +1185,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         context: { messageRowId, replyKind: result.replyKind, intent },
       });
       result = { ...result, suppressReply: true };
+      replySuppressedReason = "fan-out-coalesced";
     } else if (fanoutRole && fanoutRole.otherIntents.length > 0) {
       result = {
         ...result,
@@ -1265,6 +1274,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         context: { messageRowId, replyKind: result.replyKind, basis: newsletter.basis },
       });
       result = { ...result, suppressReply: true };
+      replySuppressedReason = "promoter-newsletter";
     }
     // OPE-1285 — itemize the newsletter and dispose of each dated item against
     // our events: corroborating citations, date discrepancies, and a recorded
@@ -1373,6 +1383,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           context: { messageRowId, replyKind: result.replyKind, intent },
         });
         result = { ...result, suppressReply: true };
+        replySuppressedReason = ZERO_CONFIDENCE_UNCLEAR_REASON;
       }
     }
 
@@ -1457,6 +1468,21 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           suppressReply: true,
         };
       }
+    }
+
+    // OPE-1609 — every withheld reply leaves a `stubbed` ledger row naming why.
+    // The thread-ack guard above already wrote its own, with more detail.
+    if (result.replyKind !== null && result.suppressReply && !threadAckSuppressed) {
+      const suppressed = {
+        messageRowId,
+        replyKind: result.replyKind as string,
+        reason: replySuppressedReason ?? "handler-suppressed",
+      };
+      await step.do(
+        "reply-guard/ledger-suppression",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => ledgerSuppressedReply(getDb(this.env.DB), suppressed)
+      );
     }
 
     if (result.replyKind !== null && !result.suppressReply) {
@@ -2088,6 +2114,17 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     } else {
       inferredFetchMethod = result.fetchMethod ?? null;
     }
+    // OPE-1609 — only the zero-confidence withhold is rewritten. See
+    // ack-suppression.ts for why burst followers and fan-out losers are not.
+    const recorded =
+      result.replyKind !== null && replySuppressedReason === ZERO_CONFIDENCE_UNCLEAR_REASON
+        ? suppressedAckOutcome({
+            replyKind: result.replyKind,
+            status: result.status,
+            crossingDestinationRef: result.crossingDestinationRef,
+            reason: ZERO_CONFIDENCE_UNCLEAR_REASON,
+          })
+        : { replyKind: result.replyKind, status: result.status };
     await step.do(
       "mark-done",
       { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
@@ -2135,9 +2172,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 ? CLOSED_BY_SENDER_STATUS
                 : isOwedHuman
                   ? OWED_HUMAN_STATUS
-                  : result.status,
+                  : recorded.status,
             error: caughtError ?? null,
-            replyKind: result.replyKind ?? null,
+            replyKind: recorded.replyKind ?? null,
             resultingEventId: result.resultingEventId ?? null,
             fetchMethod: inferredFetchMethod,
             // extraction_method tracking (drizzle/0083). Only populated on
@@ -2228,7 +2265,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     return {
       messageRowId,
       intent,
-      finalStatus: caughtError ? ("failed" as const) : result.status,
+      finalStatus: caughtError ? ("failed" as const) : recorded.status,
       replyKind: result.replyKind,
       error: caughtError,
     };

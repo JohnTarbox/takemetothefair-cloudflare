@@ -2495,6 +2495,23 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     },
   },
   {
+    // OPE-1609 — proof the hourly replied-row ledger check still RUNS. Its
+    // normal output is "0 faults", so it writes one info row per run. 3h = three
+    // runs missed. Literal source: the checker lives in the MCP Worker.
+    name: "replied-ledger-check",
+    ownerOpe: "OPE-1609",
+    label: "hourly check that replied inbound rows have a ledger row is running",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "mcp:inbound:replied-without-ledger"), eq(errorLogs.level, "info"))
+      ),
+  },
+  {
     // OPE-1205 — proof the daily sync-staleness sweep still RUNS. It writes one
     // admin_actions row per run (event.sync_stale_sweep) whether or not it
     // downgrades anything, so silence means the cron stopped, not that nothing
