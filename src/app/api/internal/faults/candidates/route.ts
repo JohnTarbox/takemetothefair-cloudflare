@@ -1,8 +1,8 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { and, desc, eq, gte, notInArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { withInternalKey } from "@/lib/api/with-auth";
-import { errorLogs, faultSignatures, type FaultSignatureRow } from "@/lib/db/schema";
+import { faultSignatures, type FaultSignatureRow } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import {
   classifyNoise,
@@ -19,13 +19,14 @@ import {
 import { buildRailHealth } from "@/lib/faults/status";
 import { classifyFault } from "@/lib/faults/family-registry";
 import { RENDER_FAULT_SOURCES } from "@/lib/faults/render-sources";
+import { scanErrorLogPages } from "@/lib/faults/scan-error-logs";
 
 /**
  * POST /api/internal/faults/candidates  (OPE-81 — render-fault rail)
  *
  * The read+group+reconcile half of the detect→group→dedup→emit rail. Reads
  * `error_logs` within a window (default last 7 days, capped at the newest 5000
- * rows), DROPS un-actionable noise (isNoise), GROUPS the remainder by
+ * rows, read in pages), DROPS un-actionable noise (isNoise), GROUPS the remainder by
  * computeSignature (count + distinct sessions + first/last seen + route + class),
  * loads the fault_signatures ledger, runs the pure reconcile core, APPLIES the
  * resulting upserts (propose new, touch active, regress recurred), and returns the
@@ -47,8 +48,6 @@ const EMIT_HEARTBEAT_SOURCE_NAME = "mcp:fault-signatures-emit";
 
 /** Scan window: occurrences newer than this are considered. */
 const WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-/** Hard cap on rows scanned per run (newest first) — bounds the query. */
-const MAX_ROWS = 5000;
 /**
  * OPE-93: this is the RENDER-fault pipeline — only user-facing render errors
  * belong here. `server-render` = the onRequestError capture (OPE-80); `client` =
@@ -164,31 +163,6 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
     // Now an exclusion list rather than an allow-list, so a NEW source is
     // watched by default. That is the direction that fails safe — the old shape
     // silently ignored every source nobody remembered to add.
-    const rows = await db
-      .select({
-        message: errorLogs.message,
-        route: errorLogs.route,
-        source: errorLogs.source,
-        digest: errorLogs.digest,
-        url: errorLogs.url,
-        context: errorLogs.context,
-        // OPE-577 — needed for extension-injection stack-shape detection.
-        stackTrace: errorLogs.stackTrace,
-        // OPE-1174 — the DuckDuckGo condition on a stackless shape.
-        userAgent: errorLogs.userAgent,
-        timestamp: errorLogs.timestamp,
-      })
-      .from(errorLogs)
-      .where(
-        and(
-          gte(errorLogs.timestamp, since),
-          eq(errorLogs.level, "error"),
-          notInArray(errorLogs.source, NEVER_INGEST_SOURCES)
-        )
-      )
-      .orderBy(desc(errorLogs.timestamp))
-      .limit(MAX_ROWS);
-
     // Group the non-noise rows by signature.
     //
     // OPE-251: noise classification is now ROUTE-AWARE. Third-party embed
@@ -202,73 +176,77 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
     const groups = new Map<string, Accum>();
     const suppressed: Record<string, number> = {};
     let suppressedTotal = 0;
-    for (const r of rows) {
-      // OPE-577 — classify on PROVENANCE (where the code came from) as well as
-      // message text. `context.thirdParty` is set by the client reporter and
-      // the stack shape identifies extension injection; neither can be defeated
-      // by a third party changing its wording.
-      const verdict = classifyNoise({
-        message: r.message,
-        route: r.route,
-        context: r.context,
-        stackTrace: r.stackTrace,
-        userAgent: r.userAgent,
-      });
-      if (verdict.noise) {
-        const key = `${verdict.reason}:${verdict.matched}`;
-        suppressed[key] = (suppressed[key] ?? 0) + 1;
-        suppressedTotal += 1;
-        continue;
-      }
-      // OPE-615 — server rows key on `source`, not on `route`.
-      //
-      // `computeSignature` falls back to the literal "unknown" when route is
-      // null, and route IS null on every server row — so widening the scan
-      // without this would collapse every backend fault in the system into one
-      // signature per error class. `source` is a stable, high-quality grouping
-      // key and is strictly better than the route key the render lane uses.
-      const isRenderLane = RENDER_FAULT_SOURCES.includes(r.source ?? "");
-      // OPE-1081 — normalized HERE as well as inside computeSignature, because
-      // this value is also what the ledger stores as `route`: a key built from
-      // the path beside a `route` column still holding the attacker's payload
-      // would keep echoing it into tickets and dashboards.
-      const groupKey = normalizeFaultRoute(isRenderLane ? r.route : (r.source ?? r.route));
-      const signature = computeSignature({
-        route: groupKey,
-        message: r.message,
-        digest: r.digest,
-      });
-      const tsMs = r.timestamp ? r.timestamp.getTime() : now.getTime();
-      // OPE-615 scope 2 — for a server fault, a distinct DAY is the analogue of
-      // a distinct session.
-      //
-      // The `minSessions` gate was tuned against burst-prone browser noise, and
-      // on server rows there is no session key at all, so `distinctSessions`
-      // degrades to the raw count — which ranks a 3-second loop-burst ABOVE a
-      // cron that fails once a day. That is backwards: the burst is one event,
-      // the cron is a standing fault.
-      //
-      // Keying the session dimension on the UTC day inverts it with no new
-      // threshold: five errors inside one burst count as ONE, and three days of
-      // a failing cron count as THREE.
-      const sessionKey = isRenderLane
-        ? sessionKeyFor(r.context, r.url)
-        : new Date(tsMs).toISOString().slice(0, 10);
-      const acc = groups.get(signature);
-      if (!acc) {
-        groups.set(signature, {
-          route: groupKey ?? null,
-          errorClass: normalizeErrorClass(r.message),
-          count: 1,
-          firstSeen: tsMs,
-          lastSeen: tsMs,
-          sessions: sessionKey ? new Set([sessionKey]) : new Set(),
+    let scanned = 0;
+    for await (const page of scanErrorLogPages(db, since, NEVER_INGEST_SOURCES)) {
+      scanned += page.length;
+      for (const r of page) {
+        // OPE-577 — classify on PROVENANCE (where the code came from) as well as
+        // message text. `context.thirdParty` is set by the client reporter and
+        // the stack shape identifies extension injection; neither can be defeated
+        // by a third party changing its wording.
+        const verdict = classifyNoise({
+          message: r.message,
+          route: r.route,
+          context: r.context,
+          stackTrace: r.stackTrace,
+          userAgent: r.userAgent,
         });
-      } else {
-        acc.count += 1;
-        if (tsMs < acc.firstSeen) acc.firstSeen = tsMs;
-        if (tsMs > acc.lastSeen) acc.lastSeen = tsMs;
-        if (sessionKey) acc.sessions.add(sessionKey);
+        if (verdict.noise) {
+          const key = `${verdict.reason}:${verdict.matched}`;
+          suppressed[key] = (suppressed[key] ?? 0) + 1;
+          suppressedTotal += 1;
+          continue;
+        }
+        // OPE-615 — server rows key on `source`, not on `route`.
+        //
+        // `computeSignature` falls back to the literal "unknown" when route is
+        // null, and route IS null on every server row — so widening the scan
+        // without this would collapse every backend fault in the system into one
+        // signature per error class. `source` is a stable, high-quality grouping
+        // key and is strictly better than the route key the render lane uses.
+        const isRenderLane = RENDER_FAULT_SOURCES.includes(r.source ?? "");
+        // OPE-1081 — normalized HERE as well as inside computeSignature, because
+        // this value is also what the ledger stores as `route`: a key built from
+        // the path beside a `route` column still holding the attacker's payload
+        // would keep echoing it into tickets and dashboards.
+        const groupKey = normalizeFaultRoute(isRenderLane ? r.route : (r.source ?? r.route));
+        const signature = computeSignature({
+          route: groupKey,
+          message: r.message,
+          digest: r.digest,
+        });
+        const tsMs = r.timestamp ? r.timestamp.getTime() : now.getTime();
+        // OPE-615 scope 2 — for a server fault, a distinct DAY is the analogue of
+        // a distinct session.
+        //
+        // The `minSessions` gate was tuned against burst-prone browser noise, and
+        // on server rows there is no session key at all, so `distinctSessions`
+        // degrades to the raw count — which ranks a 3-second loop-burst ABOVE a
+        // cron that fails once a day. That is backwards: the burst is one event,
+        // the cron is a standing fault.
+        //
+        // Keying the session dimension on the UTC day inverts it with no new
+        // threshold: five errors inside one burst count as ONE, and three days of
+        // a failing cron count as THREE.
+        const sessionKey = isRenderLane
+          ? sessionKeyFor(r.context, r.url)
+          : new Date(tsMs).toISOString().slice(0, 10);
+        const acc = groups.get(signature);
+        if (!acc) {
+          groups.set(signature, {
+            route: groupKey ?? null,
+            errorClass: normalizeErrorClass(r.message),
+            count: 1,
+            firstSeen: tsMs,
+            lastSeen: tsMs,
+            sessions: sessionKey ? new Set([sessionKey]) : new Set(),
+          });
+        } else {
+          acc.count += 1;
+          if (tsMs < acc.firstSeen) acc.firstSeen = tsMs;
+          if (tsMs > acc.lastSeen) acc.lastSeen = tsMs;
+          if (sessionKey) acc.sessions.add(sessionKey);
+        }
       }
     }
 
@@ -284,7 +262,21 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
       lastSeen: a.lastSeen,
     }));
 
-    const ledgerRows = await db.select().from(faultSignatures);
+    const ledgerRows = await db
+      .select({
+        signature: faultSignatures.signature,
+        route: faultSignatures.route,
+        errorClass: faultSignatures.errorClass,
+        firstSeen: faultSignatures.firstSeen,
+        lastSeen: faultSignatures.lastSeen,
+        count: faultSignatures.count,
+        status: faultSignatures.status,
+        opeId: faultSignatures.opeId,
+        filedAt: faultSignatures.filedAt,
+        resolvedAt: faultSignatures.resolvedAt,
+        createdAt: faultSignatures.createdAt,
+      })
+      .from(faultSignatures);
     const ledger: FaultLedgerRow[] = ledgerRows.map((r) => ({
       signature: r.signature,
       route: r.route,
@@ -435,7 +427,7 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
       // and read as a dead emitter to two separate readers. Every scanned row now
       // lands in a named bucket.
       message:
-        `fault emit: scanned ${rows.length} render rows → ${grouped.length} signatures ` +
+        `fault emit: scanned ${scanned} render rows → ${grouped.length} signatures ` +
         `(noise-suppressed ${suppressedTotal}); toEmit=${result.toEmit.length} ` +
         `regressions=${result.regressions.length} existing=${result.existing.length} ` +
         `deferred=${result.deferred.length} subThreshold=${result.subThreshold.length} ` +
@@ -444,7 +436,7 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         `ledgerWriteFailures=${ledgerWriteFailures}`,
       context: {
         ledgerWriteFailures,
-        scanned: rows.length,
+        scanned,
         signatures: grouped.length,
         suppressed: suppressedTotal,
         toEmit: result.toEmit.length,

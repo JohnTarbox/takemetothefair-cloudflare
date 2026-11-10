@@ -15,6 +15,9 @@ import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/ins
 import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { eventList } from "@/lib/admin-list/lists";
+import { isPagedRequest, parseListParams } from "@/lib/admin-list/params";
+import { respondWithList } from "@/lib/admin-list/respond";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { classifySource } from "@/lib/source-classification";
 import { normalizeEventDate } from "@/lib/event-dates";
@@ -29,6 +32,14 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const status = searchParams.get("status");
 
   try {
+    // OPE-1595 — the list page asks for one page; bare calls still get every row.
+    if (isPagedRequest(searchParams)) {
+      return await respondWithList(
+        eventList(db, searchParams, parseListParams(searchParams)),
+        searchParams
+      );
+    }
+
     const eventsList = await getEventsWithRelations(db, {
       status: status || undefined,
       includeVendorCounts: true,

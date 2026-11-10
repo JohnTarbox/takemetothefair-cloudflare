@@ -69,6 +69,8 @@ import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
+import { VendorsWantedCard } from "@/components/events/VendorsWantedCard";
+import { buildVendorCall } from "@/lib/events/vendor-call";
 import { VendorOrganizerCard } from "@/components/events/VendorOrganizerCard";
 import { ListEventCtaLink } from "@/components/list-your-event/list-event-cta";
 import {
@@ -593,6 +595,8 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // OPE-1368 — stored URLs render through safeHref. An application link may
   // be a mailto: (two prod rows are), so that one also allows mailto.
   const applicationHref = safeHref(event.applicationUrl, { allowMailto: true });
+  // OPE-1512 item 4 — null unless the call is positively open and current.
+  const vendorCall = buildVendorCall(event.vendorCallRow, event, new Date());
   const vendorEligibilityText = vendorEligibilityLine(
     event.vendorEligibility,
     event.vendorEligibilityOrg
@@ -1772,7 +1776,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                           "You've been invited to participate!"}
                       </p>
                     </div>
-                  ) : vendorInfo.vendor.commercial && !event.commercialVendorsAllowed ? (
+                  ) : vendorInfo.vendor.commercial && event.commercialVendorsAllowed === false ? (
                     <div className="text-center">
                       <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
                       <p className="text-sm text-muted-foreground">
@@ -1804,6 +1808,8 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                 </CardContent>
               </Card>
             )}
+
+            {vendorCall && <VendorsWantedCard call={vendorCall} eventSlug={event.slug} />}
 
             {(vendorCta.kind === "organizer_apply" || vendorCta.kind === "organizer_contact") && (
               <VendorOrganizerCard cta={vendorCta} eventName={event.name} eventSlug={event.slug} />

@@ -200,7 +200,7 @@ describe("workflow wiring (source-level: the fix is an ordering and a gate)", ()
   it("mark-done writes the owed-human status, and the notice step sends on its source", () => {
     // OPE-1163 added a closed_by_sender branch ahead of the owed-human one.
     expect(SRC).toMatch(
-      /status: caughtError\s*\?\s*"failed"\s*:\s*closedBySender\s*\?\s*CLOSED_BY_SENDER_STATUS\s*:\s*isOwedHuman\s*\?\s*OWED_HUMAN_STATUS\s*:\s*result\.status/
+      /status: caughtError\s*\?\s*"failed"\s*:\s*closedBySender\s*\?\s*CLOSED_BY_SENDER_STATUS\s*:\s*isOwedHuman\s*\?\s*OWED_HUMAN_STATUS\s*:\s*recorded\.status/
     );
     const notify = at('"notify/owed-human"');
     expect(notify).toBeGreaterThan(at('"mark-done"'));

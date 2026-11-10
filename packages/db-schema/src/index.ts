@@ -516,9 +516,9 @@ export const events = sqliteTable(
     ticketPriceMaxCents: integer("ticket_price_max_cents"),
     imageUrl: text("image_url"),
     featured: integer("featured", { mode: "boolean" }).default(false),
-    commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }).default(
-      true
-    ),
+    // OPE-1606 — NULL means unknown. It defaulted to true, so a row saying "yes"
+    // usually meant nobody had checked. Read a NULL as unknown, never as no.
+    commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }),
     status: text("status", {
       enum: ["DRAFT", "PENDING", "TENTATIVE", "APPROVED", "REJECTED", "CANCELLED"],
     })
@@ -1252,6 +1252,13 @@ export const vendors = sqliteTable(
     // OPE-1395 (drizzle/0374) — /vendors: `deleted_at IS NULL ORDER BY business_name`
     // without a temp B-tree sort.
     vendorsDeletedBusinessNameIdx: index("idx_vendors_deleted_business_name").on(
+      t.deletedAt,
+      t.businessName
+    ),
+    // OPE-1573 (drizzle/0394) — /vendors `?type=` facet: seek on vendor_type,
+    // then deleted_at IS NULL + business_name order from the same index.
+    vendorsTypeDeletedBusinessNameIdx: index("idx_vendors_type_deleted_business_name").on(
+      t.vendorType,
       t.deletedAt,
       t.businessName
     ),
@@ -4744,6 +4751,8 @@ export const vendorClaimEvidence = sqliteTable(
     /** Operator triage, independent of the claim's own approve/reject. */
     reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
     reviewedBy: text("reviewed_by"),
+    /** OPE-1599 (drizzle/0399) — LOOKS_REAL | SUSPENDED | SPAM. NULL = not reviewed. */
+    reviewDecision: text("review_decision", { enum: ["LOOKS_REAL", "SUSPENDED", "SPAM"] }),
   },
   (t) => [
     // One evidence row per vendor — the registration mints the listing once.
@@ -5384,6 +5393,34 @@ export const heartbeatProbes = sqliteTable("heartbeat_probes", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/**
+ * OPE-1597 (drizzle/0398) — the current full-table similarity sweep for one
+ * entity type. One row per type; its `runId` names the pairs a reader may use.
+ */
+export const entityDuplicateSweepRuns = sqliteTable("entity_duplicate_sweep_runs", {
+  entityType: text("entity_type").primaryKey(),
+  runId: text("run_id").notNull(),
+  lastRunAt: integer("last_run_at", { mode: "timestamp" }).notNull(),
+  checkedCount: integer("checked_count").notNull(),
+  liveCount: integer("live_count").notNull(),
+  comparisons: integer("comparisons").notNull(),
+  pairCount: integer("pair_count").notNull(),
+  storedPairCount: integer("stored_pair_count").notNull(),
+});
+
+/** OPE-1597 — the candidate pairs of a sweep run. Proposals only; nothing merges. */
+export const entityDuplicateSweepPairs = sqliteTable(
+  "entity_duplicate_sweep_pairs",
+  {
+    runId: text("run_id").notNull(),
+    entityType: text("entity_type").notNull(),
+    entity1Id: text("entity1_id").notNull(),
+    entity2Id: text("entity2_id").notNull(),
+    similarity: real("similarity").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.entity1Id, t.entity2Id] })]
+);
 
 export type HeartbeatProbeRow = typeof heartbeatProbes.$inferSelect;
 
