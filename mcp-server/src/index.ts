@@ -734,7 +734,7 @@ async function runMainAppSweep(
         message: oom
           ? `cron task '${label}' killed by Worker memory limit`
           : emptyBody5xx
-            ? `cron task '${label}' returned ${response.status} with no body (unclassified — see OPE-641)`
+            ? `cron task '${label}' returned ${response.status} with no body (likely a Worker resource kill — check this invocation's outcome in Workers Logs; OPE-641, OPE-1600)`
             : `cron task '${label}' returned non-2xx`,
         statusCode: response.status,
         sessionId,
