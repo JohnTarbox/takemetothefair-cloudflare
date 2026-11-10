@@ -4440,6 +4440,8 @@ export const pendingPromoterContacts = sqliteTable(
       onDelete: "set null",
     }),
     attachedAt: integer("attached_at", { mode: "timestamp" }),
+    /** OPE-1614 — when the hourly attach last redirect-checked org_domain. drizzle/0408. */
+    domainProbedAt: integer("domain_probed_at", { mode: "timestamp" }),
     firstValidatedAt: integer("first_validated_at", { mode: "timestamp" }).notNull(),
     lastHeardAt: integer("last_heard_at", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
@@ -4450,6 +4452,51 @@ export const pendingPromoterContacts = sqliteTable(
     index("idx_pending_promoter_contacts_domain").on(t.orgDomain),
   ]
 );
+
+/**
+ * OPE-1614 — an organization's domains, each with how it was established.
+ * drizzle/0408. The entity's website host is an IMPLICIT active member (read
+ * time, see org-domains.ts); a `retired` row withdraws it. Read through
+ * `orgsForDomain` / `matchableDomainsFor`, never by hand.
+ */
+export const orgDomains = sqliteTable(
+  "org_domains",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    entityType: text("entity_type", { enum: ["promoter", "vendor", "venue"] }).notNull(),
+    entityId: text("entity_id").notNull(),
+    /** Registrable (eTLD+1) domain, lowercased. */
+    domain: text("domain").notNull(),
+    status: text("status", { enum: ["active", "candidate", "retired"] }).notNull(),
+    method: text("method", {
+      enum: ["website", "website_redirect", "site_published_email", "operator", "contact_claim"],
+    }).notNull(),
+    evidence: text("evidence"),
+    sourceUrl: text("source_url"),
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }),
+    addedBy: text("added_by").notNull(),
+    retiredBy: text("retired_by"),
+    retiredAt: integer("retired_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_org_domains_entity_domain").on(t.entityType, t.entityId, t.domain),
+    index("idx_org_domains_domain").on(t.domain, t.status),
+  ]
+);
+
+/** OPE-1614 — operator-maintained umbrella domains; always shared. drizzle/0408. */
+export const sharedOrgDomains = sqliteTable("shared_org_domains", {
+  domain: text("domain").primaryKey(),
+  note: text("note"),
+  addedBy: text("added_by").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
 
 /** OPE-1265 — one row per inbound email to lists@ / lists+*@. drizzle/0350. */
 export const promoterListArrivals = sqliteTable(
@@ -7580,6 +7627,7 @@ export * from "./contact-scorecard";
 export * from "./promoter-appliable-gap";
 // OPE-1330 — promoter contacts: domain verification + the one write rule.
 export * from "./promoter-contacts";
+export * from "./org-domains";
 export * from "./gallery-photos";
 // OPE-759 — the hours-review rule, shared because event_days has five writers.
 export * from "./hours-review-flag";

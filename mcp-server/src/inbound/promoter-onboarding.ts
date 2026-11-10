@@ -23,7 +23,7 @@
  * needs a promoter row). Feed reading is OPE-1613. The draft therefore lists
  * what we hold or says plainly that we hold nothing.
  */
-import { and, asc, desc, eq, gte, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, or, type SQL } from "drizzle-orm";
 import {
   extractEmailAddress,
   isNonOwnableDomain,
@@ -34,6 +34,7 @@ import {
   events,
   inboundEmails,
   operatorOutboundDrafts,
+  orgsForDomain,
   PENDING_REPLY_STATUS,
   pendingPromoterContacts,
   promoterContacts,
@@ -511,18 +512,17 @@ async function faultRow(db: Db, message: string, request: Request): Promise<void
 async function recordOutcomes(db: Db, request: Request, now: Date): Promise<Partial<Request>> {
   const patch: Partial<Request> = {};
   if (!request.claimedAt && request.orgDomain) {
-    const owners = await db
-      .select({ website: promoters.website, claimedAt: promoters.claimedAt })
-      .from(promoters)
-      .where(
-        and(
-          eq(promoters.claimed, true),
-          sql`instr(lower(${promoters.website}), ${request.orgDomain}) > 0`
-        )
-      )
-      .limit(20);
-    const owner = owners.find((p) => organizationalDomain(p.website) === request.orgDomain);
-    if (owner) patch.claimedAt = owner.claimedAt ?? now;
+    // OPE-1614: the promoter that owns the domain on its LIST (website host
+    // included); a shared domain has no owner, so it never counts as claimed.
+    const owners = await orgsForDomain(db, "promoter", request.orgDomain);
+    if (owners.ids.length === 1) {
+      const [owner] = await db
+        .select({ claimed: promoters.claimed, claimedAt: promoters.claimedAt })
+        .from(promoters)
+        .where(eq(promoters.id, owners.ids[0]))
+        .limit(1);
+      if (owner?.claimed) patch.claimedAt = owner.claimedAt ?? now;
+    }
   }
   if (!request.firstSubmissionAt && request.repliedAt) {
     const [sub] = await db

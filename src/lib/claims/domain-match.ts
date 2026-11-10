@@ -56,18 +56,28 @@ export function registrableDomainFromWebsite(url: string | null | undefined): st
   return getDomain(u);
 }
 
+/**
+ * `website` is the stored website, OR (OPE-1614) the entity's matchable
+ * domain list from `matchableDomainsFor` — its website host plus every
+ * domain established for it, with shared domains already left out. Either
+ * way it is STORED data: nothing here fetches anything.
+ */
 export function decideDomainMatch(
   email: string | null | undefined,
-  website: string | null | undefined
+  website: string | readonly string[] | null | undefined
 ): DomainMatchResult {
+  const sites = (typeof website === "string" ? [website] : (website ?? [])).filter(
+    (s) => s.trim().length > 0
+  );
   if (!email) return { match: false, reason: "no_email" };
-  if (!website) return { match: false, reason: "no_website" };
+  if (sites.length === 0) return { match: false, reason: "no_website" };
   const e = registrableDomainFromEmail(email);
   if (!e) return { match: false, reason: "unparseable_email" };
-  const w = registrableDomainFromWebsite(website);
-  if (!w) return { match: false, reason: "unparseable_website" };
+  const ws = sites.map(registrableDomainFromWebsite).filter((w): w is string => !!w);
+  if (ws.length === 0) return { match: false, reason: "unparseable_website" };
   if (isNonOwnableDomain(e)) return { match: false, reason: "non_matchable_email" };
-  if (isNonOwnableDomain(w)) return { match: false, reason: "non_matchable_website" };
-  if (e !== w) return { match: false, reason: "different_domain" };
+  const ownable = ws.filter((w) => !isNonOwnableDomain(w));
+  if (ownable.length === 0) return { match: false, reason: "non_matchable_website" };
+  if (!ownable.includes(e)) return { match: false, reason: "different_domain" };
   return { match: true, registrableDomain: e };
 }

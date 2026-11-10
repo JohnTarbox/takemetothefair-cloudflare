@@ -79,6 +79,29 @@ const SCHEMA_SQL = `
     payload_json TEXT,
     created_at INTEGER NOT NULL
   );
+  -- OPE-1614 — the domain list the domain-match rung reads.
+  CREATE TABLE org_domains (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    status TEXT NOT NULL,
+    method TEXT NOT NULL,
+    evidence TEXT,
+    source_url TEXT,
+    inbound_email_id TEXT,
+    added_by TEXT NOT NULL,
+    retired_by TEXT,
+    retired_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE shared_org_domains (
+    domain TEXT PRIMARY KEY,
+    note TEXT,
+    added_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
   CREATE TABLE notifications (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -535,5 +558,77 @@ describe("OPE-1060 — running the wizard again reuses the open claim instead of
     await resolveClaimInWizard(db as never, args);
     await resolveClaimInWizard(db as never, args);
     expect(claimsFor("v2").filter((c) => c.status === "DISPUTED")).toHaveLength(1);
+  });
+});
+
+describe("OPE-1614 — the domain-match rung reads the entity's domain LIST", () => {
+  const listDomain = (entityType: string, id: string, domain: string, status = "active") =>
+    raw
+      .prepare(
+        `INSERT INTO org_domains (id, entity_type, entity_id, domain, status, method, added_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'operator', 'test', 0, 0)`
+      )
+      .run(`${id}-${domain}`, entityType, id, domain, status);
+
+  it("an email on a domain established for the promoter (not its website) → approved", async () => {
+    setVerified(true);
+    seedPromoter({ id: "p1", slug: "big-events-co", website: "https://bigevents.org" });
+    listDomain("promoter", "p1", "acme.com");
+    const res = await resolveClaimInWizard(db as never, {
+      entityType: "PROMOTER",
+      slug: "big-events-co",
+      userId: USER,
+      userEmail: EMAIL,
+      emailVerified: true,
+    });
+    expect(res).toMatchObject({ outcome: "approved", method: "DOMAIN_MATCH" });
+  });
+
+  it("a CANDIDATE domain does not match", async () => {
+    setVerified(true);
+    seedPromoter({ id: "p1", slug: "big-events-co", website: "https://bigevents.org" });
+    listDomain("promoter", "p1", "acme.com", "candidate");
+    const res = await resolveClaimInWizard(db as never, {
+      entityType: "PROMOTER",
+      slug: "big-events-co",
+      userId: USER,
+      userEmail: EMAIL,
+      emailVerified: true,
+    });
+    expect(res.outcome).toBe("needs_evidence");
+  });
+
+  it("a SHARED domain (website of two promoters) never domain-matches", async () => {
+    setVerified(true);
+    seedPromoter({ id: "p1", slug: "big-events-co", website: "https://acme.com/a" });
+    seedPromoter({ id: "p2", slug: "other-co", website: "https://acme.com/b" });
+    const res = await resolveClaimInWizard(db as never, {
+      entityType: "PROMOTER",
+      slug: "big-events-co",
+      userId: USER,
+      userEmail: EMAIL,
+      emailVerified: true,
+    });
+    expect(res.outcome).toBe("needs_evidence");
+    const p = raw.prepare(`SELECT claimed FROM promoters WHERE id = 'p1'`).get() as {
+      claimed: number;
+    };
+    expect(p.claimed).toBe(0);
+  });
+
+  it("a RETIRED website host no longer matches (pending re-check refuses too)", async () => {
+    seedVendor({ id: "v1", slug: "acme-foods", website: "https://acme.com" });
+    const res = await resolveClaimInWizard(db as never, {
+      entityType: "VENDOR",
+      slug: "acme-foods",
+      userId: USER,
+      userEmail: EMAIL,
+      emailVerified: false,
+    });
+    expect(res.outcome).toBe("pending_verification");
+    listDomain("vendor", "v1", "acme.com", "retired");
+    setVerified(true);
+    await approvePendingDomainMatchClaims(db as never, USER, EMAIL);
+    expect(vendorRow("v1").claimed).toBe(0);
   });
 });

@@ -54,6 +54,8 @@ import {
 import {
   contactSenderAuth,
   decidePromoterContactDomain,
+  matchableDomainsFor,
+  orgsForDomain,
   normalizeEmailAddress,
   parseMessageIds,
   planPromoterContactWrite,
@@ -122,7 +124,11 @@ export interface CaptureSummary {
   skipped: string | null;
 }
 
-/** The promoter whose website's org domain IS the sender's (own domains only). */
+/**
+ * The promoter that owns the sender's org domain (OPE-1614: its domain LIST,
+ * website host included). A domain on more than one promoter's list, or an
+ * operator-listed umbrella domain, is shared → `ambiguous`, no owner.
+ */
 export async function promotersFromDomain(
   db: Db,
   senderOrg: string | null
@@ -130,29 +136,8 @@ export async function promotersFromDomain(
   if (!senderOrg) return { ids: [], ambiguous: false, reason: "no parseable sender domain" };
   if (isNonOwnableDomain(senderOrg))
     return { ids: [], ambiguous: false, reason: `${senderOrg} is a shared or free-mail domain` };
-  // instr, not LIKE: the pattern is built from the SENDER's domain and D1
-  // throws on a LIKE pattern over 50 chars. Only a prefilter — equality of
-  // the organizational domains below is the match.
-  const rows = await db
-    .select({ id: promoters.id, website: promoters.website })
-    .from(promoters)
-    .where(sql`instr(lower(${promoters.website}), ${senderOrg}) > 0`)
-    .limit(200);
-  const ids = rows
-    // senderOrg is already known ownable, so an equal site domain is too.
-    .filter((r) => organizationalDomain(r.website) === senderOrg)
-    .map((r) => r.id);
-  if (ids.length > 1)
-    return {
-      ids: [],
-      ambiguous: true,
-      reason: `${senderOrg} is the website domain of ${ids.length} promoters (ambiguous)`,
-    };
-  return {
-    ids,
-    ambiguous: false,
-    reason: ids.length ? "" : `${senderOrg} is no promoter's website`,
-  };
+  const owners = await orgsForDomain(db, "promoter", senderOrg);
+  return { ids: owners.ids, ambiguous: owners.shared, reason: owners.reason };
 }
 
 /** `inbound_emails.matched_entities` → its promoter matches, tolerating junk. */
@@ -225,6 +210,8 @@ async function recordPendingContact(
     senderOrg: string;
     inboundEmailId: string;
     now: Date;
+    /** The domain is on several promoters' lists: an operator picks the org. */
+    shared?: boolean;
   }
 ): Promise<boolean> {
   const { row, from, senderOrg, inboundEmailId, now } = input;
@@ -245,7 +232,9 @@ async function recordPendingContact(
     matchedEntityType: entity?.type ?? null,
     matchedEntityId: entity?.id ?? null,
     inboundEmailId,
-    validationEvidence: `inbound ${inboundEmailId}: DMARC pass aligned to ${senderOrg}; no promoter row yet`,
+    validationEvidence: input.shared
+      ? `inbound ${inboundEmailId}: DMARC pass aligned to ${senderOrg}; shared domain, an operator picks the org`
+      : `inbound ${inboundEmailId}: DMARC pass aligned to ${senderOrg}; no promoter row yet`,
     senderAuth: contactSenderAuth(row.senderAuth),
     authDomain: verdict.authDomain,
     lastHeardAt: heardAt,
@@ -462,32 +451,32 @@ export async function capturePromoterContacts(
   }
 
   if (promoterIds.length === 0) {
+    const dmarcPass = (row.dmarcResult ?? "").toLowerCase() === "pass";
     summary.alignedUnknownDomain =
-      (row.dmarcResult ?? "").toLowerCase() === "pass" &&
+      dmarcPass &&
       !!senderOrg &&
       !isNonOwnableDomain(senderOrg) &&
       !byDomain.ambiguous &&
       summary.resolverPromoters === 0;
-    if (summary.alignedUnknownDomain && senderOrg) {
+    // OPE-1614: a SHARED domain is kept pending too, so an operator can pick
+    // the org; the hourly attach never attaches it (no single owner).
+    if ((summary.alignedUnknownDomain || (dmarcPass && byDomain.ambiguous)) && senderOrg) {
       summary.pendingContact = await recordPendingContact(db, {
         row,
         from,
         senderOrg,
         inboundEmailId,
         now,
+        shared: byDomain.ambiguous,
       });
     }
     return done();
   }
 
-  const sites = new Map(
-    (
-      await db
-        .select({ id: promoters.id, website: promoters.website })
-        .from(promoters)
-        .where(inArray(promoters.id, promoterIds))
-    ).map((p) => [p.id, p.website])
-  );
+  // OPE-1614: each promoter's matchable domain list (website host included,
+  // shared domains left out), not its website alone.
+  const sites = new Map<string, string[]>();
+  for (const id of promoterIds) sites.set(id, await matchableDomainsFor(db, "promoter", id));
   const name = row.fromDisplayName?.trim().slice(0, 200) || null;
 
   for (const promoterId of promoterIds) {
