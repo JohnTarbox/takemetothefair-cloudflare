@@ -27,7 +27,7 @@ import {
   promoterEventFeeds,
   promoterFeedItems,
 } from "../schema.js";
-import { createSlug } from "@takemetothefair/utils";
+import { chunkIds, createSlug } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { FeedEvent } from "./tec.js";
 import { decideInclusion, parseInclusionRules } from "./inclusion.js";
@@ -287,15 +287,14 @@ async function upsertDiscrepancy(
   if (!dryRun) {
     if (sameField.length) {
       // The feed moved to yet another value: the old question is moot.
-      await db
-        .update(eventDiscrepancies)
-        .set({ resolutionStatus: "superseded_by_reevaluation", resolvedAt: now })
-        .where(
-          inArray(
-            eventDiscrepancies.id,
-            sameField.map((r) => r.id)
-          )
-        );
+      // Chunked: one (event, field) rarely has more than one open row, but the
+      // bind list must be provably bounded (OPE-1029).
+      for (const ids of chunkIds(sameField.map((r) => r.id))) {
+        await db
+          .update(eventDiscrepancies)
+          .set({ resolutionStatus: "superseded_by_reevaluation", resolvedAt: now })
+          .where(inArray(eventDiscrepancies.id, ids));
+      }
     }
     await db.insert(eventDiscrepancies).values({
       id: crypto.randomUUID(),
