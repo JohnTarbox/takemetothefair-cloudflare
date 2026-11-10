@@ -1041,8 +1041,10 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // A field filled meanwhile is a legitimate non-apply, so a single miss
     // reads red until the next qualifying match applies — that is the intent.
     //
-    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0385): the writer is in the
-    // separately deployed MCP Worker. Arm once that deploy is live.
+    // Armed by OPE-1529 (drizzle/0400) with zero qualifying matches so far, so
+    // the writer's first real match is checked. The writer stamps the applied
+    // row and the demand row with ONE timestamp: the applied row is written
+    // first, and a demand row a second later would read as silent here.
     name: "enrich-auto-apply",
     ownerOpe: "OPE-1506",
     label: "Enrich-on-match auto-apply (trusted/verified senders) → dedup.enrich_applied",
