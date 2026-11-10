@@ -326,6 +326,18 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1613 — an operator read a promoter's own event feed (ingest_promoter_feed,
+    // non-dry-run). DORMANT (enabled_at NULL, drizzle/0406): feeds are read by hand
+    // until a schedule exists; arm it with a measured window when one ships.
+    name: "organizer-feed-ingest",
+    ownerOpe: "OPE-1613",
+    label: "ingest_promoter_feed → feed.ingested",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(db, adminActions, adminActions.createdAt, eq(adminActions.action, "feed.ingested")),
+  },
+  {
     // OPE-328 — gemba@ observations queued for an agent to post to Linear.
     // DORMANT (enabled_at NULL, drizzle/0348) until the gemba@ Email Routing
     // rule exists; then a month without one row means the lane went dark.

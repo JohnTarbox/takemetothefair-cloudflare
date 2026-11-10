@@ -56,6 +56,14 @@ const ALLOWED: Array<{ path: RegExp; why: string }> = [
     path: /^mcp-server\/src\/email-handlers\/enrich-auto-apply\.ts$/,
     why: "reader (OPE-1506 sender basis): yields only whether a validated contact matched",
   },
+  {
+    path: /^mcp-server\/src\/feeds\/contact-answer\.ts$/,
+    why: "reader (OPE-1613): matches a reply's sender to a validated contact; called only by admin-gated record_feed_discrepancy_answer",
+  },
+  {
+    path: /^mcp-server\/src\/feeds\/batch\.ts$/,
+    why: "reader (OPE-1613): addresses an operator DRAFT to the validated contact; called only by admin-gated compose_feed_discrepancy_batch",
+  },
 ];
 
 const FILES = [...walk(join(ROOT, "src")), ...walk(join(ROOT, "mcp-server", "src"))];

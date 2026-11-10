@@ -2003,6 +2003,16 @@ export const eventVendors = sqliteTable(
   ]
 );
 
+/** OPE-1613 — the authority rungs a citation can record (drizzle/0406, TS-only enum). */
+export const CITATION_PROVENANCE_KINDS = [
+  "feed",
+  "organizer_website",
+  "validated_contact",
+  "operator",
+  "extraction",
+] as const;
+export type CitationProvenanceKind = (typeof CITATION_PROVENANCE_KINDS)[number];
+
 // Event Data Citations table — provenance log for event field values that come
 // from external sources (homepage hero, press release, vendor PDF, etc.). One
 // row per citation, not per field; lifecycle (active / superseded / rejected /
@@ -2077,6 +2087,13 @@ export const eventDataCitations = sqliteTable(
     recheckAt: integer("recheck_at", { mode: "timestamp" }),
     /** Why, in words — the refusal reason, or what changed. */
     recheckNote: text("recheck_note"),
+    /**
+     * OPE-1613 (drizzle/0406) — which rung of the authority ladder this value
+     * sits on: validated_contact > feed / organizer_website > extraction, with
+     * operator keeping its standing. NULL = written before 0406; readers report
+     * `unclassified` and never derive a rung from `source_type`.
+     */
+    provenanceKind: text("provenance_kind", { enum: CITATION_PROVENANCE_KINDS }),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -6244,6 +6261,9 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
       // OPE-1285 — a promoter's own newsletter states dates that disagree with
       // the event we hold. TS-only, like the others.
       "newsletter",
+      // OPE-1613 — an organizer's own event feed disagrees with us or with
+      // itself. Asked of the validated contact in a batch; never auto-corrected.
+      "organizer_feed",
       "manual",
     ],
   }).notNull(),
@@ -6304,7 +6324,8 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
   resolvedValue: text("resolved_value"),
   /** higher_tier | post_event | operator. Phase 2 will add promoter_reply. */
   resolutionSource: text("resolution_source", {
-    enum: ["higher_tier", "post_event", "operator"],
+    // OPE-1613 — `promoter_reply`: a validated contact answered (TS-only).
+    enum: ["higher_tier", "post_event", "operator", "promoter_reply"],
   }),
   resolvedAt: integer("resolved_at", { mode: "timestamp" }),
   /** Computed by GW1d queue ranker. Boolean-as-integer. */
@@ -6328,6 +6349,126 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
 });
 
 export type EventDiscrepancy = typeof eventDiscrepancies.$inferSelect;
+
+// ── OPE-1613 (drizzle/0406) — organizer feeds, feed items, field pins ──────
+
+/** A promoter's own event feed. Read only by an operator through MCP for now. */
+export const promoterEventFeeds = sqliteTable(
+  "promoter_event_feeds",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    feedUrl: text("feed_url").notNull(),
+    kind: text("kind", { enum: ["tec_rest", "ical"] })
+      .notNull()
+      .default("tec_rest"),
+    /** JSON FeedInclusionRules; NULL = the defaults. */
+    inclusionRules: text("inclusion_rules"),
+    /** The feed-discrepancy question limit — separate from the pre-season cap. */
+    batchMinIntervalDays: integer("batch_min_interval_days").notNull().default(7),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    lastReadAt: integer("last_read_at", { mode: "timestamp" }),
+    lastReadStatus: text("last_read_status"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [uniqueIndex("uq_promoter_event_feeds_url").on(t.promoterId, t.feedUrl)]
+);
+
+export const promoterFeedItems = sqliteTable(
+  "promoter_feed_items",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    feedId: text("feed_id")
+      .notNull()
+      .references(() => promoterEventFeeds.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    eventId: text("event_id").references(() => events.id, { onDelete: "set null" }),
+    title: text("title"),
+    url: text("url"),
+    startLocal: text("start_local"),
+    included: integer("included", { mode: "boolean" }).notNull().default(false),
+    exclusionReason: text("exclusion_reason"),
+    reviewState: text("review_state", {
+      enum: ["none", "awaiting_review", "linked", "dropped"],
+    })
+      .notNull()
+      .default("none"),
+    contentHash: text("content_hash"),
+    snapshot: text("snapshot"),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_feed_items_ext").on(t.feedId, t.externalId),
+    index("idx_promoter_feed_items_event").on(t.eventId),
+  ]
+);
+
+/** A validated contact's answer, holding a field above the feed. */
+export const eventFieldPins = sqliteTable(
+  "event_field_pins",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    fieldName: text("field_name").notNull(),
+    pinnedValue: text("pinned_value").notNull(),
+    /** The feed's value when the contact answered; "still wrong" is judged against it. */
+    feedValueAtPin: text("feed_value_at_pin"),
+    contactId: text("contact_id").references(() => promoterContacts.id, { onDelete: "set null" }),
+    inboundEmailId: text("inbound_email_id"),
+    citationId: text("citation_id").references(() => eventDataCitations.id, {
+      onDelete: "set null",
+    }),
+    discrepancyId: text("discrepancy_id"),
+    status: text("status", { enum: ["active", "released"] })
+      .notNull()
+      .default("active"),
+    /** How many batches repeated "your feed still says X" — capped at 1. */
+    stillWrongNotesSent: integer("still_wrong_notes_sent").notNull().default(0),
+    releasedAt: integer("released_at", { mode: "timestamp" }),
+    releaseReason: text("release_reason", { enum: ["feed_fixed", "operator", "superseded"] }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_event_field_pins_live")
+      .on(t.eventId, t.fieldName)
+      .where(sql`${t.status} = 'active'`),
+  ]
+);
+
+/** One row per batched question email composed (as an operator draft). */
+export const feedDiscrepancyBatches = sqliteTable(
+  "feed_discrepancy_batches",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => promoterContacts.id, { onDelete: "cascade" }),
+    draftId: text("draft_id"),
+    discrepancyIds: text("discrepancy_ids").notNull(),
+    stillWrongPinIds: text("still_wrong_pin_ids").notNull().default("[]"),
+    composedAt: integer("composed_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_feed_discrepancy_batches_contact").on(t.contactId, t.composedAt)]
+);
 
 export const sourceReliability = sqliteTable(
   "source_reliability",
