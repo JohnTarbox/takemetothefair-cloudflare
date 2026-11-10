@@ -142,6 +142,15 @@ export const CAPABILITY_FLAGS: CapabilityFlag[] = [
     offIsDeliberate: true,
   },
   {
+    name: "FEED_POLLING_ENABLED",
+    worker: "mcp",
+    darkMeans:
+      "Registered organizer feeds (iCal, Google/Outlook calendars, schema.org pages) are read " +
+      "only when an operator runs ingest_promoter_feed; nothing polls them on a schedule, so a " +
+      "changed or cancelled event is caught only on a manual read. Off until John approves (OPE-1617).",
+    offIsDeliberate: true,
+  },
+  {
     name: "SPAM_EVENT_RECOVERY_ENABLED",
     worker: "mcp",
     darkMeans:

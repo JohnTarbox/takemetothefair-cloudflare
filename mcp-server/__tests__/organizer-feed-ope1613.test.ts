@@ -518,7 +518,8 @@ describe("guards", () => {
     expect(s.handlers.size).toBe(0);
   });
 
-  it("refuses an ical feed and bad inclusion JSON", async () => {
+  it("refuses a feed off the promoter's domain list and bad inclusion JSON", async () => {
+    // OPE-1617 made 'ical' readable; what it refuses now is an unproven owner.
     expect(
       (
         await call("register_promoter_feed", {
@@ -527,7 +528,7 @@ describe("guards", () => {
           kind: "ical",
         })
       ).text
-    ).toMatch(/OPE-1617/);
+    ).toMatch(/ownership not proven/);
     expect(
       (
         await call("register_promoter_feed", {

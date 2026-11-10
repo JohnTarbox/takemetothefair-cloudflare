@@ -76,6 +76,10 @@ const ALLOWED: Array<{ path: RegExp; why: string }> = [
     path: /^mcp-server\/src\/feeds\/batch\.ts$/,
     why: "reader (OPE-1613): addresses an operator DRAFT to the validated contact; called only by admin-gated compose_feed_discrepancy_batch",
   },
+  {
+    path: /^mcp-server\/src\/feeds\/ownership\.ts$/,
+    why: "reader (OPE-1617): yields only whether the sender of a calendar address is a validated contact; called only by admin-gated register_promoter_feed",
+  },
 ];
 
 const FILES = [...walk(join(ROOT, "src")), ...walk(join(ROOT, "mcp-server", "src"))];

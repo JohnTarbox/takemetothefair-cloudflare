@@ -19,7 +19,7 @@
  * file is behind a `!dryRun` check, so a dry run is the real code path minus
  * the writes rather than a parallel imitation of it.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lt, lte } from "drizzle-orm";
 import {
   adminActions,
   eventDiscrepancies,
@@ -48,7 +48,16 @@ export const FEED_DETECTOR = "organizer_feed" as const;
 /** What a discrepancy row's `notes` JSON carries for this detector. */
 export interface FeedDiscrepancyNotes {
   field: FeedField;
-  kind: "am_pm_slip" | "state_only_location" | "cancelled_in_text" | "feed_differs" | "third_value";
+  kind:
+    | "am_pm_slip"
+    | "state_only_location"
+    | "cancelled_in_text"
+    | "feed_differs"
+    | "third_value"
+    // OPE-1617 — the feed itself marks the event cancelled (iCal STATUS:CANCELLED,
+    // schema.org EventCancelled, TEC status), or a later read no longer carries it.
+    | "feed_cancelled"
+    | "feed_dropped";
   feed_item_external_id: string;
   feed_url: string | null;
   /** One line the contact can answer at a glance. */
@@ -116,8 +125,15 @@ export function detectSelfContradictions(ev: FeedEvent): Finding[] {
     if (h >= 0 && h < 7) {
       const h12 = h === 0 ? 12 : h;
       const re = new RegExp(`\\b${h12}(?::${String(m).padStart(2, "0")})?\\s*p\\.?\\s*m\\b`, "i");
+      // OPE-1617 — OHTM writes ranges: "runs 4:30-6:30 PM". The PM there belongs
+      // to both ends, so a 04:30 start against that text is the same slip.
+      const range = new RegExp(
+        `\\b${h12}(?::${String(m).padStart(2, "0")})?\\s*(?:-|–|—|to)\\s*\\d{1,2}(?::\\d{2})?\\s*p\\.?\\s*m\\b`,
+        "i"
+      );
       if (
         re.test(ev.description) ||
+        range.test(ev.description) ||
         (m === 0 && new RegExp(`\\b${h12}\\s*p\\.?m\\b`, "i").test(ev.description))
       ) {
         const hint = `${String(h + 12).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
@@ -196,6 +212,16 @@ export interface IngestReport {
   pins_kept: number;
   pins_released: number;
   third_values: number;
+  /** OPE-1617 — items new or different since the last read (content hash). */
+  items_changed: number;
+  /** OPE-1617 — previously-seen items this read no longer carries. */
+  dropped: Array<{
+    external_id: string;
+    title: string | null;
+    start_local: string | null;
+    event_id: string | null;
+    action: "opened" | "refreshed" | "replaced" | "noted" | "pinned_kept";
+  }>;
   items: IngestItemReport[];
 }
 
@@ -322,9 +348,33 @@ async function upsertDiscrepancy(
   return sameField.length ? "replaced" : "opened";
 }
 
+/** A stable hash of the mapped item, for change detection between reads. */
+async function contentHash(ev: FeedEvent): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify(ev));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)]
+    .slice(0, 12)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export async function ingestFeedItems(
   db: Db,
-  args: { feedId: string; items: FeedEvent[]; now: Date; dryRun: boolean; actor: string }
+  args: {
+    feedId: string;
+    items: FeedEvent[];
+    now: Date;
+    dryRun: boolean;
+    actor: string;
+    /**
+     * OPE-1617 — the local date range this read COMPLETELY covers. A previously
+     * seen item starting inside it (and not before today) that this read does
+     * not carry was dropped by the organizer: a cancellation signal. Omit it
+     * when the read is partial (a failed page, a capped list) — a gap in our
+     * read must never look like a cancellation.
+     */
+    dropScope?: { fromDate: string; toDate: string };
+  }
 ): Promise<IngestReport> {
   const { feedId, items, now, dryRun } = args;
   const [feed] = await db
@@ -347,13 +397,19 @@ export async function ingestFeedItems(
     pins_kept: 0,
     pins_released: 0,
     third_values: 0,
+    items_changed: 0,
+    dropped: [],
     items: [],
   };
 
   for (const ev of items) {
     const verdict = decideInclusion(ev, rules);
     const [prior] = await db
-      .select({ id: promoterFeedItems.id, eventId: promoterFeedItems.eventId })
+      .select({
+        id: promoterFeedItems.id,
+        eventId: promoterFeedItems.eventId,
+        contentHash: promoterFeedItems.contentHash,
+      })
       .from(promoterFeedItems)
       .where(
         and(eq(promoterFeedItems.feedId, feedId), eq(promoterFeedItems.externalId, ev.externalId))
@@ -386,9 +442,13 @@ export async function ingestFeedItems(
     if (reviewState === "linked") report.linked++;
     if (reviewState === "awaiting_review") report.awaiting_review++;
 
+    const hash = await contentHash(ev);
+    if (!prior || prior.contentHash !== hash) report.items_changed++;
     if (!dryRun) {
       const snapshot = JSON.stringify(ev);
       const values = {
+        contentHash: hash,
+        missingSince: null,
         eventId: link.eventId,
         title: ev.title,
         url: ev.url,
@@ -469,6 +529,24 @@ export async function ingestFeedItems(
           if (c) {
             finding = { ...c, ourValue };
           } else if (
+            field === "status" &&
+            feedValue === "cancelled" &&
+            ourValue !== null &&
+            !sameValue(field, ourValue, feedValue)
+          ) {
+            // OPE-1617 — a cancellation SIGNAL for review, never a silent
+            // lifecycle change: the event stays as we list it until the contact
+            // or an operator confirms.
+            finding = {
+              field,
+              kind: "feed_cancelled",
+              ourValue,
+              feedValue,
+              hint: "cancelled",
+              question: `${ev.title}${ev.startDate ? `, ${ev.startDate}` : ""}: your calendar now marks this as cancelled. Is it cancelled?`,
+              feedFixNote: `The calendar entry is marked cancelled; we still list it as scheduled.`,
+            };
+          } else if (
             feedValue !== null &&
             ourValue !== null &&
             !sameValue(field, ourValue, feedValue)
@@ -502,6 +580,9 @@ export async function ingestFeedItems(
     report.items.push(item);
   }
 
+  if (args.dropScope)
+    await detectDropped(db, { feedId, items, now, dryRun, report, scope: args.dropScope });
+
   if (!dryRun) {
     await db
       .update(promoterEventFeeds)
@@ -518,4 +599,127 @@ export async function ingestFeedItems(
     });
   }
   return report;
+}
+
+/**
+ * OPE-1617 — items we saw before that this complete read no longer carries.
+ *
+ * Only items whose start falls in the read's covered range AND is not in the
+ * past: an event that has happened falls off a feed normally, and an item
+ * outside the window was never asked for. A dropped item linked to an event we
+ * publish opens a `feed_dropped` status discrepancy (asked of the contact like
+ * every other); unlinked ones are only marked. `missing_since` is set once, so a
+ * later read does not re-report it; the item's reappearance clears it.
+ */
+async function detectDropped(
+  db: Db,
+  args: {
+    feedId: string;
+    items: FeedEvent[];
+    now: Date;
+    dryRun: boolean;
+    report: IngestReport;
+    scope: { fromDate: string; toDate: string };
+  }
+): Promise<void> {
+  const { feedId, now, dryRun, report } = args;
+  const today = now.toISOString().slice(0, 10);
+  const from = args.scope.fromDate > today ? args.scope.fromDate : today;
+  const seen = new Set(args.items.map((i) => i.externalId));
+  const candidates = await db
+    .select({
+      id: promoterFeedItems.id,
+      externalId: promoterFeedItems.externalId,
+      eventId: promoterFeedItems.eventId,
+      title: promoterFeedItems.title,
+      url: promoterFeedItems.url,
+      startLocal: promoterFeedItems.startLocal,
+      snapshot: promoterFeedItems.snapshot,
+    })
+    .from(promoterFeedItems)
+    .where(
+      and(
+        eq(promoterFeedItems.feedId, feedId),
+        isNull(promoterFeedItems.missingSince),
+        isNotNull(promoterFeedItems.startLocal),
+        gte(promoterFeedItems.startLocal, from),
+        // start_local is "YYYY-MM-DD[ HH:MM]"; "<date>~" sorts after any time on that date.
+        lte(promoterFeedItems.startLocal, `${args.scope.toDate}~`),
+        lt(promoterFeedItems.lastSeenAt, now)
+      )
+    );
+  for (const c of candidates) {
+    if (seen.has(c.externalId)) continue;
+    let action: IngestReport["dropped"][number]["action"] = "noted";
+    if (c.eventId) {
+      const [row] = await db
+        .select({ status: events.status })
+        .from(events)
+        .where(eq(events.id, c.eventId))
+        .limit(1);
+      if (row?.status === "APPROVED") {
+        const ours = await readEventFieldValues(db, c.eventId);
+        const pin = await getActivePin(db, c.eventId, "status");
+        if (pin) {
+          action = "pinned_kept";
+        } else if (ours?.status !== "cancelled") {
+          let prev: FeedEvent | null = null;
+          try {
+            prev = c.snapshot ? (JSON.parse(c.snapshot) as FeedEvent) : null;
+          } catch {
+            prev = null;
+          }
+          const when = `${c.title ?? "This event"}${c.startLocal ? `, ${c.startLocal.slice(0, 10)}` : ""}`;
+          action = await upsertDiscrepancy(db, {
+            eventId: c.eventId,
+            finding: {
+              field: "status",
+              kind: "feed_dropped",
+              ourValue: ours?.status ?? null,
+              feedValue: "removed_from_feed",
+              hint: "cancelled",
+              question: `${when}: this event is no longer on your calendar. Is it cancelled or moved?`,
+              feedFixNote: `The event was on the calendar and is now gone from it.`,
+            },
+            ourValue: ours?.status ?? null,
+            feedItem: prev ?? {
+              externalId: c.externalId,
+              title: c.title ?? "",
+              url: c.url,
+              startDate: c.startLocal?.slice(0, 10) ?? null,
+              endDate: null,
+              startTime: null,
+              endTime: null,
+              allDay: false,
+              timezone: null,
+              venue: null,
+              organizerEmails: [],
+              imageUrl: null,
+              description: "",
+              categories: [],
+              cost: null,
+              statusCancelled: false,
+            },
+            now,
+            dryRun,
+          });
+          if (action === "refreshed") report.discrepancies_refreshed++;
+          else report.discrepancies_opened++;
+        }
+      }
+    }
+    report.dropped.push({
+      external_id: c.externalId,
+      title: c.title,
+      start_local: c.startLocal,
+      event_id: c.eventId,
+      action,
+    });
+    if (!dryRun) {
+      await db
+        .update(promoterFeedItems)
+        .set({ missingSince: now })
+        .where(eq(promoterFeedItems.id, c.id));
+    }
+  }
 }

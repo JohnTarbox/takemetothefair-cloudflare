@@ -6578,7 +6578,8 @@ export const promoterEventFeeds = sqliteTable(
       .notNull()
       .references(() => promoters.id, { onDelete: "cascade" }),
     feedUrl: text("feed_url").notNull(),
-    kind: text("kind", { enum: ["tec_rest", "ical"] })
+    /** tec_rest = The Events Calendar REST; ical = any iCal/ICS URL incl. Google/Outlook; jsonld = schema.org Event pages (OPE-1617). */
+    kind: text("kind", { enum: ["tec_rest", "ical", "jsonld"] })
       .notNull()
       .default("tec_rest"),
     /** JSON FeedInclusionRules; NULL = the defaults. */
@@ -6588,11 +6589,27 @@ export const promoterEventFeeds = sqliteTable(
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     lastReadAt: integer("last_read_at", { mode: "timestamp" }),
     lastReadStatus: text("last_read_status"),
+    // OPE-1617 — polite polling: per-feed interval, next due time, error streak (backoff),
+    // and the HTTP validators sent back on the next conditional GET.
+    pollIntervalHours: integer("poll_interval_hours").notNull().default(6),
+    nextReadAt: integer("next_read_at", { mode: "timestamp" }),
+    consecutiveErrors: integer("consecutive_errors").notNull().default(0),
+    httpEtag: text("http_etag"),
+    httpLastModified: text("http_last_modified"),
+    // OPE-1617 — which ownership rule admitted the feed, recorded at registration.
+    ownershipBasis: text("ownership_basis", { enum: ["domain_list", "validated_contact"] }),
+    ownershipEvidence: text("ownership_evidence"),
+    ownershipInboundEmailId: text("ownership_inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }),
     createdBy: text("created_by"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
   },
-  (t) => [uniqueIndex("uq_promoter_event_feeds_url").on(t.promoterId, t.feedUrl)]
+  (t) => [
+    uniqueIndex("uq_promoter_event_feeds_url").on(t.promoterId, t.feedUrl),
+    index("idx_promoter_event_feeds_due").on(t.enabled, t.nextReadAt),
+  ]
 );
 
 export const promoterFeedItems = sqliteTable(
@@ -6620,6 +6637,8 @@ export const promoterFeedItems = sqliteTable(
     snapshot: text("snapshot"),
     firstSeenAt: integer("first_seen_at", { mode: "timestamp" }).notNull(),
     lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+    /** OPE-1617 — a read no longer carries this item (cancellation signal); cleared when it returns. */
+    missingSince: integer("missing_since", { mode: "timestamp" }),
   },
   (t) => [
     uniqueIndex("uq_promoter_feed_items_ext").on(t.feedId, t.externalId),

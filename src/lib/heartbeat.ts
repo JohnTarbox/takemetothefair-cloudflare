@@ -2508,6 +2508,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     },
   },
   {
+    // OPE-1617 — proof the hourly organizer-feed poll still RUNS. It writes one
+    // info row per run whether FEED_POLLING_ENABLED is on or off ("read nothing"
+    // is a run too), so this is live from the ship date while the reads it
+    // gates stay dormant (organizer-feed-ingest). 3h = three runs missed.
+    // Literal source: the job lives in the MCP Worker (FEED_POLL_SOURCE).
+    name: "organizer-feed-poll",
+    ownerOpe: "OPE-1617",
+    label: "hourly organizer-feed poll is running (reads gated by FEED_POLLING_ENABLED)",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "feeds:scheduled-poll"), eq(errorLogs.level, "info"))
+      ),
+  },
+  {
     // OPE-1610 — proof the hourly pending-contact attach job still RUNS. Most
     // runs attach nothing, so it writes one info row per run. 3h = three runs
     // missed. Literal source: the job lives in the MCP Worker.
