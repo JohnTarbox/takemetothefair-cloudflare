@@ -42,7 +42,7 @@
  * days-without-hours only for every basis: re-timing days that already have
  * hours is the OPE-479 shape, and the amendment's specimen is not about hours.
  */
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
 import {
   adminActions,
   eventDataCitations,
@@ -54,6 +54,7 @@ import {
 } from "../schema.js";
 import type { Db } from "../db.js";
 import { normalizeEventDate, registrableDomain } from "@takemetothefair/utils";
+import { toIsoDateOnly } from "@takemetothefair/datetime";
 import { citationSupersedeScope } from "@takemetothefair/db-schema";
 import { writeEventVisitorNoteCitation, VISITOR_NOTE_MAX } from "../tools/visitor-notes.js";
 import { writeEventPetCitation } from "../tools/pet-friendly.js";
@@ -104,6 +105,48 @@ export const AUTO_APPLY_FIELDS: ReadonlySet<string> = new Set([
 export const OVERWRITE_FIELDS: ReadonlySet<string> = new Set(
   [...AUTO_APPLY_FIELDS].filter((f) => f !== "event_days.hours")
 );
+
+/**
+ * John, 2026-11-10: a TRUSTED sender's single-high venue+date match qualifies
+ * too. The dedup stage behind this path returns the best row within ±7 days, so
+ * "one candidate, overlapping date" is proved here rather than assumed.
+ */
+export function isTrustedVenueDatePath(path: string, matchType: string | null): boolean {
+  return path === "single-high" && matchType === "venue_date";
+}
+
+/** Does exactly one event at this venue overlap the dates the email states? */
+export async function venueDateMatchIsSingle(
+  db: Db,
+  args: {
+    eventId: string;
+    venueId: string | null;
+    incoming: { startDate?: unknown; endDate?: unknown };
+  }
+): Promise<{ ok: boolean; reason: string }> {
+  const start = normalizeEventDate(String(args.incoming.startDate ?? ""));
+  const end = normalizeEventDate(String(args.incoming.endDate ?? "")) ?? start;
+  if (!start || !end) return { ok: false, reason: "the email states no parseable date" };
+  if (!args.venueId) return { ok: false, reason: "the matched event has no venue" };
+  const startDay = toIsoDateOnly(start);
+  const endDay = toIsoDateOnly(end);
+  const overlaps = (s: Date, e: Date | null) =>
+    toIsoDateOnly(s) <= endDay && startDay <= toIsoDateOnly(e ?? s);
+  const atVenue = await db
+    .select({ id: events.id, startDate: events.startDate, endDate: events.endDate })
+    .from(events)
+    .where(
+      and(
+        eq(events.venueId, args.venueId),
+        isNull(events.mergedInto),
+        ne(events.status, "REJECTED")
+      )
+    );
+  const overlapping = atVenue.filter((e) => e.startDate && overlaps(e.startDate, e.endDate));
+  return overlapping.length === 1 && overlapping[0].id === args.eventId
+    ? { ok: true, reason: "one event at this venue overlaps the email's dates" }
+    : { ok: false, reason: `${overlapping.length} events at this venue overlap the email's dates` };
+}
 
 /** Proposal paths whose match is unambiguous (requirement 2). */
 export function isUnambiguousMatch(path: string, matchType: string | null): boolean {

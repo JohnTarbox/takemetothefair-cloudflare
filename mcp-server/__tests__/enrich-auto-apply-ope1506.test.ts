@@ -7,6 +7,9 @@
  * against the test schema, and asserts the event row, the citation rows and the
  * audit row — the three things a reviewer would check by hand.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { chooseTrustedVenueDateReply } from "../src/email-handlers/trusted-no-url-reply.js";
 import { describe, it, expect, beforeEach } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createTestDb, type TestDb } from "./setup-db.js";
@@ -253,16 +256,123 @@ describe("OPE-1506 — the predicate's other guards", () => {
     expect(event("ev").estimatedAttendance).toBeNull();
   });
 
-  it("an ambiguous (fuzzy venue/date) match stays staged even from a trusted sender", async () => {
+  it("an ambiguous fuzzy match stays staged even from a trusted sender", async () => {
     seedPromoter("ng", null);
     seedEvent("ev", "ng");
     seedInbound("in-1", "carolyn@example.com", "pass");
     trust("carolyn@example.com");
-    const r = await stage({ matchType: "venue_date", event: { estimatedAttendance: 2000 } });
+    const r = await stage({ matchType: "city_state_date", event: { estimatedAttendance: 2000 } });
     expect(r.applied).toEqual([]);
     expect(isUnambiguousMatch("single-high", "venue_date")).toBe(false);
     expect(isUnambiguousMatch("possible-duplicate", null)).toBe(false);
     expect(isUnambiguousMatch("occurrence-exists", null)).toBe(true);
+  });
+
+  describe("John, 2026-11-10 — a trusted sender's single-high venue+date match", () => {
+    const CAROLYN = "carolyn@example.com";
+    const venueDate = (event: Record<string, unknown>) =>
+      stage({ matchType: "venue_date", event: { startDate: "2026-10-24", ...event } });
+    const setup = (extra: Record<string, unknown> = {}) => {
+      seedPromoter("ng", null);
+      seedEvent("ev", "ng", { venueId: "v1", ...extra });
+      seedInbound("in-1", CAROLYN, "pass");
+    };
+
+    it("applies empty allowed fields, with the audit row and citations (fixture ef2c16e5)", async () => {
+      setup();
+      trust(CAROLYN);
+      const r = await venueDate({
+        vendorFeeMin: 25,
+        vendorFeeMax: 40,
+        applicationUrl: "https://augustafleamarket.com/apply",
+      });
+      expect(r.applied).toEqual(
+        expect.arrayContaining(["vendor_fee_min_cents", "vendor_fee_max_cents", "application_url"])
+      );
+      expect(event("ev")).toMatchObject({
+        vendorFeeMinCents: 2500,
+        vendorFeeMaxCents: 4000,
+        applicationUrl: "https://augustafleamarket.com/apply",
+      });
+      expect(actions("dedup.enrich_applied")).toHaveLength(1);
+      expect(citations("ev").length).toBeGreaterThan(0);
+    });
+
+    it("never overwrites a filled field", async () => {
+      setup({ estimatedAttendance: 900 });
+      trust(CAROLYN);
+      const r = await venueDate({ estimatedAttendance: 2000 });
+      expect(r.applied).toEqual([]);
+      expect(event("ev").estimatedAttendance).toBe(900);
+    });
+
+    it("stays staged for a non-trusted sender, even a DMARC-aligned or validated one", async () => {
+      seedPromoter("ng", "https://organizer.example");
+      seedEvent("ev", "ng", { venueId: "v1" });
+      seedInbound("in-1", "pat@organizer.example", "pass");
+      const r = await venueDate({ estimatedAttendance: 2000 });
+      expect(r.applied).toEqual([]);
+      expect(event("ev").estimatedAttendance).toBeNull();
+    });
+
+    it("stays staged without an aligned DMARC pass", async () => {
+      seedPromoter("ng", null);
+      seedEvent("ev", "ng", { venueId: "v1" });
+      seedInbound("in-1", CAROLYN, "fail");
+      trust(CAROLYN);
+      expect((await venueDate({ estimatedAttendance: 2000 })).applied).toEqual([]);
+    });
+
+    it("stays staged when the matched event's dates do not overlap the email's", async () => {
+      setup();
+      trust(CAROLYN);
+      const r = await stage({
+        matchType: "venue_date",
+        event: { startDate: "2026-10-28", estimatedAttendance: 2000 },
+      });
+      expect(r.applied).toEqual([]);
+    });
+
+    it("stays staged when two events at the venue overlap", async () => {
+      setup();
+      seedEvent("ev-2", "ng", { venueId: "v1" });
+      trust(CAROLYN);
+      expect((await venueDate({ estimatedAttendance: 2000 })).applied).toEqual([]);
+    });
+
+    it("a merged or rejected row at the venue does not count as a second candidate", async () => {
+      setup();
+      seedEvent("ev-merged", "ng", { venueId: "v1", mergedInto: "ev", status: "REJECTED" });
+      seedEvent("ev-rej", "ng", { venueId: "v1", status: "REJECTED" });
+      trust(CAROLYN);
+      expect((await venueDate({ estimatedAttendance: 2000 })).applied).toEqual([
+        "estimated_attendance",
+      ]);
+    });
+
+    it("stays staged when the email states no date, or the event has no venue", async () => {
+      setup();
+      trust(CAROLYN);
+      expect(
+        (await stage({ matchType: "venue_date", event: { estimatedAttendance: 2000 } })).applied
+      ).toEqual([]);
+    });
+
+    it("stays staged when the matched event has no venue", async () => {
+      seedPromoter("ng", null);
+      seedEvent("ev", "ng");
+      seedInbound("in-1", CAROLYN, "pass");
+      trust(CAROLYN);
+      expect((await venueDate({ estimatedAttendance: 2000 })).applied).toEqual([]);
+    });
+
+    it("an image stays staged", async () => {
+      setup();
+      trust(CAROLYN);
+      const r = await venueDate({ imageUrl: "https://a.example/x.jpg", estimatedAttendance: 2000 });
+      expect(r.applied).toEqual(["estimated_attendance"]);
+      expect(event("ev").imageUrl).toBeNull();
+    });
   });
 
   it("never-auto fields stay staged: description, categories, image, source_url", async () => {
@@ -573,5 +683,46 @@ describe("OPE-1506 amendment — the overwrite is compare-and-set", () => {
     expect(r.applied).toEqual([]);
     const day = db.select().from(eventDays).where(eq(eventDays.eventId, "ev")).get()!;
     expect(day.openTime).toBeNull();
+  });
+});
+
+describe("OPE-1506 — the reply on a trusted venue+date match", () => {
+  const base = {
+    senderTrust: "trusted",
+    matchType: "venue_date",
+    listingUrl: "https://meetmeatthefair.com/events/flea",
+    name: "Augusta's Largest Indoor Flea Market",
+    applied: ["vendor_fee_min_cents", "application_url"],
+    staged: true,
+  };
+
+  it("names the listing and what was applied", () => {
+    expect(chooseTrustedVenueDateReply(base)).toEqual({
+      replyKind: "trusted-listing-match",
+      replyParams: {
+        eventName: base.name,
+        eventUrl: base.listingUrl,
+        appliedFields: "vendor fee, application link",
+        staged: true,
+      },
+    });
+  });
+
+  it.each([
+    ["an untrusted sender", { senderTrust: "unknown" }],
+    ["a watchlisted sender", { senderTrust: "watchlist" }],
+    ["another match type", { matchType: "exact_url" }],
+    ["a listing we may not link to", { listingUrl: null }],
+  ])("keeps already-exists for %s", (_label, over) => {
+    expect(chooseTrustedVenueDateReply({ ...base, ...over })).toBeNull();
+  });
+
+  it("every submit path that can reach the match passes the sender trust", () => {
+    const wf = readFileSync(join(__dirname, "../src/workflows/inbound-email.ts"), "utf8");
+    const direct = wf.split("this.submitExtractedEvent(").slice(1);
+    expect(direct).toHaveLength(4);
+    // Three single-event paths pass it. The fourth is the multi-URL fan-out,
+    // which has no single reply to tailor.
+    expect(direct.filter((b) => /\n\s*senderTrust\n\s*\);/.test(b.slice(0, 700)))).toHaveLength(3);
   });
 });
