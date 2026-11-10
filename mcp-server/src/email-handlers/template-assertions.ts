@@ -163,6 +163,16 @@ export const TEMPLATE_ASSERTIONS: Record<string, TemplateAssertion[]> = {
           : null,
     },
   ],
+  // OPE-1615 — same copy as support-ack, so the same claim.
+  "ack-after-classifier-failure": [
+    {
+      claim: "this has not been read by a person yet",
+      falsifiedBy: (f) =>
+        typeof f.inReplyTo === "string" && f.inReplyTo.toLowerCase().includes(OWN_DOMAIN)
+          ? "in_reply_to names our own message-id — this is a reply to a human, mid-correspondence"
+          : null,
+    },
+  ],
   "correction-ack": [
     {
       claim: "this has not been read by a person yet",
@@ -354,6 +364,7 @@ export const NEUTRAL_FALLBACK: Record<string, string> = {
   // "hasn't been read by a person yet" is false ⇔ this is a reply to us
   // mid-thread. `thread-reply-ack` is the template for precisely that.
   "support-ack": "thread-reply-ack",
+  "ack-after-classifier-failure": "thread-reply-ack",
   "correction-ack": "thread-reply-ack",
   "press-ack": "thread-reply-ack",
   // OPE-1134 — both new acks carry the same claim, so the same fallback.

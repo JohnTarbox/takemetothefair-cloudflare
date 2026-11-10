@@ -64,6 +64,8 @@ import type { ReplyKind } from "./types.js";
  */
 export const THREAD_REPLY_OVERRIDABLE_KINDS: readonly ReplyKind[] = [
   "support-ack",
+  // OPE-1615 — the support-ack copy, so it makes the same claim.
+  "ack-after-classifier-failure",
   "correction-ack",
   // OPE-1134 — the new acks make the same "not read by a person" claim.
   "vendor-inquiry-ack",

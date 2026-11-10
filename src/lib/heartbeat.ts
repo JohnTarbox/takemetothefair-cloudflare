@@ -353,6 +353,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, promoterListArrivals, promoterListArrivals.createdAt),
   },
   {
+    // OPE-1615 — the classifier retry loop RAN. Evidence is its per-attempt
+    // step record (`classify-retry/attempt`), written for every retry whether it
+    // recovered or not. Demand-conditional: it fires only on classifier errors,
+    // ~10% of inbound and never below 5.8% in a month (OPE-1089), against
+    // ~1.7 classified emails a day (OPE-1089: n=209, mean gap 14.1h) — about
+    // one retried email per 6 days. 720h (30 days) puts a false alarm from a
+    // quiet spell near 0.7% (Poisson, e^-5); tighten it from real rows later.
+    name: "classifier-retry",
+    ownerOpe: "OPE-1615",
+    label: "inbound workflow classify-retry/attempt step",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "classify-retry/attempt")
+      ),
+  },
+  {
     // OPE-1264 — the newsletter classifier RAN. Evidence is its step record,
     // written for EVERY email the inbound workflow evaluates (newsletter or
     // not), so a quiet fortnight of newsletters cannot false-fire it. 72h is

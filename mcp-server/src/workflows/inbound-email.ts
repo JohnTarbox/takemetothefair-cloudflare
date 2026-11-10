@@ -220,6 +220,17 @@ import { toMarkdownWithRetry } from "../email-handlers/ocr-retry.js";
 import { detectRosterTells, hasRosterSuspicion } from "../email-handlers/roster-tells.js";
 import { detectForwardedMachineNotification } from "../email-handlers/forwarded-machine-notification.js";
 import { recordWorkflowStep } from "../workflow-run-log.js";
+import { classifyIntent } from "../intent-classifier.js";
+import { senderTextOfReply } from "../email-handlers/claim-ask.js";
+import {
+  ACK_AFTER_CLASSIFIER_FAILURE,
+  CLASSIFIER_UNAVAILABLE_FAULT,
+  CLASSIFYING_STATUS,
+  classifyRetryReplyKind,
+  fallbackScreensOut,
+  runClassifyRetries,
+  type ClassifyRetryParams,
+} from "../inbound/classify-retry.js";
 import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
 import { issueCorrectionToken } from "../correction-tokens.js";
@@ -234,7 +245,14 @@ export type InboundEmailParams = {
   // existed; the run() reader defaults them to "unknown".
   senderTrust?: SenderTrustTier;
   emailAuth?: EmailAuthVerdict;
+  /** OPE-1615 — set when the entrypoint's classifier errored: re-classify first. */
+  classifyRetry?: ClassifyRetryParams;
 };
+
+/** OPE-1615 — what the retry loop decided, before dispatch. */
+type ClassifierRetryResolution =
+  | { outcome: "recovered"; intent: EmailIntent; attempt: number }
+  | { outcome: "exhausted"; screenedOut: boolean; obligationRef: string | null };
 
 /**
  * OPE-55 Phase 1 — a single event-shaped SOURCE for the unified
@@ -470,13 +488,30 @@ export function decisionDisposition(
 
 export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailParams> {
   async run(event: WorkflowEvent<InboundEmailParams>, step: WorkflowStep) {
-    const { messageRowId, intent } = event.payload;
+    const { messageRowId } = event.payload;
     // OPE-202 — sender trust + email-auth verdict, threaded to the handler via
     // HandlerCtx. Default "unknown" for any instance created before these
     // params existed (backward-compat).
     const senderTrust: SenderTrustTier = event.payload.senderTrust ?? "unknown";
     const emailAuth: EmailAuthVerdict = event.payload.emailAuth ?? "unknown";
     const sessionId = event.instanceId;
+
+    // ───── OPE-1615: classifier retries, ahead of everything ─────────
+    // The entrypoint's classifier errored, so nothing is decided yet. Re-classify
+    // on CLASSIFY_RETRY_DELAYS_SEC (+2 / +10 / +30 min) BEFORE mark-processing
+    // and before any lane, reply, obligation or event: a send can only happen
+    // after this loop ends, inside this one instance, so a retry cannot cause a
+    // second one. The row reads `classifying` / `classify-retry:<n>` meanwhile.
+    const classifierRetry = event.payload.classifyRetry
+      ? await this.resolveClassifierRetry(
+          step,
+          messageRowId,
+          sessionId,
+          event.payload.classifyRetry
+        )
+      : null;
+    const intent: EmailIntent =
+      classifierRetry?.outcome === "recovered" ? classifierRetry.intent : event.payload.intent;
 
     // ───── Step 1: mark-processing ──────────────────────────────────
     // Cosmetic status update + workflow_instance_id back-link. The
@@ -816,7 +851,24 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
     const newsletterLane = newsletterLaneOwns(newsletter, senderTrust);
 
-    if (blankQuestion) {
+    if (classifierRetry?.outcome === "exhausted") {
+      // OPE-1615 item 4 — every retry failed. No lane decides this message:
+      // the solicitation screen ran on its own, and either nothing is sent
+      // (screened out) or the neutral support-ack wording goes out with an
+      // obligation, so a person picks it up.
+      if (classifierRetry.screenedOut) {
+        routedToWorkflow = "short-circuit:screened-after-classifier-failure";
+        result = { replyKind: null, status: "forwarded" };
+      } else {
+        routedToWorkflow = "short-circuit:ack-after-classifier-failure";
+        result = {
+          replyKind: ACK_AFTER_CLASSIFIER_FAILURE,
+          status: "replied",
+          skipAdminDecision: true,
+          crossingDestinationRef: classifierRetry.obligationRef ?? undefined,
+        };
+      }
+    } else if (blankQuestion) {
       routedToWorkflow = "short-circuit:blank-question";
       // OPE-985 Ask B (ruled 2026-09-20). Two conditions ride here:
       //  1. NOT `replied`. The row owes the reader a person until they resend
@@ -1367,11 +1419,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             .select({
               ci: inboundEmails.classifiedIntent,
               cc: inboundEmails.classifiedConfidence,
+              cr: inboundEmails.classifiedRationale,
             })
             .from(inboundEmails)
             .where(eq(inboundEmails.id, messageRowId))
             .limit(1);
-          return isZeroConfidenceUnclear(r?.ci, r?.cc);
+          // OPE-1615 item 5 — the rationale tells a classifier that judged the
+          // mail worthless from one that never answered.
+          return isZeroConfidenceUnclear(r?.ci, r?.cc, r?.cr);
         }
       );
       if (zeroConfidenceUnclear) {
@@ -2280,6 +2335,163 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
    * rather than throwing, because there's nothing to retry — the sender
    * just didn't include a link.
    */
+  /**
+   * OPE-1615 — re-classify a message whose first classification errored.
+   * Every side effect sits in its own step, so a replay reuses the attempt it
+   * already made instead of calling the model again.
+   */
+  private async resolveClassifierRetry(
+    step: WorkflowStep,
+    messageRowId: string,
+    sessionId: string,
+    params: ClassifyRetryParams
+  ): Promise<ClassifierRetryResolution> {
+    const stepOpts = {
+      retries: { limit: 2, delay: "5 seconds" as const, backoff: "constant" as const },
+      timeout: "30 seconds" as const,
+    };
+    await step.do("classify-retry/mark-classifying", stepOpts, async () => {
+      await getDb(this.env.DB)
+        .update(inboundEmails)
+        .set({ status: CLASSIFYING_STATUS, workflowInstanceId: sessionId })
+        .where(eq(inboundEmails.id, messageRowId));
+    });
+
+    const outcome = await runClassifyRetries({
+      addressIntent: params.addressIntent,
+      sleep: (attempt, seconds) =>
+        step.sleep(`classify-retry/wait-${attempt}`, `${seconds} seconds`),
+      classify: (attempt) =>
+        step.do(`classify-retry/attempt-${attempt}`, stepOpts, async () => {
+          const [row] = await getDb(this.env.DB)
+            .select({ subject: inboundEmails.subject, bodyText: inboundEmails.bodyText })
+            .from(inboundEmails)
+            .where(eq(inboundEmails.id, messageRowId))
+            .limit(1);
+          const body = row?.bodyText ?? "";
+          if (!this.env.AI) {
+            // No binding: an error verdict, so the loop waits and the fallback
+            // answers rather than a lane guessing.
+            const now = Date.now();
+            return {
+              intents: [
+                {
+                  intent: "unclear" as const,
+                  subIntent: null,
+                  confidence: 0,
+                  rationale: "classifier-error: no AI binding",
+                  refUrl: null,
+                  refEventClue: null,
+                },
+              ],
+              version: "none",
+              fromAi: false,
+              startedAt: now,
+              finishedAt: now,
+              attempts: 0,
+            };
+          }
+          return classifyIntent(this.env.AI, {
+            toAddress: params.toAddress,
+            fromAddress: params.fromAddress,
+            senderTrustTier: params.senderTrustTier,
+            isReplyToOurThread: params.isReplyToOurThread,
+            attachmentCount: params.attachmentCount,
+            attachmentTypes: params.attachmentTypes,
+            subject: row?.subject ?? "",
+            bodyText: params.isReplyToOurThread ? senderTextOfReply(body) : body,
+          });
+        }),
+      onAttempt: (attempt, route) =>
+        step.do(`classify-retry/record-${attempt}`, stepOpts, async () => {
+          const db = getDb(this.env.DB);
+          await db
+            .update(inboundEmails)
+            .set(
+              route.kind === "routed"
+                ? {
+                    intent: route.intent,
+                    classifiedIntent: route.classifiedIntent,
+                    classifiedSubIntent: route.classifiedSubIntent,
+                    classifiedConfidence: route.confidence,
+                    classifiedRationale: route.rationale,
+                    classifiedAt: new Date(),
+                    routingSource: route.routingSource,
+                    ...(route.flaggedForReview ? { flaggedForReview: 1 } : {}),
+                    replyKind: classifyRetryReplyKind(attempt),
+                  }
+                : { replyKind: classifyRetryReplyKind(attempt) }
+            )
+            .where(eq(inboundEmails.id, messageRowId));
+          // Item 6 — one row per attempt, recovered or not, so recoveries per
+          // attempt and the delay to a verdict are a query, not a reconstruction.
+          await recordWorkflowStep(db, {
+            instanceId: sessionId,
+            workflowName: "inbound-email",
+            inboundEmailId: messageRowId,
+            stepName: "classify-retry/attempt",
+            status: route.kind === "routed" ? "ok" : "skipped",
+            detail: {
+              attempt,
+              outcome: route.kind === "routed" ? "recovered" : "classifier-error",
+              intent: route.kind === "routed" ? route.intent : null,
+              multi_intent_collapsed: route.kind === "routed" ? route.multiIntentCollapsed : false,
+            },
+          }).catch(() => {});
+        }),
+    });
+
+    if (outcome.outcome === "recovered") {
+      return { outcome: "recovered", intent: outcome.route.intent, attempt: outcome.attempt };
+    }
+
+    return step.do("classify-retry/fallback", stepOpts, async () => {
+      const db = getDb(this.env.DB);
+      const [row] = await db
+        .select()
+        .from(inboundEmails)
+        .where(eq(inboundEmails.id, messageRowId))
+        .limit(1);
+      const screenedOut = row
+        ? fallbackScreensOut({ subject: row.subject ?? "", bodyText: row.bodyText ?? "" })
+        : false;
+      let obligationRef: string | null = null;
+      if (row && !screenedOut) {
+        await db
+          .update(inboundEmails)
+          .set({ flaggedForReview: 1 })
+          .where(eq(inboundEmails.id, messageRowId));
+        obligationRef = await openObligationIfOwed(this.env, db, row, SOURCE, {
+          forceOwed: true,
+        });
+      }
+      // Item 4 — a fault either way, so CPI sees the classifier being down
+      // (FAM-CLASSIFIER-UNAVAILABLE matches this prefix).
+      await logError(this.env.DB, {
+        level: "error",
+        source: SOURCE,
+        message: `${CLASSIFIER_UNAVAILABLE_FAULT} ${outcome.attempts} retries failed; ${
+          screenedOut ? "screened out, nothing sent" : "neutral ack + obligation"
+        }`,
+        sessionId,
+        context: { messageRowId, attempts: outcome.attempts, screenedOut, obligationRef },
+      }).catch(() => {});
+      await recordWorkflowStep(db, {
+        instanceId: sessionId,
+        workflowName: "inbound-email",
+        inboundEmailId: messageRowId,
+        stepName: "classify-retry/fallback",
+        status: "ok",
+        detail: {
+          attempts: outcome.attempts,
+          screened_out: screenedOut,
+          obligation_ref: obligationRef,
+        },
+      }).catch(() => {});
+      return { outcome: "exhausted" as const, screenedOut, obligationRef };
+    });
+  }
+
   private async runSubmitPipeline(
     step: WorkflowStep,
     messageRowId: string,

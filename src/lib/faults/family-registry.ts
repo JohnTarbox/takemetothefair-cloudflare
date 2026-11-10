@@ -114,6 +114,19 @@ export const FAULT_FAMILIES: readonly FaultFamily[] = [
     guardStatus: "partial",
   },
   {
+    // OPE-1615 — the intent classifier failed every retry for one inbound email,
+    // so the message got the neutral fallback (or was screened out) instead of
+    // a lane. Written by the inbound-email workflow's classify-retry/fallback.
+    key: "FAM-CLASSIFIER-UNAVAILABLE",
+    title: "Intent classifier unavailable after retries",
+    matchers: ["classifier-unavailable:"],
+    rootCauseClass: "classifier-unavailable",
+    fixPattern:
+      "if sustained >1% of inbound: longer limit, shorter input, or a faster/smaller model (OPE-1615 item 6)",
+    guardStatus: "present",
+    guardRef: "mcp-server/src/inbound/classify-retry.ts",
+  },
+  {
     // Render throws off an empty/undefined collection (map/reduce/spread/access).
     key: "FAM-EMPTY-COLLECTION",
     title: "Empty-collection render throw",
