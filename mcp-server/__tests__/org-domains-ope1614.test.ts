@@ -214,7 +214,7 @@ describe("acceptance 3 — what may NOT add a domain", () => {
 
   it("a gmail sender adds nothing to any list", async () => {
     promoter(OHTM, "https://owlshead.org");
-    inbound("gm", "museum.events@gmail.com", "mx; dmarc=pass header.from=gmail.com");
+    inbound("gm", "sender.gmail@gmail.com", "mx; dmarc=pass header.from=gmail.com");
     await capturePromoterContacts(db, "gm", "wf");
     await attachPendingPromoterContacts(db, NOW, fakeWeb({}).impl);
     expect(raw.prepare("SELECT COUNT(*) AS n FROM org_domains").get()).toEqual({ n: 0 });
