@@ -59,6 +59,7 @@ import {
   gembaObservations,
   promoterListArrivals,
   venues,
+  supportObligations,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
@@ -1079,6 +1080,24 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         new Date()
       );
     },
+  },
+  {
+    // OPE-1510 — proof the contact-mail lane still opens its obligations. A
+    // known contact's ack is withheld by the same step that writes this row, so
+    // a lane that stopped running would mean contacts back on generic acks, or
+    // silence, with nothing else to say so.
+    name: "contact-lane",
+    ownerOpe: "OPE-1510",
+    label: "Contact-mail lane → contact obligation opened",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: async (db) =>
+      maxTs(
+        db,
+        supportObligations,
+        supportObligations.openedAt,
+        eq(supportObligations.kind, "contact")
+      ),
   },
   {
     // OPE-403 — proof the lane still RECORDS what it stored.

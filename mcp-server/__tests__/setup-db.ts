@@ -1439,6 +1439,10 @@ const SCHEMA_SQL = `
     matched_entity_id TEXT,
     match_basis TEXT,
     match_confidence REAL,
+    -- OPE-1510 (drizzle/0401) — the contact lane branches on these.
+    known_contact_basis TEXT,
+    known_contact_entity_type TEXT,
+    known_contact_entity_id TEXT,
     created_at INTEGER NOT NULL
   );
 
@@ -1742,8 +1746,11 @@ const SCHEMA_SQL = `
     reviewed_at INTEGER,
     review_note TEXT,
     sent_at INTEGER,
-    sent_message_id TEXT
+    sent_message_id TEXT,
+    inbound_email_id TEXT
   );
+  CREATE UNIQUE INDEX uq_operator_outbound_inbound
+    ON operator_outbound_drafts(inbound_email_id) WHERE inbound_email_id IS NOT NULL;
   CREATE INDEX idx_entity_claims_user ON entity_claims (user_id);
   CREATE INDEX idx_entity_claims_status ON entity_claims (status);
 

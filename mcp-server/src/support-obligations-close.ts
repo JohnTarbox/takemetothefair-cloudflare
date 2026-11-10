@@ -22,6 +22,13 @@ export const AUTO_CLOSED_BY = "auto:reply-manual";
 export const MANUAL_REPLY_SOURCE = "reply:manual";
 
 /**
+ * OPE-1510 — an approved draft that answers an inbound. A plain string, equal to
+ * OPERATOR_OUTBOUND_SOURCE, because importing the tool module here would pull the
+ * MCP tool layer into the queue consumer.
+ */
+export const OPERATOR_DRAFT_SOURCE = "operator:outbound";
+
+/**
  * OPE-1252 — the close happens when the send is CONFIRMED, not when it is
  * queued. It used to run in reply_to_inbound_email right after the enqueue, so
  * both live auto-closes landed 7–8 s before their ledger row: a job that then
@@ -34,15 +41,23 @@ export function shouldCloseOnSend(job: {
   source?: string;
   inboundEmailId?: string | null;
 }): boolean {
-  return job.source === MANUAL_REPLY_SOURCE && !!job.inboundEmailId;
+  return (
+    !!job.inboundEmailId &&
+    (job.source === MANUAL_REPLY_SOURCE || job.source === OPERATOR_DRAFT_SOURCE)
+  );
 }
 
 export function closeNoteForSend(
   ledgerMessageId: string,
-  providerMessageId?: string | null
+  providerMessageId?: string | null,
+  source: string = MANUAL_REPLY_SOURCE
 ): string {
+  const how =
+    source === OPERATOR_DRAFT_SOURCE
+      ? `an approved draft via review_operator_draft (${OPERATOR_DRAFT_SOURCE})`
+      : `a manual reply via reply_to_inbound_email (${MANUAL_REPLY_SOURCE})`;
   return (
-    `Answered by a manual reply via reply_to_inbound_email (${MANUAL_REPLY_SOURCE}); ` +
+    `Answered by ${how}; ` +
     `email_send_ledger.message_id=${ledgerMessageId}` +
     (providerMessageId ? `, provider id ${providerMessageId}` : "") +
     "."

@@ -83,6 +83,7 @@ import {
   type OwedHumanVerdict,
 } from "../email-handlers/owed-human.js";
 import { openObligationIfOwed } from "../email-handlers/open-obligation.js";
+import { runContactLane } from "../inbound/contact-lane.js";
 import { heldSendReason } from "../inbound/replies-suppressed.js";
 import { isZeroConfidenceUnclear } from "../email-handlers/automated-mail.js";
 import { inboundEmails, adminActions } from "../schema.js";
@@ -1375,6 +1376,54 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       }
     }
 
+    // OPE-1510 — a known contact never gets a generic ack. It gets an obligation
+    // and a draft for John to approve; nothing automatic goes in the ack's place.
+    // After promoter-contacts/capture, which is what makes a first-time reply to
+    // our outreach a contact. A failure here leaves today's behaviour and is
+    // logged at error level, so a broken lane cannot silently drop the reply.
+    let contactLaneFired = false;
+    try {
+      const laneReplyKind = result.replyKind;
+      const laneAlreadySuppressed = !!result.suppressReply;
+      const laneIsNewsletter = newsletter.isNewsletter;
+      const lane = await step.do(
+        "contact-lane",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "20 seconds" },
+        async () =>
+          runContactLane(getDb(this.env.DB), {
+            messageRowId,
+            replyKind: laneReplyKind,
+            replyAlreadySuppressed: laneAlreadySuppressed,
+            closedBySender,
+            isNewsletter: laneIsNewsletter,
+          })
+      );
+      if (lane.fired) {
+        contactLaneFired = true;
+        await logError(this.env.DB, {
+          level: "info",
+          source: SOURCE,
+          message: `known contact (${lane.basis}): ack withheld, obligation and draft queued (OPE-1510)`,
+          sessionId,
+          context: { messageRowId, replyKind: laneReplyKind, draftId: lane.draftId },
+        });
+        result = {
+          ...result,
+          suppressReply: true,
+          status: OWED_HUMAN_STATUS as typeof result.status,
+          ...(lane.obligationRef ? { crossingDestinationRef: lane.obligationRef } : {}),
+        };
+      }
+    } catch (err) {
+      await logError(this.env.DB, {
+        source: SOURCE,
+        message: "contact-lane failed; reply handled as for an unknown sender (OPE-1510)",
+        sessionId,
+        error: err,
+        context: { messageRowId, replyKind: result.replyKind },
+      });
+    }
+
     // OPE-1163 — no `thread-reply-ack` into a live human conversation. Decided
     // in its own step (a replay reuses it) BEFORE send-reply, and ledgered as
     // 'stubbed' with the reason so every suppression is auditable next to the
@@ -1850,7 +1899,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // decide on. `claim_request` joins correction + press because
     // `decisionToReplyKind` collapses it onto correction's decision shape.
     // OPE-254 — a handler may decline the pause via `skipAdminDecision`.
-    if (!caughtError && needsAdminDecision) {
+    // OPE-1510 — the decision pause ends in an automatic reply, and nothing
+    // automatic may reach a known contact. John's draft is the reply.
+    if (!caughtError && needsAdminDecision && !contactLaneFired) {
       await step.do(
         "mark-waiting",
         { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },

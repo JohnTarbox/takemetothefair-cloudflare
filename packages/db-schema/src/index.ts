@@ -3011,9 +3011,22 @@ export const supportObligations = sqliteTable(
     closedAt: integer("closed_at", { mode: "timestamp" }),
     closedBy: text("closed_by"),
     closeNote: text("close_note"),
+    /**
+     * OPE-1510 — `support` (the OPE-365 queue) or `contact` (a known contact
+     * wrote in and John owes them a reply). See SUPPORT_OBLIGATION_KIND.
+     */
+    kind: text("kind").notNull().default("support"),
+    /** OPE-1510 — reply-by time for a `contact` obligation; NULL on `support`. */
+    targetAt: integer("target_at", { mode: "timestamp" }),
   },
   (table) => [index("idx_support_obligations_status").on(table.status, table.openedAt)]
 );
+
+/** OPE-1510 — countable apart: a `contact` obligation carries a target. */
+export const SUPPORT_OBLIGATION_KIND = {
+  SUPPORT: "support",
+  CONTACT: "contact",
+} as const;
 
 /**
  * OPE-365 — `answered` and `not_an_obligation` stay distinct on purpose.
@@ -3030,6 +3043,11 @@ export const SUPPORT_OBLIGATION_STATUS = {
   NOT_AN_OBLIGATION: "not_an_obligation",
   /** Same person, same thread, already tracked elsewhere. */
   DUPLICATE: "duplicate",
+  /**
+   * OPE-1510 — the only manual close of a `contact` obligation, and it needs a
+   * note. Everything else about a contact closes on a reply that was sent.
+   */
+  NOT_NEEDED: "not_needed",
 } as const;
 
 export type SupportObligationStatus =
@@ -3160,8 +3178,19 @@ export const operatorOutboundDrafts = sqliteTable(
     reviewNote: text("review_note"),
     sentAt: integer("sent_at", { mode: "timestamp" }),
     sentMessageId: text("sent_message_id"),
+    /**
+     * OPE-1510 — the inbound this draft answers, NULL on a composed draft. The
+     * partial unique index makes the contact lane idempotent per message, and a
+     * send through this link threads the reply and closes the obligation.
+     */
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }),
   },
   (table) => [
+    uniqueIndex("uq_operator_outbound_inbound")
+      .on(table.inboundEmailId)
+      .where(sql`${table.inboundEmailId} IS NOT NULL`),
     index("idx_operator_outbound_status").on(table.status, table.composedAt),
     index("idx_operator_outbound_entity").on(table.relatedEntityType, table.relatedEntityId),
   ]
@@ -5888,6 +5917,13 @@ export const inboundEmails = sqliteTable(
     matchedEntityId: text("matched_entity_id"),
     matchBasis: text("match_basis"),
     matchConfidence: real("match_confidence"),
+    /**
+     * OPE-1510 — this sender is a known contact, and on what evidence. Unlike the
+     * report-only match_* columns above, the contact lane branches on it.
+     */
+    knownContactBasis: text("known_contact_basis"),
+    knownContactEntityType: text("known_contact_entity_type"),
+    knownContactEntityId: text("known_contact_entity_id"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
