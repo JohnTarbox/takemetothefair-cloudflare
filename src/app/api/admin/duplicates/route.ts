@@ -12,6 +12,7 @@ import {
 } from "@/lib/duplicates/similarity";
 import type { DuplicateEntityType, FindDuplicatesResponse } from "@/lib/duplicates/types";
 import { logError } from "@/lib/logger";
+import { loadStoredDuplicates } from "@/lib/duplicates/full-sweep";
 
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const searchParams = request.nextUrl.searchParams;
@@ -27,6 +28,25 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   }
 
   try {
+    // OPE-1597 — the daily full-table sweep's stored result, when one exists.
+    // The on-demand path below stays as the fallback for a type with no run yet.
+    const stored = await loadStoredDuplicates(db, type, threshold);
+    if (stored) {
+      const response: FindDuplicatesResponse = {
+        type,
+        threshold,
+        duplicates: stored.duplicates as unknown as FindDuplicatesResponse["duplicates"],
+        totalEntities: stored.run.checkedCount,
+        sweep: {
+          lastRunAt: stored.run.lastRunAt.toISOString(),
+          checkedCount: stored.run.checkedCount,
+          liveCount: stored.run.liveCount,
+          pairCount: stored.run.pairCount,
+        },
+      };
+      return NextResponse.json(response);
+    }
+
     let duplicates;
     let totalEntities = 0;
 

@@ -4,8 +4,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { createTestDb, type TestDb } from "./setup-db.js";
+import { CapturingMcpServer, createTestDb, type TestDb } from "./setup-db.js";
 import { inboundEmails } from "../src/schema.js";
+import { registerAdminTools } from "../src/tools/admin.js";
 import { handleReplyToInbound } from "../src/tools/reply-to-inbound-email.js";
 import { isPermanentSendError, sendViaCfEmail } from "../src/queue-consumers.js";
 import { MAX_ATTACHMENT_TOTAL_BYTES, MAX_ATTACHMENTS_PER_EMAIL } from "../src/email-attachments.js";
@@ -176,6 +177,48 @@ describe("reply_to_inbound_email attachments (OPE-1579)", () => {
       }
     );
     expect(res.ok === false && res.message).toContain("does NOT include");
+  });
+});
+
+describe("reply_to_inbound_email as registered on the Worker (OPE-1579)", () => {
+  // The cases above hand the handler a bucket directly, so they stayed green
+  // while the registration in admin.ts dropped the binding and production
+  // refused every attachment. These go through registerAdminTools.
+  const ADMIN = { userId: "admin-1", role: "ADMIN" as const };
+
+  async function invoke(env: Record<string, unknown>) {
+    await seed("source", [ref("inbound-attachments/source/form.pdf", "form.pdf")]);
+    const server = new CapturingMcpServer();
+    registerAdminTools(server as never, db as never, ADMIN, env as never);
+    const r = (await server.invoke("reply_to_inbound_email", {
+      inbound_email_id: "asker",
+      body: "Here is the form.",
+      attachments: [{ inbound_email_id: "source", index: 0 }],
+    })) as { content: Array<{ text: string }> };
+    return JSON.parse(r.content[0].text) as { success: boolean; message?: string };
+  }
+
+  it("reaches the Worker's VENDOR_ASSETS and queues the file", async () => {
+    const q = queue();
+    const out = await invoke({
+      EMAIL_JOBS: q,
+      EMAIL_REPLY_ENABLED: "true",
+      VENDOR_ASSETS: bucketWith({ "inbound-attachments/source/form.pdf": PDF }),
+    });
+
+    expect(out.success).toBe(true);
+    expect(q.send).toHaveBeenCalledTimes(1);
+    const job = (q.send.mock.calls[0] as unknown[])[0] as { attachments: unknown[] };
+    expect(job.attachments).toHaveLength(1);
+  });
+
+  it("still refuses, and sends nothing, on a Worker with no bucket", async () => {
+    const q = queue();
+    const out = await invoke({ EMAIL_JOBS: q, EMAIL_REPLY_ENABLED: "true" });
+
+    expect(out.success).toBe(false);
+    expect(out.message).toContain("VENDOR_ASSETS binding is not available");
+    expect(q.send).not.toHaveBeenCalled();
   });
 });
 

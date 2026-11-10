@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
-import { eq, and, or } from "drizzle-orm";
+import { eq, and, or, sql } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { auth } from "@/lib/auth";
@@ -55,7 +55,8 @@ export async function GET(request: Request) {
     }
 
     if (commercialVendors === "true") {
-      conditions.push(eq(events.commercialVendorsAllowed, true));
+      // OPE-1606 — unknown stays in; only an explicit no is filtered out.
+      conditions.push(sql`${events.commercialVendorsAllowed} IS NOT 0`);
     }
 
     // Fetch all events with venue data. Narrow projection via

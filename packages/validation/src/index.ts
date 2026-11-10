@@ -486,7 +486,7 @@ const eventBaseSchema = z.object({
   imageFocalX: z.number().min(0).max(1).optional().default(0.5),
   imageFocalY: z.number().min(0).max(1).optional().default(0.5),
   featured: z.boolean().optional().default(false),
-  commercialVendorsAllowed: z.boolean().optional().default(true),
+  commercialVendorsAllowed: z.boolean().nullable().optional(),
   // Vendor decision-support fields
   vendorFeeMin: z.number().min(0).optional().nullable(),
   vendorFeeMax: z.number().min(0).optional().nullable(),

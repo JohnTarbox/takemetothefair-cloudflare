@@ -34,6 +34,15 @@ export interface CaptureServerRenderErrorArgs {
   context?: { routePath?: string; routerKind?: string; routeType?: string };
 }
 
+/**
+ * OPE-1601 — error objects already written. A page's `generateMetadata` and its
+ * component read through one cached fetcher, so a failed read rejects both with
+ * the SAME object and Next reports it twice: 74 same-second pairs of
+ * `server-render` rows in the 2026-11-09 D1 burst. Identity rather than message,
+ * so two visitors hitting the same fault still write two rows.
+ */
+const capturedErrors = new WeakSet<object>();
+
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max)}…[truncated]` : value;
 }
@@ -52,10 +61,13 @@ export async function captureServerRenderError(
   try {
     const { error, request, context } = args;
 
+    if (typeof error === "object" && error !== null) {
+      if (capturedErrors.has(error)) return;
+      capturedErrors.add(error);
+    }
+
     const err = error as
-      | { message?: unknown; stack?: unknown; digest?: unknown }
-      | null
-      | undefined;
+      { message?: unknown; stack?: unknown; digest?: unknown } | null | undefined;
 
     // OPE-1030 — with the cause chain, and truncation applied to the wrapper
     // text rather than the cause: 225 `/blog` render errors on 2026-09-12 were

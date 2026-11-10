@@ -36,13 +36,13 @@ const adminNav = [
   { name: "Inbound Emails", href: "/admin/inbound-emails", icon: Inbox },
   { name: "Sent Emails", href: "/admin/sent-emails", icon: Send },
   { name: "Duplicates", href: "/admin/duplicates", icon: GitMerge },
-  { name: "Duplicate Flags", href: "/admin/duplicates/flags", icon: GitMerge },
   { name: "Blog Coverage", href: "/admin/coverage", icon: FileText },
   { name: "Blog Posts", href: "/admin/blog", icon: FileText },
   { name: "Stuck URLs", href: "/admin/stuck-urls", icon: BarChart3 },
   { name: "Analytics", href: "/admin/analytics", icon: BarChart3 },
   { name: "Database", href: "/admin/database", icon: Database },
   { name: "Error Logs", href: "/admin/logs", icon: FileWarning },
+  { name: "Problem Reports", href: "/admin/problem-reports", icon: FileWarning },
 ];
 
 // OPE-1380 — a nonce-CSP route (src/lib/csp.ts): it must render per request,

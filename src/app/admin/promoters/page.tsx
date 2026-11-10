@@ -1,93 +1,122 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Pencil, Trash2, Eye, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconButton, IconLink } from "@/components/ui/icon-button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  SortableHeader,
-  SortConfig,
-  sortData,
-  getNextSortDirection,
-} from "@/components/ui/sortable-table";
+  AdminPagedTable,
+  type AdminColumn,
+  type AdminFilter,
+} from "@/components/admin/admin-paged-table";
+import type { AdminPromoterRow } from "@/lib/admin-list/lists";
 
-interface Promoter {
-  id: string;
-  companyName: string;
-  slug: string;
-  verified: boolean;
-  user: { email: string; name: string | null } | null;
-  _count: { events: number };
+const FILTERS: AdminFilter[] = [
+  {
+    param: "claim",
+    allLabel: "All owners",
+    options: [
+      { value: "claimed", label: "Claimed" },
+      { value: "unclaimed", label: "Unclaimed" },
+    ],
+  },
+  {
+    param: "verified",
+    allLabel: "All statuses",
+    options: [
+      { value: "yes", label: "Verified" },
+      { value: "no", label: "Unverified" },
+    ],
+  },
+];
+
+async function deletePromoter(promoter: AdminPromoterRow, reload: () => void) {
+  // Include the company name in the confirm so the operator can
+  // re-confirm they targeted the right row (UX-R2, 2026-06-01 EVE).
+  if (!confirm(`Delete promoter "${promoter.companyName}"? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/admin/promoters/${promoter.id}`, { method: "DELETE" });
+    if (res.ok) {
+      reload();
+    } else {
+      // OPE-1125 — the route refuses to delete a promoter that still owns
+      // events (the delete would cascade to them). Say why, instead of the
+      // row silently staying put.
+      const data = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+      alert(data.message ?? data.error ?? `Delete failed (${res.status}).`);
+    }
+  } catch (error) {
+    console.error("Failed to delete promoter:", error);
+  }
 }
 
-export default function AdminPromotersPage() {
-  const [promoters, setPromoters] = useState<Promoter[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [sortConfig, setSortConfig] = useState<SortConfig>({
-    column: "companyName",
-    direction: "asc",
-  });
-
-  useEffect(() => {
-    fetchPromoters();
-  }, []);
-
-  const fetchPromoters = async () => {
-    try {
-      const res = await fetch("/api/admin/promoters");
-      const data = (await res.json()) as Promoter[];
-      setPromoters(data);
-    } catch (error) {
-      console.error("Failed to fetch promoters:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDelete = async (id: string, companyName: string) => {
-    // Include the company name in the confirm so the operator can
-    // re-confirm they targeted the right row (UX-R2, 2026-06-01 EVE).
-    if (!confirm(`Delete promoter "${companyName}"? This cannot be undone.`)) return;
-
-    try {
-      const res = await fetch(`/api/admin/promoters/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        setPromoters(promoters.filter((p) => p.id !== id));
-      } else {
-        // OPE-1125 — the route refuses to delete a promoter that still owns
-        // events (the delete would cascade to them). Say why, instead of the
-        // row silently staying put.
-        const data = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
-        alert(data.message ?? data.error ?? `Delete failed (${res.status}).`);
-      }
-    } catch (error) {
-      console.error("Failed to delete promoter:", error);
-    }
-  };
-
-  const handleSort = (column: string) => {
-    setSortConfig(getNextSortDirection(sortConfig, column));
-  };
-
-  const sortedPromoters = sortData(promoters, sortConfig, {
-    companyName: (p) => p.companyName,
-    user: (p) => p.user?.email || "",
-    events: (p) => p._count.events,
-    verified: (p) => p.verified,
-  });
-
-  if (loading) {
-    return (
-      <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-muted rounded w-1/4"></div>
-        <div className="h-64 bg-muted rounded"></div>
+const COLUMNS: AdminColumn<AdminPromoterRow>[] = [
+  {
+    key: "companyName",
+    label: "Company",
+    sortKey: "companyName",
+    cell: (p) => <p className="font-medium text-foreground">{p.companyName}</p>,
+  },
+  {
+    key: "user",
+    label: "User",
+    sortKey: "user",
+    cell: (p) =>
+      p.unclaimed ? (
+        <Badge variant="default">Unclaimed</Badge>
+      ) : (
+        <span className="text-muted-foreground">{p.ownerEmail}</span>
+      ),
+  },
+  {
+    key: "events",
+    label: "Events",
+    sortKey: "events",
+    cell: (p) => <span className="text-muted-foreground">{p.eventCount}</span>,
+  },
+  {
+    key: "verified",
+    label: "Status",
+    sortKey: "verified",
+    cell: (p) =>
+      p.verified ? (
+        <Badge variant="success" className="inline-flex items-center gap-1">
+          <CheckCircle className="w-3 h-3" />
+          Verified
+        </Badge>
+      ) : (
+        <Badge variant="default">Unverified</Badge>
+      ),
+  },
+  {
+    key: "actions",
+    label: "Actions",
+    align: "right",
+    cell: (p, { reload }) => (
+      <div className="flex items-center justify-end gap-1">
+        <IconLink
+          href={`/promoters/${p.slug}`}
+          aria-label={`View ${p.companyName}`}
+          icon={<Eye />}
+        />
+        <IconLink
+          href={`/admin/promoters/${p.id}/edit`}
+          aria-label={`Edit ${p.companyName}`}
+          icon={<Pencil />}
+        />
+        <IconButton
+          variant="danger"
+          onClick={() => void deletePromoter(p, reload)}
+          aria-label={`Delete ${p.companyName}`}
+          icon={<Trash2 />}
+        />
       </div>
-    );
-  }
+    ),
+  },
+];
 
+export default function AdminPromotersPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
@@ -99,95 +128,15 @@ export default function AdminPromotersPage() {
           </Button>
         </Link>
       </div>
-
-      <Card>
-        <CardHeader>
-          <p className="text-sm text-muted-foreground">{promoters.length} promoters total</p>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <SortableHeader
-                    column="companyName"
-                    label="Company"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="user"
-                    label="User"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="events"
-                    label="Events"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="verified"
-                    label="Status"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedPromoters.map((promoter) => (
-                  <tr key={promoter.id} className="border-b border-border">
-                    <td className="py-3 px-4">
-                      <p className="font-medium text-foreground">{promoter.companyName}</p>
-                    </td>
-                    <td className="py-3 px-4 text-muted-foreground">
-                      {promoter.user?.email || "-"}
-                    </td>
-                    <td className="py-3 px-4 text-muted-foreground">{promoter._count.events}</td>
-                    <td className="py-3 px-4">
-                      {promoter.verified ? (
-                        <Badge variant="success" className="inline-flex items-center gap-1">
-                          <CheckCircle className="w-3 h-3" />
-                          Verified
-                        </Badge>
-                      ) : (
-                        <Badge variant="default">Unverified</Badge>
-                      )}
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center justify-end gap-1">
-                        {/* IconLink + IconButton primitives — type-enforced
-                            aria-label, ≥40px hit area, single interactive
-                            element (no nested Link>Button). UX-R2, 2026-06-01. */}
-                        <IconLink
-                          href={`/promoters/${promoter.slug}`}
-                          aria-label={`View ${promoter.companyName}`}
-                          icon={<Eye />}
-                        />
-                        <IconLink
-                          href={`/admin/promoters/${promoter.id}/edit`}
-                          aria-label={`Edit ${promoter.companyName}`}
-                          icon={<Pencil />}
-                        />
-                        <IconButton
-                          variant="danger"
-                          onClick={() => handleDelete(promoter.id, promoter.companyName)}
-                          aria-label={`Delete ${promoter.companyName}`}
-                          icon={<Trash2 />}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+      <AdminPagedTable<AdminPromoterRow>
+        endpoint="/api/admin/promoters"
+        columns={COLUMNS}
+        rowKey={(p) => p.id}
+        noun="promoter"
+        searchPlaceholder="Search promoters by name…"
+        filters={FILTERS}
+        defaultSort={{ column: "companyName", direction: "asc" }}
+      />
     </div>
   );
 }

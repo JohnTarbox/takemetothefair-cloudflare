@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import type {
   DuplicateEntityType,
   DuplicatePair,
+  FindDuplicatesResponse,
   MergePreviewResponse,
 } from "@/lib/duplicates/types";
 
@@ -92,6 +93,7 @@ export default function AdminDuplicatesPage() {
   const [threshold, setThreshold] = useState(0.7);
   const [duplicates, setDuplicates] = useState<DuplicatePair[]>([]);
   const [totalEntities, setTotalEntities] = useState(0);
+  const [sweep, setSweep] = useState<FindDuplicatesResponse["sweep"]>(undefined);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sameDatesOnly, setSameDatesOnly] = useState(false);
@@ -119,7 +121,12 @@ export default function AdminDuplicatesPage() {
         );
       }
 
-      let data: { duplicates?: DuplicatePair[]; totalEntities?: number; error?: string };
+      let data: {
+        duplicates?: DuplicatePair[];
+        totalEntities?: number;
+        sweep?: FindDuplicatesResponse["sweep"];
+        error?: string;
+      };
       try {
         data = (await res.json()) as typeof data;
       } catch {
@@ -135,6 +142,7 @@ export default function AdminDuplicatesPage() {
 
       setDuplicates(data.duplicates || []);
       setTotalEntities(data.totalEntities || 0);
+      setSweep(data.sweep);
     } catch (err) {
       console.error("Failed to fetch duplicates:", err);
       const message = err instanceof Error ? err.message : "Failed to fetch duplicates";
@@ -359,7 +367,9 @@ export default function AdminDuplicatesPage() {
                         : duplicates;
                     return sameDatesOnly && entityType === "events"
                       ? `Showing ${filteredDuplicates.length} of ${duplicates.length} pairs with matching dates`
-                      : `Found ${duplicates.length} potential duplicate pairs from ${totalEntities} ${entityType}`;
+                      : sweep
+                        ? `Found ${sweep.pairCount} potential duplicate pairs · checked ${sweep.checkedCount} of ${sweep.liveCount} ${entityType} · last full sweep ${new Date(sweep.lastRunAt).toLocaleString()}${sweep.pairCount > duplicates.length ? ` · showing the top ${duplicates.length}` : ""}`
+                        : `Found ${duplicates.length} potential duplicate pairs from ${totalEntities} ${entityType} (first 500 only; no full sweep has run yet)`;
                   })()}
             </p>
           </div>
