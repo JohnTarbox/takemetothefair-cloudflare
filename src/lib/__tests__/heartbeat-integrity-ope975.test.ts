@@ -154,6 +154,10 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // the last 90 days, mean 14.1h. Sized off the MAX rather than the mean
       // because inbound volume is lumpy and a quiet week is normal.
       "classifier-execution": 240,
+      // OPE-1615 — demand-conditional on classifier errors: ~1 retried email
+      // per 6 days (10% of ~1.7/day), so 30 days keeps a quiet-spell false
+      // alarm near 0.7%. Re-size from real classify-retry/attempt rows.
+      "classifier-retry": 720,
       // OPE-1496 — PLACEHOLDER, dormant until the first digest links through
       // /go/; its arming ticket measures the redirect-row inter-arrival then.
       // Two weekly sends, because scanners prefetch every link on each send.
@@ -274,6 +278,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "self-announced-exhibitor": 720,
       "gemba-observation": 720,
       "event-document-post": 2160,
+      // OPE-1613 — dormant placeholder until feeds are read on a schedule.
+      "organizer-feed-ingest": 720,
       // OPE-1265 — dormant placeholder, same stance as gemba-observation.
       "promoter-list-arrival": 720,
       // OPE-1264 — measured: the largest gap between workflow emails over 60 days was 50.5h.

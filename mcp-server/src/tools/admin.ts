@@ -203,6 +203,7 @@ import { registerEventApplicationTools } from "./admin-event-applications.js";
 import { registerUpdateSeriesTool } from "./admin-update-series.js";
 import { registerPromoterContactTools } from "./admin-promoter-contacts.js";
 import { registerOrgDomainTools } from "./admin-org-domains.js";
+import { registerOrganizerFeedTools } from "./admin-organizer-feeds.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
 import { registerRequestImageUploadSlotTool } from "./request-image-upload-slot.js";
@@ -501,6 +502,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerPromoterContactTools(server, db, auth);
   // OPE-1614 — an org's domain list: list / add / retire / review / discover / shared.
   registerOrgDomainTools(server, db, auth);
+
+  // OPE-1613 — organizer feeds, field provenance and pins (admin only; dry-run defaults; sends nothing).
+  registerOrganizerFeedTools(server, db, auth);
 
   // Read-only recommendations feed — same data as /admin/analytics ▸
   // Recommendations. Adds get_recommendations, get_recommendation_rule.
@@ -1256,8 +1260,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe("Category list, e.g. ['Craft Fair','Market']"),
       tags: z.array(z.string()).optional().describe("Tag list, e.g. ['family-friendly','outdoor']"),
       ticket_url: z.string().optional().describe("URL to buy tickets"),
-      ticket_price_min: z.number().optional().describe("Minimum ticket price"),
-      ticket_price_max: z.number().optional().describe("Maximum ticket price"),
+      ticket_price_min: z
+        .number()
+        .nullable()
+        .optional()
+        .describe(
+          "Minimum ticket price in dollars. Pass null to clear it back to unknown, e.g. to strip an unverified $0 (OPE-1622)."
+        ),
+      ticket_price_max: z
+        .number()
+        .nullable()
+        .optional()
+        .describe("Maximum ticket price in dollars. Pass null to clear it (OPE-1622)."),
       image_url: z.string().optional().describe("Event image URL"),
       // IMG1 §1b Phase 1 (2026-06-08) — per-image focal point. Range
       // [0, 1] matching Cloudflare's gravity=XxY (0,0 = top-left).

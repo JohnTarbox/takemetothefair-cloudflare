@@ -330,6 +330,18 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1613 — an operator read a promoter's own event feed (ingest_promoter_feed,
+    // non-dry-run). DORMANT (enabled_at NULL, drizzle/0406): feeds are read by hand
+    // until a schedule exists; arm it with a measured window when one ships.
+    name: "organizer-feed-ingest",
+    ownerOpe: "OPE-1613",
+    label: "ingest_promoter_feed → feed.ingested",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(db, adminActions, adminActions.createdAt, eq(adminActions.action, "feed.ingested")),
+  },
+  {
     // OPE-328 — gemba@ observations queued for an agent to post to Linear.
     // DORMANT (enabled_at NULL, drizzle/0348) until the gemba@ Email Routing
     // rule exists; then a month without one row means the lane went dark.
@@ -352,6 +364,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 720,
     lastEvidenceAt: (db) => maxTs(db, promoterListArrivals, promoterListArrivals.createdAt),
+  },
+  {
+    // OPE-1615 — the classifier retry loop RAN. Evidence is its per-attempt
+    // step record (`classify-retry/attempt`), written for every retry whether it
+    // recovered or not. Demand-conditional: it fires only on classifier errors,
+    // ~10% of inbound and never below 5.8% in a month (OPE-1089), against
+    // ~1.7 classified emails a day (OPE-1089: n=209, mean gap 14.1h) — about
+    // one retried email per 6 days. 720h (30 days) puts a false alarm from a
+    // quiet spell near 0.7% (Poisson, e^-5); tighten it from real rows later.
+    name: "classifier-retry",
+    ownerOpe: "OPE-1615",
+    label: "inbound workflow classify-retry/attempt step",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "classify-retry/attempt")
+      ),
   },
   {
     // OPE-1264 — the newsletter classifier RAN. Evidence is its step record,

@@ -248,7 +248,21 @@ export function isBurstCrossing(
  */
 export function isZeroConfidenceUnclear(
   classifiedIntent: string | null | undefined,
-  classifiedConfidence: number | null | undefined
+  classifiedConfidence: number | null | undefined,
+  /**
+   * OPE-1615 item 5 — a `classifier-error:` rationale means the model never
+   * answered: not a judgement that the mail is worthless. That case is
+   * retried, then answered by the fallback, so the guard must not withhold it.
+   * (Literal prefix rather than an import from inbound/classify-retry.ts, to
+   * keep this module free of the classifier's import graph.)
+   */
+  classifiedRationale?: string | null
 ): boolean {
+  if (
+    typeof classifiedRationale === "string" &&
+    classifiedRationale.startsWith("classifier-error:")
+  ) {
+    return false;
+  }
   return classifiedIntent === "unclear" && !(Number(classifiedConfidence ?? 0) > 0);
 }
