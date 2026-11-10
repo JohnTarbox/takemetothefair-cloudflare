@@ -1,0 +1,17 @@
+-- OPE-1573 — index the /vendors listing's `?type=` facet.
+--
+-- A filtered render runs `… WHERE deleted_at IS NULL AND vendor_type = ?
+-- ORDER BY business_name`. The only usable index was
+-- idx_vendors_deleted_business_name (deleted_at, business_name), so prod's plan
+-- was `SEARCH vendors USING INDEX idx_vendors_deleted_business_name
+-- (deleted_at=?)` and every facet URL read ~13.6K rows to return a handful
+-- (prod, 2026-11-06: `vendor_type='Wood Carving'` read 13,613 rows for 1 row).
+-- A crawler enumerating facet URLs did that ~670 times in 65s on 2026-11-05.
+--
+-- Leading on vendor_type turns the equality into the seek; deleted_at IS NULL
+-- and the business_name order are served from the same index, so there is no
+-- temp B-tree. `SELECT DISTINCT vendor_type` can also run off it as a covering
+-- index scan.
+--
+-- Schema-only and idempotent; a no-op on an empty database.
+CREATE INDEX IF NOT EXISTS idx_vendors_type_deleted_business_name ON vendors (vendor_type, deleted_at, business_name);

@@ -18,6 +18,7 @@ import { z } from "zod";
 import { and, asc, eq, gte, inArray, isNull, like, sql } from "drizzle-orm";
 import {
   supportObligations,
+  SUPPORT_OBLIGATION_KIND,
   SUPPORT_OBLIGATION_STATUS,
   emailSendLedger,
   inboundEmails,
@@ -52,16 +53,28 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
     ].join(" "),
     {
       status: z
-        .enum(["open", "answered", "not_an_obligation", "duplicate", "all"])
+        .enum(["open", "answered", "not_an_obligation", "duplicate", "not_needed", "all"])
         .optional()
         .default("open"),
+      kind: z
+        .enum(["support", "contact", "all"])
+        .optional()
+        .default("all")
+        .describe(
+          "OPE-1510 — 'contact' = a known contact wrote in and a reply is owed by target_at."
+        ),
       limit: z.number().int().min(1).max(200).optional().default(50),
     },
-    async ({ status, limit }) => {
+    async ({ status, kind, limit }) => {
       const rows = await db
         .select()
         .from(supportObligations)
-        .where(status === "all" ? undefined : eq(supportObligations.status, status))
+        .where(
+          and(
+            status === "all" ? undefined : eq(supportObligations.status, status),
+            !kind || kind === "all" ? undefined : eq(supportObligations.kind, kind)
+          )
+        )
         .orderBy(asc(supportObligations.openedAt))
         .limit(limit);
 
@@ -180,6 +193,21 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
         // Grouping is a convenience; the list itself must still return.
       }
 
+      // OPE-1510 — contact obligations stay countable apart from support ones.
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const [contactWaiting] = await db
+        .select({
+          open: sql<number>`count(*)`,
+          pastTarget: sql<number>`sum(CASE WHEN ${supportObligations.targetAt} < ${nowSeconds} THEN 1 ELSE 0 END)`,
+        })
+        .from(supportObligations)
+        .where(
+          and(
+            eq(supportObligations.status, SUPPORT_OBLIGATION_STATUS.OPEN),
+            eq(supportObligations.kind, SUPPORT_OBLIGATION_KIND.CONTACT)
+          )
+        );
+
       const [oldest] = await db
         .select({ openedAt: supportObligations.openedAt })
         .from(supportObligations)
@@ -196,6 +224,10 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
               conversations_waiting: Number(waiting?.conversationsWaiting ?? 0),
               open_rows: Number(waiting?.openRows ?? 0),
               note: "people_waiting = distinct sender address across OPEN obligations; conversations_waiting = distinct thread (a pre-threading row counts as its own). open_rows - people_waiting = envelopes the per-row count double-counts.",
+            },
+            contact: {
+              open: Number(contactWaiting?.open ?? 0),
+              past_target: Number(contactWaiting?.pastTarget ?? 0),
             },
             oldestOpenAt: oldest?.openedAt ?? null,
             oldestOpenAgeHours: oldest?.openedAt
@@ -258,16 +290,24 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
       "",
       "These stay distinct deliberately. Collapsing them into 'closed' makes a drained",
       "queue and an ignored queue look identical, which is the failure already sitting in",
-      "inbound_exceptions. Admin only.",
+      "inbound_exceptions.",
+      "",
+      "A 'contact' obligation (OPE-1510) closes only when a reply is sent, or here as",
+      "not_needed with a note. A reply sent from Gmail never reaches us, so record that",
+      "as not_needed with a note saying so. Admin only.",
     ].join(" "),
     {
       id: z.string().min(8).describe("Obligation id from list_support_obligations."),
-      status: z.enum(["answered", "not_an_obligation", "duplicate"]),
+      status: z.enum(["answered", "not_an_obligation", "duplicate", "not_needed"]),
       note: z.string().max(1000).optional().describe("Recorded on the row."),
     },
     async ({ id, status, note }) => {
       const [row] = await db
-        .select({ id: supportObligations.id, status: supportObligations.status })
+        .select({
+          id: supportObligations.id,
+          status: supportObligations.status,
+          kind: supportObligations.kind,
+        })
         .from(supportObligations)
         .where(eq(supportObligations.id, id))
         .limit(1);
@@ -286,6 +326,22 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
               message: `Already '${row.status}'. Re-closing would overwrite who closed it and when.`,
             }),
           ],
+          isError: true,
+        };
+      }
+
+      const isContact = row.kind === SUPPORT_OBLIGATION_KIND.CONTACT;
+      const refusal =
+        isContact && status !== SUPPORT_OBLIGATION_STATUS.NOT_NEEDED
+          ? "A contact obligation closes only on a sent reply, or as not_needed with a note."
+          : status === SUPPORT_OBLIGATION_STATUS.NOT_NEEDED && !isContact
+            ? "not_needed applies only to a contact obligation."
+            : status === SUPPORT_OBLIGATION_STATUS.NOT_NEEDED && !note?.trim()
+              ? "not_needed requires a note saying why no reply is owed."
+              : null;
+      if (refusal) {
+        return {
+          content: [jsonContent({ ok: false, error: "refused", id, message: refusal })],
           isError: true,
         };
       }

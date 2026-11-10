@@ -115,6 +115,8 @@ function isExternalSender(fromAddress: string | null | undefined): boolean {
  * N+1 shape would be invisible at 3 emails a week and quadratic the day it is
  * pointed at a backfill.
  */
+const NOT_WAITING_INTENTS: ReadonlySet<string> = new Set(["spam", "held-automated"]);
+
 export async function buildCorrespondentBriefing(
   db: Db,
   opts: { windowDays?: number; now?: Date } = {}
@@ -236,7 +238,9 @@ export async function buildCorrespondentBriefing(
     windowDays,
     generatedAt: now,
     rows,
-    waiting: rows.filter((r) => r.waitingOnUs),
+    // OPE-1604: spam and automated senders can sit unanswered forever and that is
+    // correct, so they don't belong in a queue of people waiting on a reply.
+    waiting: rows.filter((r) => r.waitingOnUs && !NOT_WAITING_INTENTS.has(r.intent ?? "")),
     scannedTotal: scanned.length,
     filteredSystemSenders: scanned.length - external.length,
   };

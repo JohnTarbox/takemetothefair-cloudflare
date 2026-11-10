@@ -84,7 +84,13 @@ import {
 } from "../email-handlers/owed-human.js";
 import { openObligationIfOwed } from "../email-handlers/open-obligation.js";
 import { chooseTrustedNoUrlReply } from "../email-handlers/trusted-no-url-reply.js";
+import { runContactLane } from "../inbound/contact-lane.js";
 import { heldSendReason } from "../inbound/replies-suppressed.js";
+import {
+  ledgerSuppressedReply,
+  suppressedAckOutcome,
+  ZERO_CONFIDENCE_UNCLEAR_REASON,
+} from "../email-handlers/ack-suppression.js";
 import { isZeroConfidenceUnclear } from "../email-handlers/automated-mail.js";
 import { inboundEmails, adminActions } from "../schema.js";
 import { logError } from "../logger.js";
@@ -106,6 +112,7 @@ import {
 import {
   decideLinkReply,
   findListedEventByExactLink,
+  findPublicListedEventById,
   type LinkOutcome,
 } from "../email-handlers/link-reply.js";
 // OPE-431 — one definition of "may this event URL go in an email".
@@ -207,7 +214,7 @@ import { classifySourceStaleness, sourceDomainOf } from "../email-handlers/stale
 import { recordSourceStale } from "../goodwill/scoring.js";
 import { stageEnrichOnMatch, type StageEnrichInput } from "../email-handlers/enrich-proposal.js";
 import { matchEventFromText, type TextMatchResult } from "../inbound/text-event-match.js";
-import { findVisitorFacts } from "@takemetothefair/utils";
+import { findVisitorFacts, isAiAnswerLink } from "@takemetothefair/utils";
 import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
 import { toMarkdownWithRetry } from "../email-handlers/ocr-retry.js";
@@ -514,6 +521,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
 
     // ───── Step 2: dispatch (per-intent) ────────────────────────────
     let result: HandlerResult;
+    // OPE-1609 — why this row's reply was withheld, for the ledger row below.
+    let replySuppressedReason: string | null = null;
     let caughtError: string | null = null;
 
     // OPE-174 — record which pipeline the classified row was dispatched to.
@@ -852,6 +861,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // source of truth for sends. Inventing a terminal status here would
         // widen an enum read across the inbound sweeps for a cosmetic gain.
         result = { replyKind: "empty-message", status: "replied", suppressReply: true };
+        replySuppressedReason = "empty-message-burst-follower";
       }
     } else if (newsletterLane && (intent === "submit" || intent === "new_event")) {
       // OPE-1286 — the switch-over. The submit pipeline reads one event out of
@@ -1176,6 +1186,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         context: { messageRowId, replyKind: result.replyKind, intent },
       });
       result = { ...result, suppressReply: true };
+      replySuppressedReason = "fan-out-coalesced";
     } else if (fanoutRole && fanoutRole.otherIntents.length > 0) {
       result = {
         ...result,
@@ -1264,6 +1275,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         context: { messageRowId, replyKind: result.replyKind, basis: newsletter.basis },
       });
       result = { ...result, suppressReply: true };
+      replySuppressedReason = "promoter-newsletter";
     }
     // OPE-1285 — itemize the newsletter and dispose of each dated item against
     // our events: corroborating citations, date discrepancies, and a recorded
@@ -1372,7 +1384,56 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           context: { messageRowId, replyKind: result.replyKind, intent },
         });
         result = { ...result, suppressReply: true };
+        replySuppressedReason = ZERO_CONFIDENCE_UNCLEAR_REASON;
       }
+    }
+
+    // OPE-1510 — a known contact never gets a generic ack. It gets an obligation
+    // and a draft for John to approve; nothing automatic goes in the ack's place.
+    // After promoter-contacts/capture, which is what makes a first-time reply to
+    // our outreach a contact. A failure here leaves today's behaviour and is
+    // logged at error level, so a broken lane cannot silently drop the reply.
+    let contactLaneFired = false;
+    try {
+      const laneReplyKind = result.replyKind;
+      const laneAlreadySuppressed = !!result.suppressReply;
+      const laneIsNewsletter = newsletter.isNewsletter;
+      const lane = await step.do(
+        "contact-lane",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "20 seconds" },
+        async () =>
+          runContactLane(getDb(this.env.DB), {
+            messageRowId,
+            replyKind: laneReplyKind,
+            replyAlreadySuppressed: laneAlreadySuppressed,
+            closedBySender,
+            isNewsletter: laneIsNewsletter,
+          })
+      );
+      if (lane.fired) {
+        contactLaneFired = true;
+        await logError(this.env.DB, {
+          level: "info",
+          source: SOURCE,
+          message: `known contact (${lane.basis}): ack withheld, obligation and draft queued (OPE-1510)`,
+          sessionId,
+          context: { messageRowId, replyKind: laneReplyKind, draftId: lane.draftId },
+        });
+        result = {
+          ...result,
+          suppressReply: true,
+          status: OWED_HUMAN_STATUS as typeof result.status,
+          ...(lane.obligationRef ? { crossingDestinationRef: lane.obligationRef } : {}),
+        };
+      }
+    } catch (err) {
+      await logError(this.env.DB, {
+        source: SOURCE,
+        message: "contact-lane failed; reply handled as for an unknown sender (OPE-1510)",
+        sessionId,
+        error: err,
+        context: { messageRowId, replyKind: result.replyKind },
+      });
     }
 
     // OPE-1163 — no `thread-reply-ack` into a live human conversation. Decided
@@ -1408,6 +1469,21 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           suppressReply: true,
         };
       }
+    }
+
+    // OPE-1609 — every withheld reply leaves a `stubbed` ledger row naming why.
+    // The thread-ack guard above already wrote its own, with more detail.
+    if (result.replyKind !== null && result.suppressReply && !threadAckSuppressed) {
+      const suppressed = {
+        messageRowId,
+        replyKind: result.replyKind as string,
+        reason: replySuppressedReason ?? "handler-suppressed",
+      };
+      await step.do(
+        "reply-guard/ledger-suppression",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => ledgerSuppressedReply(getDb(this.env.DB), suppressed)
+      );
     }
 
     if (result.replyKind !== null && !result.suppressReply) {
@@ -1699,10 +1775,15 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 rows[0].parsedUrl ??
                 null;
               const listed = await findListedEventByExactLink(db, link);
+              const textMatched = await findPublicListedEventById(
+                db,
+                typeof params.textMatchedEventId === "string" ? params.textMatchedEventId : null
+              );
               const decision = decideLinkReply({
                 link,
                 linkOutcome: params.linkOutcome as LinkOutcome | undefined,
                 listed,
+                textMatched,
                 params,
               });
               replyKind = decision.kind;
@@ -1847,7 +1928,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // decide on. `claim_request` joins correction + press because
     // `decisionToReplyKind` collapses it onto correction's decision shape.
     // OPE-254 — a handler may decline the pause via `skipAdminDecision`.
-    if (!caughtError && needsAdminDecision) {
+    // OPE-1510 — the decision pause ends in an automatic reply, and nothing
+    // automatic may reach a known contact. John's draft is the reply.
+    if (!caughtError && needsAdminDecision && !contactLaneFired) {
       await step.do(
         "mark-waiting",
         { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
@@ -2034,6 +2117,17 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     } else {
       inferredFetchMethod = result.fetchMethod ?? null;
     }
+    // OPE-1609 — only the zero-confidence withhold is rewritten. See
+    // ack-suppression.ts for why burst followers and fan-out losers are not.
+    const recorded =
+      result.replyKind !== null && replySuppressedReason === ZERO_CONFIDENCE_UNCLEAR_REASON
+        ? suppressedAckOutcome({
+            replyKind: result.replyKind,
+            status: result.status,
+            crossingDestinationRef: result.crossingDestinationRef,
+            reason: ZERO_CONFIDENCE_UNCLEAR_REASON,
+          })
+        : { replyKind: result.replyKind, status: result.status };
     await step.do(
       "mark-done",
       { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
@@ -2081,9 +2175,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 ? CLOSED_BY_SENDER_STATUS
                 : isOwedHuman
                   ? OWED_HUMAN_STATUS
-                  : result.status,
+                  : recorded.status,
             error: caughtError ?? null,
-            replyKind: result.replyKind ?? null,
+            replyKind: recorded.replyKind ?? null,
             resultingEventId: result.resultingEventId ?? null,
             fetchMethod: inferredFetchMethod,
             // extraction_method tracking (drizzle/0083). Only populated on
@@ -2174,7 +2268,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     return {
       messageRowId,
       intent,
-      finalStatus: caughtError ? ("failed" as const) : result.status,
+      finalStatus: caughtError ? ("failed" as const) : recorded.status,
       replyKind: result.replyKind,
       error: caughtError,
     };
@@ -2306,7 +2400,18 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // whole body — a link is a link wherever it sits.
     const bodyProseText = submissionProseText(bodyTextRaw, subject);
     const bodyHasSubstance = bodyHasProseSubstance(stripSignature(bodyProseText));
-    const bodyUrls = extractAllUrls(bodyTextRaw, "", 10);
+    const allBodyUrls = extractAllUrls(bodyTextRaw, "", 10);
+    // OPE-1591 — a shared Google AI answer is not a source and is never fetched.
+    // Removed here, before any path can pick it up. When it was the only link,
+    // the row routes as a no-URL submission: the text match and any body prose
+    // still get their chance, and the reply is chosen at send (decideLinkReply).
+    const bodyUrls = allBodyUrls.filter((u) => !isAiAnswerLink(u));
+    const routingParsedUrl = isAiAnswerLink(rowSnapshot.parsedUrl) ? null : rowSnapshot.parsedUrl;
+    const aiAnswerLink = isAiAnswerLink(rowSnapshot.parsedUrl)
+      ? rowSnapshot.parsedUrl
+      : (allBodyUrls.find((u) => isAiAnswerLink(u)) ?? null);
+    const aiAnswerLinkOnly =
+      aiAnswerLink !== null && bodyUrls.length === 0 && routingParsedUrl === null;
 
     // ───── OPE-68: OCR poster/PDF attachments into extra submit sources ─────
     // When the receive-time capture stored image/PDF attachments (attachmentRefs
@@ -2536,7 +2641,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // Then the OCR'd attachments (ordered last, same as the body pseudo-source
       // rationale — provenance-carrying URL/body events created first).
       sources.push(...attachmentSources);
-      const overflowed = bodyUrls.length >= 10;
+      const overflowed = allBodyUrls.length >= 10;
       return await this.runMultiSourcePipeline(
         step,
         sources,
@@ -2613,7 +2718,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // URL string as if it were page content — which is how the fabricated
       // description got written in the first place.
       if (bodyHasSubstance) sources.push({ kind: "body", text: bodyProseText });
-      const overflowed = bodyUrls.length >= 10;
+      const overflowed = allBodyUrls.length >= 10;
       return await this.runMultiSourcePipeline(
         step,
         sources,
@@ -2634,7 +2739,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // single-URL path if multi-URL extraction yields zero or one URL
     // (e.g. classifier mislabeled or all candidates failed cleanUrl).
     if (rowSnapshot.classifiedSubIntent === "multi_url" && rowSnapshot.bodyTextExcerpt) {
-      const allUrls = extractAllUrls(rowSnapshot.bodyTextExcerpt, "", 10);
+      const allUrls = extractAllUrls(rowSnapshot.bodyTextExcerpt, "", 10).filter(
+        (u) => !isAiAnswerLink(u)
+      );
       if (allUrls.length >= 2) {
         const overflowed = allUrls.length >= 10;
         return await this.runMultiUrlPipeline(
@@ -2677,7 +2784,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     const hasBodyText = bodyHasProseSubstance(
       stripSignature(stripForwardedPreamble(rowSnapshot.bodyTextExcerpt ?? ""))
     );
-    const noUrlOrFreeText = !rowSnapshot.parsedUrl || isFreeText;
+    const noUrlOrFreeText = !routingParsedUrl || isFreeText;
     // OPE-1057 — a NULL sub-intent means the classifier never ran, not that it
     // ruled the body out. The trusted fast path skips the classifier, so on
     // that path `isFreeText` was false for every message and a trusted sender's
@@ -2701,17 +2808,23 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // fallback reply distinguishes "tried, didn't extract enough" from
       // "nothing to try." Drives `no-url-prose-failed` vs `no-url` below.
       let attemptedProse = false;
-      if ((isFreeText || classifierSkipped) && hasBodyText) {
+      // OPE-1591 — prose beside an AI answer link used to reach the extractor
+      // through the fan-out, which that link no longer enters.
+      if ((isFreeText || classifierSkipped || aiAnswerLinkOnly) && hasBodyText) {
         attemptedProse = true;
         if (!isFreeText) {
-          // Countable: this attempt exists only because no classifier ran.
+          // Countable: this attempt exists only because no classifier ran, or
+          // because an AI answer link was the only link.
           await recordWorkflowStep(getDb(this.env.DB), {
             instanceId,
             workflowName: "inbound-email",
             inboundEmailId: messageRowId,
             stepName: "submit/free-text-gate",
             status: "ok",
-            detail: { reason: "classifier_skipped", classified_sub_intent: null },
+            detail: {
+              reason: classifierSkipped ? "classifier_skipped" : "ai_answer_link_only",
+              classified_sub_intent: rowSnapshot.classifiedSubIntent,
+            },
           }).catch(() => {});
         }
         // Best-effort: if extraction fails to produce a viable event, we
@@ -2774,7 +2887,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           stepName: "submit/free-text-extract",
           status: hasMinFields ? "ok" : "failed",
           detail: {
-            gate: isFreeText ? "classifier_free_text" : "classifier_skipped",
+            gate: isFreeText
+              ? "classifier_free_text"
+              : classifierSkipped
+                ? "classifier_skipped"
+                : "ai_answer_link_only",
             outcome: hasMinFields
               ? "drafted"
               : extracted
@@ -2880,8 +2997,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // but the reply copy then asserted the link did not exist. When
       // `parsed_url` is populated, "we couldn't find a link" is simply false —
       // and false in the direction that blames the sender for our failure.
+      const linkForReply = rowSnapshot.parsedUrl ?? aiAnswerLink;
       const noUrlKind: ReplyKind = chooseNoUrlReplyKind({
-        parsedUrl: rowSnapshot.parsedUrl,
+        parsedUrl: linkForReply,
         attemptedProse,
       });
       // OPE-1505 Ask 4 — a trusted sender is never asked for the fields back.
@@ -2897,7 +3015,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         replyParams: {
           subject,
           hasAttachments: rowSnapshot.attachmentCount > 0,
-          ...(rowSnapshot.parsedUrl ? { attemptedUrl: rowSnapshot.parsedUrl } : {}),
+          ...(linkForReply ? { attemptedUrl: linkForReply } : {}),
+          // OPE-1591 — an id, not a name: the send step decides whether this
+          // event's page is public before the copy may link to it.
+          ...(aiAnswerLinkOnly && textMatch?.outcome === "matched" && textMatch.matched
+            ? { textMatchedEventId: textMatch.matched.id }
+            : {}),
           ...trustedReply?.replyParams,
         },
         status: "replied",
@@ -2911,7 +3034,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // when parsedUrl is null. TS doesn't narrow through the derived
     // boolean, so assert here. Closes a typecheck regression from PR #253
     // (the classifier-override change made the narrowing less direct).
-    const url = rowSnapshot.parsedUrl as string;
+    const url = routingParsedUrl as string;
 
     let fetched: SubmitFetchResult;
     try {

@@ -62,6 +62,9 @@ export type ReplyKind =
   // source_url of an event we list publicly. Chosen only on an exact-link match
   // (link-reply.ts), never on a text match.
   | "already-listed-link"
+  // OPE-1591 — the sender's only link is a shared Google AI answer. Not fetched
+  // and not a source, so "we couldn't open it" would be the wrong reason.
+  | "ai-answer-link"
   // OPE-407 — the message arrived carrying nothing: no attachment, no
   // meaningful body, no usable subject. Distinct from `no-url`, which is a
   // claim about a body that contains no link; these have no body to inspect.

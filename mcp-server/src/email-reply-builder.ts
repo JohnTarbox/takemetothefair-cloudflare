@@ -473,6 +473,26 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    case "ai-answer-link": {
+      // OPE-1591 — text approved by John 2026-11-08, option 1, "as written".
+      // The "may already list" paragraph appears only on a text match, and says
+      // "may" because a text match is weaker than reply A's exact link match.
+      const matchedName =
+        typeof params.textMatchedEventName === "string" ? params.textMatchedEventName : null;
+      const matchedUrl =
+        typeof params.textMatchedEventUrl === "string" ? params.textMatchedEventUrl : null;
+      const maybeListed =
+        matchedName && matchedUrl
+          ? `It looks like we may already list this one: ${matchedName}\n  ${matchedUrl}\n\n`
+          : "";
+      return `Thanks for emailing Meet Me at the Fair!
+
+${maybeListed}That link is a Google AI answer, so we can't see the organizer's page from it, and we don't use AI answers as a source.
+
+If you can, reply with the organizer's own website or Facebook event, or just the event's name, dates and town in a line of text.
+
+${SIGN_OFF}`;
+    }
     case "already-listed-link": {
       // OPE-1316 reply A, approved 2026-11-03 (closing line removed). Reached
       // only on an EXACT link match against a public event's source_url

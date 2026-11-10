@@ -26,7 +26,7 @@
  */
 
 /** The inbound facts a predicate may consult. Deliberately small. */
-import { isBlankAskAboutEventBody } from "@takemetothefair/utils";
+import { isAiAnswerLink, isBlankAskAboutEventBody } from "@takemetothefair/utils";
 
 export interface InboundFacts {
   /** `inbound_emails.parsed_url` — a URL we actually stored off the message. */
@@ -224,6 +224,18 @@ export const TEMPLATE_ASSERTIONS: Record<string, TemplateAssertion[]> = {
           : null,
     },
   ],
+  // OPE-1591 — false when we hold a different link and no AI answer link at all.
+  "ai-answer-link": [
+    {
+      claim: "that link is a Google AI answer",
+      falsifiedBy: (f) =>
+        typeof f.parsedUrl === "string" &&
+        !isAiAnswerLink(f.parsedUrl) &&
+        !(f.bodyText?.match(/\bhttps?:\/\/\S+/gi) ?? []).some((u) => isAiAnswerLink(u))
+          ? `parsed_url is ${f.parsedUrl} and the body has no AI answer link`
+          : null,
+    },
+  ],
   "already-exists": [
     {
       claim: "we already have this event",
@@ -339,6 +351,8 @@ export const NEUTRAL_FALLBACK: Record<string, string> = {
   "unfetchable-url": "no-url",
   // OPE-1316 — nothing listed to point at ⇔ we just couldn't use the link.
   "already-listed-link": "unfetchable-url",
+  // OPE-1591 — not an AI answer after all ⇔ an ordinary link we couldn't use.
+  "ai-answer-link": "unfetchable-url",
   // "hasn't been read by a person yet" is false ⇔ this is a reply to us
   // mid-thread. `thread-reply-ack` is the template for precisely that.
   "support-ack": "thread-reply-ack",

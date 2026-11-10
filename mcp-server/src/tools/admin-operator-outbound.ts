@@ -34,7 +34,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, asc, eq } from "drizzle-orm";
-import { operatorOutboundDrafts, PENDING_REPLY_STATUS } from "../schema.js";
+import { inboundEmails, operatorOutboundDrafts, PENDING_REPLY_STATUS } from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -153,6 +153,7 @@ export function registerOperatorOutboundTools(
               composed_at: r.composedAt?.toISOString() ?? null,
               status: r.status,
               sent_at: r.sentAt?.toISOString() ?? null,
+              inbound_email_id: r.inboundEmailId ?? null,
             })),
           }),
         ],
@@ -167,8 +168,16 @@ export function registerOperatorOutboundTools(
       id: z.string().min(8).describe("Draft id from list_operator_drafts."),
       action: z.enum(["approve", "discard"]),
       note: z.string().max(1000).optional().describe("Why — recorded on the row."),
+      body_text: z
+        .string()
+        .min(10)
+        .max(8000)
+        .optional()
+        .describe(
+          "OPE-1510 — on approve, send this text instead of the drafted body. The edit is saved on the row."
+        ),
     },
-    async ({ id, action, note }) => {
+    async ({ id, action, note, body_text }) => {
       const [row] = await db
         .select()
         .from(operatorOutboundDrafts)
@@ -212,6 +221,18 @@ export function registerOperatorOutboundTools(
       }
 
       // ── approve ──────────────────────────────────────────────────────────
+      const bodyText = body_text ?? row.bodyText;
+      if (body_text !== undefined && body_text !== row.bodyText) {
+        await db
+          .update(operatorOutboundDrafts)
+          .set({ bodyText: body_text })
+          .where(
+            and(
+              eq(operatorOutboundDrafts.id, id),
+              eq(operatorOutboundDrafts.status, PENDING_REPLY_STATUS.PENDING)
+            )
+          );
+      }
       const enabled = operatorOutboundEnabled(env);
       if (!enabled || !env?.EMAIL_JOBS) {
         // Approval is a human decision and is worth recording even when
@@ -237,11 +258,16 @@ export function registerOperatorOutboundTools(
       // Enqueue with a source of `operator:outbound` — deliberately not
       // `reply:*`, so the inbound queue's flag does not silently govern this
       // queue too. The gate for this path was checked above.
+      // OPE-1510 — a draft answering an inbound threads under it, and the
+      // consumer closes the obligation once the send is confirmed.
+      const threading = row.inboundEmailId ? await inboundThreading(db, row.inboundEmailId) : null;
       await env.EMAIL_JOBS.send({
         to: row.toAddress,
         subject: row.subject,
-        text: row.bodyText,
+        text: bodyText,
         source: OPERATOR_OUTBOUND_SOURCE,
+        ...(row.inboundEmailId ? { inboundEmailId: row.inboundEmailId } : {}),
+        ...(threading ? { inReplyTo: threading, references: threading } : {}),
       });
 
       const now = new Date();
@@ -277,6 +303,23 @@ export function registerOperatorOutboundTools(
       };
     }
   );
+}
+
+/** The Message-ID to thread under: a fan-out child stores none, its parent does. */
+async function inboundThreading(db: Db, inboundEmailId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ messageId: inboundEmails.messageId, parentEmailId: inboundEmails.parentEmailId })
+    .from(inboundEmails)
+    .where(eq(inboundEmails.id, inboundEmailId))
+    .limit(1);
+  if (row?.messageId) return row.messageId;
+  if (!row?.parentEmailId) return null;
+  const [parent] = await db
+    .select({ messageId: inboundEmails.messageId })
+    .from(inboundEmails)
+    .where(eq(inboundEmails.id, row.parentEmailId))
+    .limit(1);
+  return parent?.messageId ?? null;
 }
 
 /** Settle a draft without sending. Concurrency-guarded on `pending`. */
