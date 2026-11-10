@@ -112,6 +112,8 @@ describe("OPE-1614 — decideDomainMatch over a domain list", () => {
     });
   });
   it("a gmail address never matches, whatever the list", () => {
-    expect(decideDomainMatch("a@gmail.com", ["gmail.com", "ohtm.org"]).match).toBe(false);
+    expect(decideDomainMatch("sender.gmail@gmail.com", ["gmail.com", "ohtm.org"]).match).toBe(
+      false
+    );
   });
 });

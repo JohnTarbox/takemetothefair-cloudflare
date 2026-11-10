@@ -46,6 +46,12 @@ export const EVENT_REVIEW_FLAG_REASONS = [
   "ungrounded_name",
   /** Flagged before reasons were recorded (drizzle/0341 backfill). */
   "legacy",
+  /**
+   * OPE-1618 — the promoter's own spreadsheet proposes changes to this event.
+   * Portal edits of a live listing are requests, not writes (OPE-1514 option D),
+   * so the import stages them on `promoter_import_rows.proposed_changes`.
+   */
+  "promoter_import_update",
 ] as const;
 export type EventReviewFlagReason = (typeof EVENT_REVIEW_FLAG_REASONS)[number];
 

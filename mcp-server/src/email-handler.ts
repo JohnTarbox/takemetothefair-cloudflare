@@ -37,6 +37,7 @@ import { logError } from "./logger.js";
 import { stripQuotedReply } from "./email-handlers/strip-quoted-reply.js";
 import { storedMessageIdForms } from "./email-handlers/message-id-forms.js";
 import { dropInferredClaimSibling, senderTextOfReply } from "./email-handlers/claim-ask.js";
+import { classifyRetryReplyKind, shouldDeferClassification } from "./inbound/classify-retry.js";
 import {
   analyzeForward,
   isRfc822Attachment,
@@ -833,6 +834,11 @@ export async function handleInboundEmail(
         .filter((t) => t.length > 0),
     });
 
+    // OPE-1615 — the classifier ran and never answered. That is "we don't know
+    // yet", so this row gets no verdict, no lane and no reply now: the workflow
+    // re-classifies on CLASSIFY_RETRY_DELAYS_SEC before it dispatches anything.
+    const deferClassification = shouldDeferClassification(routing);
+
     // 4. Spam quarantine (spec §C.6). When the classifier confidently
     //    flagged spam, we INSERT for audit then bail out — no forward,
     //    no workflow create, no auto-reply. Mirrors the rate-limit
@@ -1129,11 +1135,15 @@ export async function handleInboundEmail(
             // get null so the partial-unique on message_id doesn't
             // collide across the family.
             messageId: parentRowId ? null : messageId,
-            classifiedIntent: r.classifiedIntent,
-            classifiedSubIntent: r.classifiedSubIntent,
-            classifiedConfidence: r.confidence,
+            // OPE-1615 — a deferred row stores no intent and no confidence: it
+            // must never read `unclear`/0 while a retry is pending. The
+            // `classifier-error:` rationale stays as the evidence of why.
+            classifiedIntent: deferClassification ? null : r.classifiedIntent,
+            classifiedSubIntent: deferClassification ? null : r.classifiedSubIntent,
+            classifiedConfidence: deferClassification ? null : r.confidence,
             classifiedRationale: r.rationale,
-            classifiedAt: routing.classifierVersion ? now : null,
+            classifiedAt: routing.classifierVersion && !deferClassification ? now : null,
+            replyKind: deferClassification ? classifyRetryReplyKind(0) : null,
             classifierVersion: routing.classifierVersion,
             routingSource: r.routingSource,
             routedToWorkflow: null,
@@ -1194,7 +1204,32 @@ export async function handleInboundEmail(
           // OPE-202 — thread the sender trust tier + email-auth verdict computed
           // above so the per-intent handler (e.g. photo_intake) can gate on
           // "authenticated + trusted" without re-deriving.
-          params: { messageRowId: rowId, intent: r.intent, senderTrust, emailAuth },
+          params: {
+            messageRowId: rowId,
+            intent: r.intent,
+            senderTrust,
+            emailAuth,
+            // OPE-1615 — the classifier inputs the retry needs; the body is
+            // re-read from the row rather than carried in the params.
+            ...(deferClassification
+              ? {
+                  classifyRetry: {
+                    addressIntent: effectiveAddressIntent,
+                    toAddress: toAddr,
+                    fromAddress: fromAddr,
+                    senderTrustTier: senderTrust,
+                    isReplyToOurThread: isReplyToOurThread(
+                      parsed.inReplyTo ?? null,
+                      parsed.references ?? null
+                    ),
+                    attachmentCount,
+                    attachmentTypes: effectiveAttachments
+                      .map((a) => a.mimeType || "")
+                      .filter((t) => t.length > 0),
+                  },
+                }
+              : {}),
+          },
           retention: { successRetention: "7 days", errorRetention: "7 days" },
         });
         workflowInstanceIds.push(instance.id);

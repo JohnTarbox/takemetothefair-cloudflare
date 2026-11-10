@@ -340,11 +340,12 @@ export async function addOrgDomain(
     return { ok: true, changed: true, status: "active", domain: plan.domain };
   }
 
-  const id = crypto.randomUUID();
-  await db
+  // The id comes from the table's $defaultFn, read back with RETURNING. A bare
+  // crypto.randomUUID() here fails the browser-floor guard: this package is
+  // client-reachable, and below Safari 15.4 that blanks the page (OPE-640).
+  const inserted = await db
     .insert(orgDomains)
     .values({
-      id,
       entityType: input.entityType,
       entityId: input.entityId,
       domain: plan.domain,
@@ -357,7 +358,12 @@ export async function addOrgDomain(
       createdAt: now,
       updatedAt: now,
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning({ id: orgDomains.id });
+  const id = inserted[0]?.id;
+  // Another writer inserted the same row between our read and this insert:
+  // nothing was written here, so there is nothing to audit.
+  if (!id) return { ok: true, changed: false, status: plan.status, domain: plan.domain };
   await audit(
     db,
     plan.status === "active" ? "org_domain.added" : "org_domain.candidate",
@@ -408,22 +414,25 @@ export async function retireOrgDomain(
       .set({ status: "retired", retiredBy: input.actor, retiredAt: now, updatedAt: now })
       .where(eq(orgDomains.id, id));
   } else {
-    id = crypto.randomUUID();
-    await db.insert(orgDomains).values({
-      id,
-      entityType: input.entityType,
-      entityId: input.entityId,
-      domain,
-      status: "retired",
-      method: "website",
-      evidence: entry.evidence,
-      sourceUrl: entry.sourceUrl,
-      addedBy: entry.addedBy,
-      retiredBy: input.actor,
-      retiredAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
+    // $defaultFn id, as in addOrgDomain (browser-floor guard).
+    const [row] = await db
+      .insert(orgDomains)
+      .values({
+        entityType: input.entityType,
+        entityId: input.entityId,
+        domain,
+        status: "retired",
+        method: "website",
+        evidence: entry.evidence,
+        sourceUrl: entry.sourceUrl,
+        addedBy: entry.addedBy,
+        retiredBy: input.actor,
+        retiredAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning({ id: orgDomains.id });
+    id = row.id;
   }
   await audit(
     db,

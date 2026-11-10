@@ -550,7 +550,7 @@ beforeEach(() => {
   mail.run(
     "in-stranger",
     ts,
-    "x@gmail.com",
+    "someone.calendar@gmail.com",
     "submit@meetmeatthefair.com",
     "support",
     "pass",

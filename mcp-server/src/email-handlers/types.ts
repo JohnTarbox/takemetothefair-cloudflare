@@ -123,6 +123,9 @@ export type ReplyKind =
   // Generic per-intent acks (initial / timeout fallback)
   | "correction-ack"
   | "support-ack"
+  // OPE-1615 — the support-ack wording, sent after every classifier retry
+  // failed; a distinct kind so the fallback is countable.
+  | "ack-after-classifier-failure"
   // OPE-1134 — intent-matched acks for the two intents the dispatch collapses
   // (vendor_inquiry → support, claim_request → correction). See ack-kind.ts.
   | "vendor-inquiry-ack"
