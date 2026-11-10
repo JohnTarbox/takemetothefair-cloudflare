@@ -125,6 +125,7 @@ import {
 } from "../email-handlers/public-event-url.js";
 import { handle as handleCorrection } from "../email-handlers/correction.js";
 import { handle as handleSupport } from "../email-handlers/support.js";
+import { handle as handlePromoterOnboarding } from "../email-handlers/promoter-onboarding.js";
 import { handle as handleProblemReport } from "../email-handlers/problem-report.js";
 import { handle as handlePress } from "../email-handlers/press.js";
 import { handle as handleUnsubscribe } from "../email-handlers/unsubscribe.js";
@@ -378,6 +379,7 @@ const HANDLERS: Record<Exclude<EmailIntent, "submit" | "new_event">, HandlerFn> 
   spam: handleSpam,
   // Classifier-introduced intents that route through legacy handlers:
   claim_request: handleCorrection, // record in admin_actions; admin reviews
+  promoter_onboarding: handlePromoterOnboarding,
   vendor_inquiry: handleSupport, // manual response via support template
   unclear: handleUnknown, // catch-all admin triage
   multi: handleUnknown, // parent row of a multi-intent split; children carry the real intent

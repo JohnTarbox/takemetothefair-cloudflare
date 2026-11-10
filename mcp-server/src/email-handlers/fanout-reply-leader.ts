@@ -81,6 +81,8 @@ export const FANOUT_REPLY_RANK: Record<EmailIntent, number> = {
   // OPE-1265 — never replies; ranks at the floor so a list issue can never be
   // the child that speaks for a fan-out.
   list_subscription: 0,
+  // OPE-1608 — the reply is John's draft, so this child never speaks for a fan-out.
+  promoter_onboarding: 0,
   vendor_inquiry: 60,
   source_suggestion: 50,
   press: 40,

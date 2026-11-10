@@ -204,6 +204,7 @@ const INTENTS = [
   "source_suggestion",
   "claim_request",
   "vendor_inquiry",
+  "promoter_onboarding",
   "spam",
   "unclear",
   "multi",

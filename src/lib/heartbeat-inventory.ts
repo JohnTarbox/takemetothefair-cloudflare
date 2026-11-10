@@ -155,6 +155,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   // OPE-1164 — weekly (Monday-gated) vendor-category new-value watch.
   // OPE-1205 — daily sync-staleness sweep; one admin_actions row per run.
   "cron:runScheduledPendingContactAttach": { probes: ["pending-contact-attach"] },
+  "cron:runScheduledPromoterOnboarding": { probes: ["promoter-onboarding"] },
   "cron:runScheduledRepliedLedgerCheck": { probes: ["replied-ledger-check"] },
   "cron:runScheduledSyncStaleSweep": { probes: ["sync-stale-sweep"] },
   // OPE-1239 — */10 CI-trigger watchdog; stamps a run row at most hourly.

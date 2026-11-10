@@ -39,7 +39,8 @@
  *    question" mailto puts that URL in every body, so with the template
  *    subject it pushed plain questions to `correction` at exactly 0.85.
  *    A link to our listing says WHICH event, not that anything is wrong. */
-export const CLASSIFIER_VERSION = "c-2026-10-01-v6";
+// v8 (OPE-1608, 2026-11-10): added promoter_onboarding. Numbered past #1721's v7.
+export const CLASSIFIER_VERSION = "c-2026-11-10-v8";
 
 /** Default confidence gate. Below this, we fall back to address-based
  *  routing and flag the row for admin review. Tuned per Q1 in spec —
@@ -87,6 +88,17 @@ export const INTENT_TAXONOMY_DOC = `INTENT TAXONOMY (pick exactly one per messag
                       Examples: "How do I list my booth?";
                       "I exhibit at fairs and would like to be added";
                       "How do I sign up to vend?".
+- promoter_onboarding: An ORGANIZER (fair, festival, museum, venue, event
+                      promoter) asking how to get THEIR events on the site, to
+                      set up or get a promoter or organizer account, or about
+                      tiers or pricing for promoters. No event details needed.
+                      Examples: "How do we list our events?"; "Can you set up a
+                      promoter account for us?"; "Do you have free or paid tiers
+                      for organizers?".
+                      NOT promoter_onboarding: an email that carries an event
+                      (new_event); claiming one existing listing
+                      (claim_request); a vendor asking to sell at events
+                      (vendor_inquiry).
 - support:            General how-to / help / can-you-help questions that
                       don't fit the other buckets.
                       Examples: "How does your site work?";

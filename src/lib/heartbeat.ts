@@ -17,7 +17,7 @@
  *    flag is never a false RED).
  *  - auto-file dedup reuses OPE-76's `cpi_signal_filings` ledger — nothing new.
  */
-import { and, eq, gte, inArray, isNotNull, isNull, notInArray, or, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import {
   entityDuplicateSweepRuns,
   analyticsEvents,
@@ -60,6 +60,7 @@ import {
   promoterListArrivals,
   venues,
   supportObligations,
+  promoterOnboardingRequests,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
@@ -2510,6 +2511,47 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         errorLogs.timestamp,
         and(eq(errorLogs.source, "mcp:inbound:pending-contact-attach"), eq(errorLogs.level, "info"))
       ),
+  },
+  {
+    // OPE-1608 — the onboarding lane. Two questions, one answer: has the pass
+    // run lately (its info row), and is any request overdue? A request with no
+    // draft after 2h, or a draft past its deadline, is RED at once, which is
+    // why it returns the epoch rather than the request's own age.
+    name: "promoter-onboarding",
+    ownerOpe: "OPE-1608",
+    label: "onboarding lane running, no request overdue for a draft or a send",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: async (db) => {
+      const now = new Date();
+      const [overdue] = await db
+        .select({ id: promoterOnboardingRequests.id })
+        .from(promoterOnboardingRequests)
+        .where(
+          and(
+            isNull(promoterOnboardingRequests.closedAt),
+            or(
+              and(
+                isNull(promoterOnboardingRequests.draftId),
+                lt(promoterOnboardingRequests.createdAt, new Date(now.getTime() - 2 * 3_600_000))
+              ),
+              and(
+                isNotNull(promoterOnboardingRequests.draftId),
+                isNull(promoterOnboardingRequests.repliedAt),
+                lt(promoterOnboardingRequests.targetAt, now)
+              )
+            )
+          )
+        )
+        .limit(1);
+      if (overdue) return new Date(0);
+      return maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "mcp:inbound:promoter-onboarding"), eq(errorLogs.level, "info"))
+      );
+    },
   },
   {
     // OPE-1609 — proof the hourly replied-row ledger check still RUNS. Its

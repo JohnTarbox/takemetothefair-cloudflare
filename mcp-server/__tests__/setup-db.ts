@@ -1623,6 +1623,40 @@ const SCHEMA_SQL = `
     updated_at INTEGER NOT NULL
   );
   CREATE UNIQUE INDEX uq_promoter_contacts_promoter_email ON promoter_contacts (promoter_id, email);
+  CREATE TABLE promoter_onboarding_requests (
+    id TEXT PRIMARY KEY,
+    inbound_email_id TEXT NOT NULL UNIQUE,
+    from_address TEXT NOT NULL,
+    org_domain TEXT,
+    org_name TEXT,
+    match_report TEXT,
+    staged_promoter TEXT,
+    enrichment_status TEXT NOT NULL DEFAULT 'queued',
+    enrichment_detail TEXT,
+    enrichment_finished_at INTEGER,
+    obligation_id TEXT,
+    target_at INTEGER,
+    draft_id TEXT,
+    draft_composed_at INTEGER,
+    draft_missing_fault_at INTEGER,
+    notified_at INTEGER,
+    reminded_at INTEGER,
+    deadline_fault_at INTEGER,
+    replied_at INTEGER,
+    claimed_at INTEGER,
+    first_submission_at INTEGER,
+    followup_draft_id TEXT,
+    followup_composed_at INTEGER,
+    followup_target_at INTEGER,
+    followup_notified_at INTEGER,
+    followup_reminded_at INTEGER,
+    followup_deadline_fault_at INTEGER,
+    followup_sent_at INTEGER,
+    closed_at INTEGER,
+    close_reason TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
   CREATE TABLE pending_promoter_contacts (
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
