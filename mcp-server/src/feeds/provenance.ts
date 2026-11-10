@@ -280,6 +280,9 @@ export async function applyFieldValue(
   const current = await readEventFieldValues(db, eventId);
   const date = field === "start_time" ? current?.start_date : current?.end_date;
   if (!date) return { applied: false, reason: "event has no date to attach a time to" };
+  // AUDIT-EXEMPT: the only caller, recordContactAnswer (contact-answer.ts), writes
+  // admin_actions `feed.answer_pinned` for this same change, plus a
+  // validated_contact citation and the pin — the write is accounted for there.
   const rows = await db
     .update(eventDays)
     .set(field === "start_time" ? { openTime: value } : { closeTime: value })
