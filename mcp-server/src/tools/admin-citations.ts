@@ -332,7 +332,7 @@ const LIVE_DEFECT_SCHEMA = z
   })
   .optional()
   .describe(
-    "OPE-1065: pass this when your verification finds a LIVE field wrong (contradicted, unsupported or stale). It files a countable work item (event_discrepancies, detected_by='citation_flag') in the same call. Do NOT only write it in `notes` — nothing reads notes. Source-trap warnings about a CORRECT row ('this aggregator is stale, do not use it') are not live defects; keep those in notes."
+    "OPE-1065: pass this when your verification finds a LIVE field wrong (contradicted, unsupported or stale). It files a countable work item (event_discrepancies, detected_by='citation_flag') in the same call. Do NOT only write it in `notes` — nothing reads notes. Source-trap warnings about a CORRECT row ('this aggregator is stale, do not use it') are not live defects; keep those in notes. OPE-1622: an `unsupported` $0 admission on a free-by-nature event with no paid-ticket signal is NOT filed — it returns outcome 'community_default' (John's 2026-11-10 ruling) and `community_default_check` says why it did or did not apply."
   );
 
 type LiveDefectInput = z.infer<typeof LIVE_DEFECT_SCHEMA>;
@@ -1428,7 +1428,16 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             // OPE-1065 — rolled up so a 100-row call cannot bury a failed
             // emission inside one row's `live_defects`.
             live_defects_filed: created.reduce(
-              (n, r) => n + r.live_defects.filter((d) => d.outcome !== "failed").length,
+              (n, r) =>
+                n +
+                r.live_defects.filter(
+                  (d) => d.outcome !== "failed" && d.outcome !== "community_default"
+                ).length,
+              0
+            ),
+            // OPE-1622 — kept as the community default: not filed, not failed.
+            live_defects_community_default: created.reduce(
+              (n, r) => n + r.live_defects.filter((d) => d.outcome === "community_default").length,
               0
             ),
             live_defects_failed: created.reduce(

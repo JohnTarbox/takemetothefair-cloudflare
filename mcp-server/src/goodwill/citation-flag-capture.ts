@@ -55,6 +55,12 @@ import { eventDiscrepancies } from "../schema.js";
 import type { Db } from "../db.js";
 import { logError } from "../logger.js";
 import { captureDiscrepancy, type FieldClass } from "./capture.js";
+import {
+  communityDefaultVerdict,
+  HOURS_RULING_PROPOSAL,
+  isAdmissionPriceField,
+  recordCommunityDefault,
+} from "./community-default.js";
 
 export const LIVE_DEFECT_KINDS = ["contradicted", "unsupported", "stale"] as const;
 export type LiveDefectKind = (typeof LIVE_DEFECT_KINDS)[number];
@@ -78,13 +84,24 @@ export interface CitationLiveDefectArgs {
   confidence?: number | null;
 }
 
-export type CitationLiveDefectOutcome = "created" | "appended" | "already_recorded" | "failed";
+/**
+ * `community_default` (OPE-1622): ruling 1 applies, so no row was filed and
+ * the event's private notes carry the marker instead. It is not a failure and
+ * not a filing — callers count it separately.
+ */
+export type CitationLiveDefectOutcome =
+  "created" | "appended" | "already_recorded" | "community_default" | "failed";
 
 export interface CitationLiveDefectResult {
   outcome: CitationLiveDefectOutcome;
   discrepancy_id: string | null;
   field_class: FieldClass;
   trigger: LiveDefectTrigger;
+  /** OPE-1622 — for an `unsupported` admission flag, why the community-default
+   *  rule did or did not apply. Absent for every other flag. */
+  community_default_check?: string;
+  /** OPE-1622 — ruling 3's proposal, on every hours-class flag. */
+  proposal?: string;
 }
 
 /** Notes cap — the column is TEXT, but a row that grows without bound stops
@@ -133,10 +150,26 @@ export async function captureCitationLiveDefect(
   args: CitationLiveDefectArgs
 ): Promise<CitationLiveDefectResult> {
   const fieldClass = fieldClassForCitationField(args.field);
-  const base = { field_class: fieldClass, trigger: args.trigger };
-  const segment = noteSegment(args);
+  const base: Pick<
+    CitationLiveDefectResult,
+    "field_class" | "trigger" | "community_default_check" | "proposal"
+  > = { field_class: fieldClass, trigger: args.trigger };
+  if (fieldClass === "hours") base.proposal = HOURS_RULING_PROPOSAL;
+  const segment =
+    fieldClass === "hours" ? `${noteSegment(args)} ${HOURS_RULING_PROPOSAL}` : noteSegment(args);
 
   try {
+    // OPE-1622 ruling 1 — an uncited $0 on a free-by-nature event with no
+    // paid-ticket signal is the community default, not a defect.
+    if (args.kind === "unsupported" && isAdmissionPriceField(args.field)) {
+      const verdict = await communityDefaultVerdict(db, args.eventId);
+      base.community_default_check = verdict.reason;
+      if (verdict.applies) {
+        await recordCommunityDefault(db, args.eventId);
+        return { ...base, outcome: "community_default", discrepancy_id: null };
+      }
+    }
+
     const open = await db
       .select({ id: eventDiscrepancies.id, notes: eventDiscrepancies.notes })
       .from(eventDiscrepancies)
