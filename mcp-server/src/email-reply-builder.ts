@@ -723,6 +723,9 @@ You can claim a business listing for free yourself from its page on our site —
 
 ${SIGN_OFF}`;
     }
+    // OPE-1615 — the fallback after every classifier retry failed reuses the
+    // approved support-ack copy verbatim; no new wording (John's ruling).
+    case "ack-after-classifier-failure":
     case "support-ack": {
       // OPE-367 (R3) — copy approved by John 2026-08-13, submission pointer
       // dropped on his call.

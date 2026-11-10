@@ -47,6 +47,8 @@ import { resolveKnownContact, type KnownContact } from "./known-contact.js";
 export const CONTACT_LANE_ACK_KINDS: readonly ReplyKind[] = [
   "correction-ack",
   "support-ack",
+  // OPE-1615 — a known contact gets the contact lane, not the fallback ack.
+  "ack-after-classifier-failure",
   "press-ack",
   "thread-reply-ack",
   "source-suggestion-ack",

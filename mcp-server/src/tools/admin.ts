@@ -1261,8 +1261,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe("Category list, e.g. ['Craft Fair','Market']"),
       tags: z.array(z.string()).optional().describe("Tag list, e.g. ['family-friendly','outdoor']"),
       ticket_url: z.string().optional().describe("URL to buy tickets"),
-      ticket_price_min: z.number().optional().describe("Minimum ticket price"),
-      ticket_price_max: z.number().optional().describe("Maximum ticket price"),
+      ticket_price_min: z
+        .number()
+        .nullable()
+        .optional()
+        .describe(
+          "Minimum ticket price in dollars. Pass null to clear it back to unknown, e.g. to strip an unverified $0 (OPE-1622)."
+        ),
+      ticket_price_max: z
+        .number()
+        .nullable()
+        .optional()
+        .describe("Maximum ticket price in dollars. Pass null to clear it (OPE-1622)."),
       image_url: z.string().optional().describe("Event image URL"),
       // IMG1 §1b Phase 1 (2026-06-08) — per-image focal point. Range
       // [0, 1] matching Cloudflare's gravity=XxY (0,0 = top-left).

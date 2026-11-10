@@ -7,6 +7,20 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# OPE-1623 — one live CI run per branch per trigger. A newer push cancels the
+# older run still going on the same ref: on main, the deploy gate only ever
+# ships main's HEAD (scripts/deploy-gate.mjs), so an older run's result can't
+# ship. On 2026-11-10, 26 quick merges queued 26 full runs and starved PR CI
+# for about an hour. A cancelled run concludes `cancelled`, which the gate skips
+# without an alert. The CI Trigger Watchdog checks main's HEAD only, and the
+# HEAD's own run is never the one cancelled.
+#   - event_name in the key: a manual dispatch never cancels push CI.
+#   - E2E runs on a local D1 and Smoke only reads production, so a run cut off
+#     mid-job leaves nothing behind.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # OPE-908 — least privilege. packages:read is what setup-node's NODE_AUTH_TOKEN
 # needs to install @johntarbox/* from GitHub Packages; nothing here writes.
 permissions:
