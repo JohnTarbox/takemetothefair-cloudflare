@@ -79,9 +79,11 @@ import {
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledNearDuplicateSweep } from "./near-duplicate-sweep-cron.js";
+import { runScheduledFullDuplicateSweep } from "./full-duplicate-sweep-cron.js";
 import { runScheduledCiTriggerWatchdog } from "./ci-trigger-watchdog.js";
 import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledPendingContactAttach } from "./inbound/pending-promoter-contact-attach.js";
+import { runScheduledRepliedLedgerCheck } from "./inbound/replied-without-ledger.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
 import { runScheduledBurstCapSelfTest } from "./burst-cap-selftest-canary.js";
@@ -735,7 +737,7 @@ async function runMainAppSweep(
         message: oom
           ? `cron task '${label}' killed by Worker memory limit`
           : emptyBody5xx
-            ? `cron task '${label}' returned ${response.status} with no body (unclassified — see OPE-641)`
+            ? `cron task '${label}' returned ${response.status} with no body (likely a Worker resource kill — check this invocation's outcome in Workers Logs; OPE-641, OPE-1600)`
             : `cron task '${label}' returned non-2xx`,
         statusCode: response.status,
         sessionId,
@@ -1755,6 +1757,7 @@ export default {
     // ScheduledController carries which one fired in `controller.cron`.
     //   - "0 6 * * *"     → daily heavy work (recs, gsc, time-to-index)
     //   - "10 6 * * *"    → GW1.3 holdout-sampling (added 2026-06-03)
+    //   - "25 6 * * *"    → analytics ingest + photo coverage (OPE-1607)
     //   - "*/10 * * * *"  → §6.3 KPI state-machine recompute (light)
     //   - "0 * * * *"     → hourly: drain pending_search_pings older than 1h
     console.warn(
@@ -1815,6 +1818,8 @@ export default {
           ["unterminated-crossing-notice", () => runUnterminatedCrossingNotice(env, getDb(env.DB))],
           // OPE-1610 — a pending contact joins its promoter once that row exists.
           ["pending-contact-attach", () => runScheduledPendingContactAttach(env)],
+          // OPE-1609 — a `replied` row must have a ledger row behind it.
+          ["replied-ledger-check", () => runScheduledRepliedLedgerCheck(env)],
         ]).then(() => undefined)
       );
       return;
@@ -1880,6 +1885,38 @@ export default {
       // SECOND time every day. That is why error_logs carries two identical
       // failure bursts per day, 06:01 and 08:31 — and it defeated this branch's
       // own stated intent ("after the 08:00 sweep so the two do not contend").
+      return;
+    }
+
+    if (controller.cron === "25 6 * * *") {
+      // OPE-1607 — analytics ingest and photo coverage, off the 06:00 batch.
+      //
+      // As siblings in that batch they lost a race for D1: on 2026-11-06, -09
+      // and -10 they failed with "D1 DB is overloaded" at 06:00:27–30, while
+      // ~30 sibling tasks were starting. All five heartbeat probes went red
+      // together. 06:25 is clear of the 06:00 batch, the 06:10 holdout sample,
+      // and the */10 and hourly fires.
+      //
+      // Sequenced so the two heaviest jobs (~2 min each) do not contend with
+      // each other, and so the scan reads the GSC demand this sync just wrote.
+      // sequenceCronTasks runs each stage even when the previous one failed.
+      //
+      // OPE-225 — coverage scan, THEN the rot sweep: the sweep reads rows the
+      // scan writes (run as siblings on day one, it checked nothing). OPE-227 —
+      // hero proposals read the scan's fresh demand ranking, so they follow it.
+      // The scan is guarded by the `image-coverage-scan` heartbeat probe.
+      ctx.waitUntil(
+        sequenceCronTasks(env.DB, controller.cron, [
+          // A12 — durable GSC+GA4 search-performance time-series. Incremental
+          // daily upsert; the helper also runs the OPE-456 milestone derive,
+          // which reads the dailies this sync writes. Failsoft via
+          // runMainAppSweep (a sync failure logs, never crashes the run).
+          ["gsc-metrics-sync", () => runScheduledGscMetricsSync(env)],
+          ["photo-coverage-scan", () => runScheduledPhotoCoverageScan(env)],
+          ["image-url-health-sweep", () => runScheduledImageUrlHealthSweep(env)],
+          ["hero-proposals", () => runScheduledHeroProposals(env)],
+        ]).then(() => undefined)
+      );
       return;
     }
 
@@ -1962,11 +1999,8 @@ export default {
         ["time-to-index-sweep", () => runScheduledTimeToIndexSweep(env)],
         ["ga4-liveness-check", () => runScheduledGa4LivenessCheck(env)],
         ["bing-liveness-check", () => runScheduledBingLivenessCheck(env)],
-        // A12 (analyst 2026-06-26) — durable GSC+GA4 search-performance
-        // time-series. Incremental daily upsert; first-run 16-month backfill
-        // is driven out-of-band by scripts/gsc-backfill.ts. Failsoft via
-        // runMainAppSweep (a sync failure logs, never crashes the batch).
-        ["gsc-metrics-sync", () => runScheduledGscMetricsSync(env)],
+        // OPE-1607 — gsc-metrics-sync and the photo-coverage sequence moved to
+        // the "25 6 * * *" branch above. Do not add them back to this batch.
         [
           "event-date-drift",
           () =>
@@ -1996,6 +2030,9 @@ export default {
         // PTTF / Scarborough fixtures) were never evaluated. Report-only: writes
         // possible_duplicate_of where NULL; the OPE-1117 queue is the reader.
         ["near-duplicate-sweep", () => runScheduledNearDuplicateSweep(env)],
+        // OPE-1597 — compare every venue, event, vendor and promoter, and store
+        // the candidate pairs /admin/duplicates reads. Proposals only.
+        ["full-duplicate-sweep", () => runScheduledFullDuplicateSweep(env)],
         // OPE-1205 — a synced row whose source went quiet (> N days, tunable)
         // stops claiming confirmed dates unless a qualifying citation backs it.
         ["sync-stale-sweep", () => runScheduledSyncStaleSweep(env)],
@@ -2037,31 +2074,6 @@ export default {
         // regardless becomes wallpaper, which is how the sibling canaries on
         // this rail stay useful.
         ["operator-queue-notice", () => runScheduledOperatorQueueNotice(env)],
-        // OPE-225 (2026-07-20) — photo-coverage rails. Refreshes
-        // image_coverage_state for every live entity (coverage by demand tier,
-        // image_set_at first-observation, hotlink health) so the OPE-226
-        // scorecard and OPE-227 flywheel have numbers to stand on. Idempotent,
-        // so a retry is always safe. Guarded by the `image-coverage-scan`
-        // heartbeat probe — see the OPE-245 note below for why a rail with no
-        // caller is the failure mode this line exists to prevent.
-        // OPE-225 — coverage scan, THEN the rot sweep. Sequenced, not raced:
-        // as siblings in this Promise.all the sweep ran first against an empty
-        // table on day one and checked nothing (url_checked stayed 0). The
-        // sweep reads rows the scan writes, so it must follow it. Sequenced
-        // rather than merged so a sweep failure still cannot fail the scan.
-        // OPE-227 — hero proposals read the scan's fresh demand ranking, so
-        // they follow it too. OPE-1374 — sequenceCronTasks runs each stage even
-        // when the previous one rejected (a `.then` chain skipped the rest) and
-        // logs each rejection by name.
-        [
-          "photo-coverage-sequence",
-          () =>
-            sequenceCronTasks(env.DB, controller.cron, [
-              ["photo-coverage-scan", () => runScheduledPhotoCoverageScan(env)],
-              ["image-url-health-sweep", () => runScheduledImageUrlHealthSweep(env)],
-              ["hero-proposals", () => runScheduledHeroProposals(env)],
-            ]),
-        ],
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and

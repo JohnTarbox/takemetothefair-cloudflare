@@ -43,6 +43,10 @@ const ALLOWED: Array<{ path: RegExp; why: string }> = [
     why: "writer (claim approval), returns nothing public",
   },
   {
+    path: /^mcp-server\/src\/inbound\/known-contact\.ts$/,
+    why: "OPE-1510: inbound-email workflow only; returns a basis and an entity id to the admin draft queue",
+  },
+  {
     path: /^mcp-server\/src\/inbound\/promoter-contact-capture\.ts$/,
     why: "writer (inbound capture)",
   },

@@ -173,6 +173,17 @@ describe("readings", () => {
     expect(r.actionItems).toBe(2);
   });
 
+  it("OPE-1604: shows the error and warning split when both are present", () => {
+    const r = technicalReading({ errorCount: 9, warningCount: 636, richResultFailCount: 0 });
+    expect(r.severity).toBe("critical");
+    expect(r.detail).toBe("645 technical issues (9 errors, 636 warnings)");
+  });
+
+  it("OPE-1604: warnings alone are never critical", () => {
+    const r = technicalReading({ errorCount: 0, warningCount: 636, richResultFailCount: 0 });
+    expect(r.severity).toBe("attention");
+  });
+
   it("technical: names the remainder when other issues sit alongside", () => {
     const r = technicalReading({ errorCount: 0, warningCount: 3, richResultFailCount: 1 });
     expect(r.detail).toContain("1 page failing rich-result validation");

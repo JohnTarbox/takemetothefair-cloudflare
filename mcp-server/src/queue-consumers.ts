@@ -370,7 +370,7 @@ export async function handleEmailBatch(
           await closeObligationsAnsweredBy(
             db,
             m.body.inboundEmailId!,
-            closeNoteForSend(m.id, result.messageId)
+            closeNoteForSend(m.id, result.messageId, m.body.source)
           );
         } catch (err) {
           await logError(env.DB, {

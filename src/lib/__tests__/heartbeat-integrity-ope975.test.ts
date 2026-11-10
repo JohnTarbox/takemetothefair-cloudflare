@@ -196,6 +196,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "text-match-record": 24,
       "outreach-reply-link": 24,
       "enrich-auto-apply": 24,
+      "contact-lane": 720,
       "photo-intake-storage-record": 30 * 24,
       // OPE-325 — demand-conditional: counts from an unanswered poster, not
       // from the last success, so a short window cannot cry wolf in a quiet month.
@@ -206,9 +207,12 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "click-traffic-attribution": 24,
       // OPE-1201 — daily cron, one run row each; two cycles before it pages.
       "near-duplicate-sweep": 48,
+      // OPE-1597 — daily cron, oldest of four type rows; two cycles before it pages.
+      "entity-duplicate-full-sweep": 48,
       // OPE-1205 — daily cron, one run row each; two cycles before it pages.
       "sync-stale-sweep": 48,
       "pending-contact-attach": 3,
+      "replied-ledger-check": 3,
       // OPE-1239 — */10 cron, run row at most hourly; three missed before it pages.
       "ci-trigger-watchdog": 3,
       "ocr-attachment": 21 * 24,

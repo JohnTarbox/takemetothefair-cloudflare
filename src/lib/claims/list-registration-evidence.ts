@@ -6,7 +6,7 @@
  * at hardest at the top — a chronological list buries a spam signup under a
  * week of clean ones.
  */
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, isNull, sql } from "drizzle-orm";
 import { vendorClaimEvidence, vendors } from "@/lib/db/schema";
 import type { Db } from "@/lib/analytics-overview/shared";
 import type { CorroborationClass, RealnessBand, SpamFlag } from "./realness";
@@ -68,6 +68,8 @@ export async function listRegistrationEvidence(
     })
     .from(vendorClaimEvidence)
     .leftJoin(vendors, eq(vendors.id, vendorClaimEvidence.vendorId))
+    // OPE-1599 — a reviewed row has been dealt with; it leaves the screen.
+    .where(isNull(vendorClaimEvidence.reviewedAt))
     .orderBy(
       // Worst first. CASE keeps the ordering in SQL rather than pulling the
       // whole table into memory to sort it.

@@ -7,6 +7,9 @@ import { createSlug } from "@/lib/utils";
 import { getPromotersWithCounts } from "@/lib/queries";
 import { promoterCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { promoterList } from "@/lib/admin-list/lists";
+import { isPagedRequest, parseListParams } from "@/lib/admin-list/params";
+import { respondWithList } from "@/lib/admin-list/respond";
 import { indexNowUrlFor } from "@/lib/indexnow";
 import { enqueueIndexNow } from "@/lib/queues/producers";
 import { computePromoterEnrichment } from "@takemetothefair/constants";
@@ -14,6 +17,14 @@ import { findPromoterDuplicates } from "@takemetothefair/utils";
 
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   try {
+    // OPE-1595 — the list page asks for one page; bare calls still get every row.
+    const searchParams = request.nextUrl.searchParams;
+    if (isPagedRequest(searchParams)) {
+      return await respondWithList(
+        promoterList(db, searchParams, parseListParams(searchParams)),
+        searchParams
+      );
+    }
     const promotersWithCounts = await getPromotersWithCounts(db);
     return NextResponse.json(promotersWithCounts);
   } catch (error) {

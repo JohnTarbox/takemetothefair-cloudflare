@@ -516,9 +516,9 @@ export const events = sqliteTable(
     ticketPriceMaxCents: integer("ticket_price_max_cents"),
     imageUrl: text("image_url"),
     featured: integer("featured", { mode: "boolean" }).default(false),
-    commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }).default(
-      true
-    ),
+    // OPE-1606 — NULL means unknown. It defaulted to true, so a row saying "yes"
+    // usually meant nobody had checked. Read a NULL as unknown, never as no.
+    commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }),
     status: text("status", {
       enum: ["DRAFT", "PENDING", "TENTATIVE", "APPROVED", "REJECTED", "CANCELLED"],
     })
@@ -1252,6 +1252,13 @@ export const vendors = sqliteTable(
     // OPE-1395 (drizzle/0374) — /vendors: `deleted_at IS NULL ORDER BY business_name`
     // without a temp B-tree sort.
     vendorsDeletedBusinessNameIdx: index("idx_vendors_deleted_business_name").on(
+      t.deletedAt,
+      t.businessName
+    ),
+    // OPE-1573 (drizzle/0394) — /vendors `?type=` facet: seek on vendor_type,
+    // then deleted_at IS NULL + business_name order from the same index.
+    vendorsTypeDeletedBusinessNameIdx: index("idx_vendors_type_deleted_business_name").on(
+      t.vendorType,
       t.deletedAt,
       t.businessName
     ),
@@ -3004,9 +3011,22 @@ export const supportObligations = sqliteTable(
     closedAt: integer("closed_at", { mode: "timestamp" }),
     closedBy: text("closed_by"),
     closeNote: text("close_note"),
+    /**
+     * OPE-1510 — `support` (the OPE-365 queue) or `contact` (a known contact
+     * wrote in and John owes them a reply). See SUPPORT_OBLIGATION_KIND.
+     */
+    kind: text("kind").notNull().default("support"),
+    /** OPE-1510 — reply-by time for a `contact` obligation; NULL on `support`. */
+    targetAt: integer("target_at", { mode: "timestamp" }),
   },
   (table) => [index("idx_support_obligations_status").on(table.status, table.openedAt)]
 );
+
+/** OPE-1510 — countable apart: a `contact` obligation carries a target. */
+export const SUPPORT_OBLIGATION_KIND = {
+  SUPPORT: "support",
+  CONTACT: "contact",
+} as const;
 
 /**
  * OPE-365 — `answered` and `not_an_obligation` stay distinct on purpose.
@@ -3023,6 +3043,11 @@ export const SUPPORT_OBLIGATION_STATUS = {
   NOT_AN_OBLIGATION: "not_an_obligation",
   /** Same person, same thread, already tracked elsewhere. */
   DUPLICATE: "duplicate",
+  /**
+   * OPE-1510 — the only manual close of a `contact` obligation, and it needs a
+   * note. Everything else about a contact closes on a reply that was sent.
+   */
+  NOT_NEEDED: "not_needed",
 } as const;
 
 export type SupportObligationStatus =
@@ -3153,8 +3178,19 @@ export const operatorOutboundDrafts = sqliteTable(
     reviewNote: text("review_note"),
     sentAt: integer("sent_at", { mode: "timestamp" }),
     sentMessageId: text("sent_message_id"),
+    /**
+     * OPE-1510 — the inbound this draft answers, NULL on a composed draft. The
+     * partial unique index makes the contact lane idempotent per message, and a
+     * send through this link threads the reply and closes the obligation.
+     */
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }),
   },
   (table) => [
+    uniqueIndex("uq_operator_outbound_inbound")
+      .on(table.inboundEmailId)
+      .where(sql`${table.inboundEmailId} IS NOT NULL`),
     index("idx_operator_outbound_status").on(table.status, table.composedAt),
     index("idx_operator_outbound_entity").on(table.relatedEntityType, table.relatedEntityId),
   ]
@@ -4661,6 +4697,8 @@ export const vendorClaimEvidence = sqliteTable(
     /** Operator triage, independent of the claim's own approve/reject. */
     reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
     reviewedBy: text("reviewed_by"),
+    /** OPE-1599 (drizzle/0399) — LOOKS_REAL | SUSPENDED | SPAM. NULL = not reviewed. */
+    reviewDecision: text("review_decision", { enum: ["LOOKS_REAL", "SUSPENDED", "SPAM"] }),
   },
   (t) => [
     // One evidence row per vendor — the registration mints the listing once.
@@ -5302,6 +5340,34 @@ export const heartbeatProbes = sqliteTable("heartbeat_probes", {
     .$defaultFn(() => new Date()),
 });
 
+/**
+ * OPE-1597 (drizzle/0398) — the current full-table similarity sweep for one
+ * entity type. One row per type; its `runId` names the pairs a reader may use.
+ */
+export const entityDuplicateSweepRuns = sqliteTable("entity_duplicate_sweep_runs", {
+  entityType: text("entity_type").primaryKey(),
+  runId: text("run_id").notNull(),
+  lastRunAt: integer("last_run_at", { mode: "timestamp" }).notNull(),
+  checkedCount: integer("checked_count").notNull(),
+  liveCount: integer("live_count").notNull(),
+  comparisons: integer("comparisons").notNull(),
+  pairCount: integer("pair_count").notNull(),
+  storedPairCount: integer("stored_pair_count").notNull(),
+});
+
+/** OPE-1597 — the candidate pairs of a sweep run. Proposals only; nothing merges. */
+export const entityDuplicateSweepPairs = sqliteTable(
+  "entity_duplicate_sweep_pairs",
+  {
+    runId: text("run_id").notNull(),
+    entityType: text("entity_type").notNull(),
+    entity1Id: text("entity1_id").notNull(),
+    entity2Id: text("entity2_id").notNull(),
+    similarity: real("similarity").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.entity1Id, t.entity2Id] })]
+);
+
 export type HeartbeatProbeRow = typeof heartbeatProbes.$inferSelect;
 
 // Issue #326 — debounce state for the page-error Slack canary
@@ -5892,6 +5958,13 @@ export const inboundEmails = sqliteTable(
     matchedEntityId: text("matched_entity_id"),
     matchBasis: text("match_basis"),
     matchConfidence: real("match_confidence"),
+    /**
+     * OPE-1510 — this sender is a known contact, and on what evidence. Unlike the
+     * report-only match_* columns above, the contact lane branches on it.
+     */
+    knownContactBasis: text("known_contact_basis"),
+    knownContactEntityType: text("known_contact_entity_type"),
+    knownContactEntityId: text("known_contact_entity_id"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [

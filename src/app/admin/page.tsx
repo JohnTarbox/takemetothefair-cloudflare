@@ -12,6 +12,7 @@ import { EventVendorsPanel } from "@/components/admin/event-vendors-panel";
 import { toEventVendorsPanelRow } from "@/lib/admin/event-vendors-panel-row";
 import { SchemaOrgSyncButton } from "@/components/admin/SchemaOrgSyncButton";
 import { logError } from "@/lib/logger";
+import { pendingBucketCounts } from "@/lib/pending-buckets";
 import { realUserWhere } from "@takemetothefair/db-schema";
 
 async function getStats() {
@@ -20,7 +21,7 @@ async function getStats() {
   try {
     const [
       totalEventsResult,
-      pendingEventsResult,
+      pendingBuckets,
       totalVenuesResult,
       totalVendorsResult,
       totalPromotersResult,
@@ -28,7 +29,7 @@ async function getStats() {
       totalEventVendorsResult,
     ] = await Promise.all([
       db.select({ count: count() }).from(events),
-      db.select({ count: count() }).from(events).where(eq(events.status, "PENDING")),
+      pendingBucketCounts(db, new Date()),
       db.select({ count: count() }).from(venues),
       db.select({ count: count() }).from(vendors),
       db.select({ count: count() }).from(promoters),
@@ -41,7 +42,9 @@ async function getStats() {
 
     return {
       totalEvents: totalEventsResult[0]?.count || 0,
-      pendingEvents: pendingEventsResult[0]?.count || 0,
+      // OPE-1596 — the headline is what can still be acted on.
+      pendingEvents: pendingBuckets.upcoming,
+      pendingEnded: pendingBuckets.ended,
       totalVenues: totalVenuesResult[0]?.count || 0,
       totalVendors: totalVendorsResult[0]?.count || 0,
       totalPromoters: totalPromotersResult[0]?.count || 0,
@@ -57,6 +60,7 @@ async function getStats() {
     return {
       totalEvents: 0,
       pendingEvents: 0,
+      pendingEnded: 0,
       totalVenues: 0,
       totalVendors: 0,
       totalPromoters: 0,
@@ -174,6 +178,7 @@ export default async function AdminDashboard() {
     {
       name: "Pending Approval",
       value: stats.pendingEvents,
+      note: stats.pendingEnded > 0 ? `${stats.pendingEnded} already ended` : undefined,
       icon: Clock,
       color: "yellow",
       href: "/admin/submissions",
@@ -228,6 +233,9 @@ export default async function AdminDashboard() {
                   <div>
                     <p className="text-sm text-muted-foreground">{stat.name}</p>
                     <p className="text-3xl font-bold text-foreground mt-1">{stat.value}</p>
+                    {"note" in stat && stat.note && (
+                      <p className="text-xs text-muted-foreground mt-1">{stat.note}</p>
+                    )}
                   </div>
                   <div
                     className={`w-12 h-12 rounded-lg flex items-center justify-center bg-${stat.color}-100`}

@@ -16,10 +16,12 @@
  *
  * Deliberately NOT here: `share.google` / short links in general. They resolve
  * to real pages (a Cumberland Fair news article is cited through one today),
- * so they are judged by what they return, not by their host.
+ * so they are judged by what they return, not by their host. The one exception
+ * is `share.google/aimode/…`, below: that path names an AI answer, not a page.
  */
 export function isNonSourceUrl(url: string | null | undefined): boolean {
   if (!url) return false;
+  if (isAiAnswerLink(url)) return true;
   let u: URL;
   try {
     u = new URL(url.trim());
@@ -38,4 +40,32 @@ export function isNonSourceUrl(url: string | null | undefined): boolean {
   if (host === "maps.apple.com") return true;
   if (host === "bing.com" && (path === "/maps" || path.startsWith("/maps/"))) return true;
   return false;
+}
+
+/**
+ * OPE-1591 — a link to a shared Google AI answer, not to a page about an event.
+ *
+ * Inbound `07e7c5cb` (2026-10-29) was nothing but
+ * `https://share.google/aimode/24IOXQhqgJCSNLL4b`. There is no organizer page
+ * behind it, and even a rendered copy would be an AI summary, so it is never
+ * fetched and never cited. Measured over the prior 90 days: 1 of 1,031 inbound
+ * emails had the `aimode` shape, and 0 had `udm=50`, Google's AI Mode search
+ * parameter, which is matched because it is the same thing in a longer URL.
+ *
+ * Path-scoped on purpose: an ordinary `share.google/<id>` resolves to a real
+ * article and must keep following its redirect (OPE-193, OPE-277).
+ */
+export function isAiAnswerLink(url: string | null | undefined): boolean {
+  if (!url) return false;
+  let u: URL;
+  try {
+    u = new URL(url.trim());
+  } catch {
+    return false;
+  }
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const path = u.pathname.toLowerCase();
+  if (host === "share.google" && (path === "/aimode" || path.startsWith("/aimode/"))) return true;
+  const isGoogle = /^(?:[a-z]+\.)?google\.[a-z.]{2,6}$/.test(host);
+  return isGoogle && path === "/search" && u.searchParams.get("udm") === "50";
 }

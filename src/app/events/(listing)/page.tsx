@@ -322,7 +322,8 @@ async function getEventsOnce(
     }
 
     if (searchParams.commercialVendors === "true") {
-      conditions.push(eq(events.commercialVendorsAllowed, true));
+      // OPE-1606 — unknown stays in; only an explicit no is filtered out.
+      conditions.push(sql`${events.commercialVendorsAllowed} IS NOT 0`);
     }
 
     if (searchParams.excludeFarmersMarkets === "true") {

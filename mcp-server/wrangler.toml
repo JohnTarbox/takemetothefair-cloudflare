@@ -305,6 +305,9 @@ new_sqlite_classes = ["BurstCounter"]
 #                   batch so the heavy work doesn't contend (added 2026-06-03).
 #                   See src/goodwill/holdout-sampling.ts for the per-event
 #                   fetch+extract cost and the cap rationale.
+# "25 6 * * *"    → OPE-1607 analytics ingest (GSC/GA4/Bing + milestone derive)
+#                   and photo coverage. Moved out of the 06:00 batch, where they
+#                   failed with "D1 DB is overloaded" at 06:00:27-30.
 # "*/10 * * * *"  → §6.3 KPI state-machine recompute (light, ~5 INSERTs per fire)
 # "0 * * * *"     → hourly: drain pending_search_pings older than 1 hour
 #                   (safety net for forgotten flushes after deferred-ingest runs)
@@ -339,7 +342,7 @@ new_sqlite_classes = ["BurstCounter"]
 #                   staggered 1h after the vendor sweep to space Browser-Rendering.
 # "30 8 * * *"   → OPE-408 venue-geocode safety net (missing_only, <=25/run).
 #                  After the 08:00 promoter sweep so the two do not contend.
-crons = ["0 6 * * *", "10 6 * * *", "*/10 * * * *", "0 * * * *", "0 7 * * *", "0 8 * * *", "30 8 * * *"]
+crons = ["0 6 * * *", "10 6 * * *", "25 6 * * *", "*/10 * * * *", "0 * * * *", "0 7 * * *", "0 8 * * *", "30 8 * * *"]
 
 # Cloudflare Email Service — outbound sending binding (public beta).
 # Replaced Resend HTTP integration in the EMAIL_JOBS consumer. Without
