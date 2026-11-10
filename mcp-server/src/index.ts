@@ -1755,6 +1755,7 @@ export default {
     // ScheduledController carries which one fired in `controller.cron`.
     //   - "0 6 * * *"     → daily heavy work (recs, gsc, time-to-index)
     //   - "10 6 * * *"    → GW1.3 holdout-sampling (added 2026-06-03)
+    //   - "25 6 * * *"    → analytics ingest + photo coverage (OPE-1607)
     //   - "*/10 * * * *"  → §6.3 KPI state-machine recompute (light)
     //   - "0 * * * *"     → hourly: drain pending_search_pings older than 1h
     console.warn(
@@ -1881,6 +1882,38 @@ export default {
       return;
     }
 
+    if (controller.cron === "25 6 * * *") {
+      // OPE-1607 — analytics ingest and photo coverage, off the 06:00 batch.
+      //
+      // As siblings in that batch they lost a race for D1: on 2026-11-06, -09
+      // and -10 they failed with "D1 DB is overloaded" at 06:00:27–30, while
+      // ~30 sibling tasks were starting. All five heartbeat probes went red
+      // together. 06:25 is clear of the 06:00 batch, the 06:10 holdout sample,
+      // and the */10 and hourly fires.
+      //
+      // Sequenced so the two heaviest jobs (~2 min each) do not contend with
+      // each other, and so the scan reads the GSC demand this sync just wrote.
+      // sequenceCronTasks runs each stage even when the previous one failed.
+      //
+      // OPE-225 — coverage scan, THEN the rot sweep: the sweep reads rows the
+      // scan writes (run as siblings on day one, it checked nothing). OPE-227 —
+      // hero proposals read the scan's fresh demand ranking, so they follow it.
+      // The scan is guarded by the `image-coverage-scan` heartbeat probe.
+      ctx.waitUntil(
+        sequenceCronTasks(env.DB, controller.cron, [
+          // A12 — durable GSC+GA4 search-performance time-series. Incremental
+          // daily upsert; the helper also runs the OPE-456 milestone derive,
+          // which reads the dailies this sync writes. Failsoft via
+          // runMainAppSweep (a sync failure logs, never crashes the run).
+          ["gsc-metrics-sync", () => runScheduledGscMetricsSync(env)],
+          ["photo-coverage-scan", () => runScheduledPhotoCoverageScan(env)],
+          ["image-url-health-sweep", () => runScheduledImageUrlHealthSweep(env)],
+          ["hero-proposals", () => runScheduledHeroProposals(env)],
+        ]).then(() => undefined)
+      );
+      return;
+    }
+
     if (controller.cron === "0 7 * * *") {
       // I1 (2026-06-13) — nightly vendor-enrichment sweep. Selects ≤100
       // population-1 vendors and enqueues one job each; the queue consumer does
@@ -1960,11 +1993,8 @@ export default {
         ["time-to-index-sweep", () => runScheduledTimeToIndexSweep(env)],
         ["ga4-liveness-check", () => runScheduledGa4LivenessCheck(env)],
         ["bing-liveness-check", () => runScheduledBingLivenessCheck(env)],
-        // A12 (analyst 2026-06-26) — durable GSC+GA4 search-performance
-        // time-series. Incremental daily upsert; first-run 16-month backfill
-        // is driven out-of-band by scripts/gsc-backfill.ts. Failsoft via
-        // runMainAppSweep (a sync failure logs, never crashes the batch).
-        ["gsc-metrics-sync", () => runScheduledGscMetricsSync(env)],
+        // OPE-1607 — gsc-metrics-sync and the photo-coverage sequence moved to
+        // the "25 6 * * *" branch above. Do not add them back to this batch.
         [
           "event-date-drift",
           () =>
@@ -2038,31 +2068,6 @@ export default {
         // regardless becomes wallpaper, which is how the sibling canaries on
         // this rail stay useful.
         ["operator-queue-notice", () => runScheduledOperatorQueueNotice(env)],
-        // OPE-225 (2026-07-20) — photo-coverage rails. Refreshes
-        // image_coverage_state for every live entity (coverage by demand tier,
-        // image_set_at first-observation, hotlink health) so the OPE-226
-        // scorecard and OPE-227 flywheel have numbers to stand on. Idempotent,
-        // so a retry is always safe. Guarded by the `image-coverage-scan`
-        // heartbeat probe — see the OPE-245 note below for why a rail with no
-        // caller is the failure mode this line exists to prevent.
-        // OPE-225 — coverage scan, THEN the rot sweep. Sequenced, not raced:
-        // as siblings in this Promise.all the sweep ran first against an empty
-        // table on day one and checked nothing (url_checked stayed 0). The
-        // sweep reads rows the scan writes, so it must follow it. Sequenced
-        // rather than merged so a sweep failure still cannot fail the scan.
-        // OPE-227 — hero proposals read the scan's fresh demand ranking, so
-        // they follow it too. OPE-1374 — sequenceCronTasks runs each stage even
-        // when the previous one rejected (a `.then` chain skipped the rest) and
-        // logs each rejection by name.
-        [
-          "photo-coverage-sequence",
-          () =>
-            sequenceCronTasks(env.DB, controller.cron, [
-              ["photo-coverage-scan", () => runScheduledPhotoCoverageScan(env)],
-              ["image-url-health-sweep", () => runScheduledImageUrlHealthSweep(env)],
-              ["hero-proposals", () => runScheduledHeroProposals(env)],
-            ]),
-        ],
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and
