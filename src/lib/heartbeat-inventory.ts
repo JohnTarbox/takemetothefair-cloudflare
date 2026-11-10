@@ -143,6 +143,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   "cron:runScheduledKpiRecompute": U,
   // OPE-1201 — daily near-duplicate candidate sweep; one admin_actions row per run.
   "cron:runScheduledNearDuplicateSweep": { probes: ["near-duplicate-sweep"] },
+  "cron:runScheduledFullDuplicateSweep": { probes: ["entity-duplicate-full-sweep"] },
   "cron:runScheduledNewsletterListBalanceCanary": { probes: ["newsletter-list-balance-canary"] },
   "cron:runScheduledOperatorQueueNotice": U,
   "cron:runScheduledPageErrorCanary": U,
@@ -153,6 +154,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   "cron:runScheduledPromoterEnrichment": { probes: ["promoter-enrichment"] },
   // OPE-1164 — weekly (Monday-gated) vendor-category new-value watch.
   // OPE-1205 — daily sync-staleness sweep; one admin_actions row per run.
+  "cron:runScheduledRepliedLedgerCheck": { probes: ["replied-ledger-check"] },
   "cron:runScheduledSyncStaleSweep": { probes: ["sync-stale-sweep"] },
   // OPE-1239 — */10 CI-trigger watchdog; stamps a run row at most hourly.
   "cron:runScheduledCiTriggerWatchdog": { probes: ["ci-trigger-watchdog"] },

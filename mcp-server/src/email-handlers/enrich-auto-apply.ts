@@ -657,6 +657,8 @@ export async function recordEnrichApplied(
     inboundEmailId: string;
     path: string;
     matchType: string | null;
+    /** The stager's timestamp, shared with its demand row (see stageEnrichOnMatch). */
+    createdAt: Date;
   }
 ): Promise<void> {
   await db.insert(adminActions).values({
@@ -671,6 +673,6 @@ export async function recordEnrichApplied(
       path: args.path,
       matchType: args.matchType,
     }),
-    createdAt: new Date(),
+    createdAt: args.createdAt,
   });
 }

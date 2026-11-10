@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { chooseTrustedVenueDateReply } from "../src/email-handlers/trusted-no-url-reply.js";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createTestDb, type TestDb } from "./setup-db.js";
 import {
@@ -428,6 +428,32 @@ describe("OPE-1506 — the predicate's other guards", () => {
       applied: ["estimated_attendance"],
     });
     expect(actions(ENRICH_APPLIED_ACTION)).toHaveLength(1);
+  });
+
+  it("OPE-1529: the audit row and the staged row share one timestamp even when the clock moves between inserts", async () => {
+    seedPromoter("ng", null);
+    seedEvent("ev", "ng");
+    seedInbound("in-1", "carolyn@example.com", "pass");
+    trust("carolyn@example.com");
+    vi.useFakeTimers({ toFake: ["Date"], now: NOW });
+    const insert = db.insert.bind(db);
+    // Each insert crosses a second boundary, the shape that breaks evidence >= demand.
+    const spy = vi.spyOn(db, "insert").mockImplementation(((table: never) => {
+      vi.setSystemTime(Date.now() + 1500);
+      return insert(table);
+    }) as never);
+    try {
+      await stage({ event: { estimatedAttendance: 2000, description: "A fair." } });
+    } finally {
+      spy.mockRestore();
+      vi.useRealTimers();
+    }
+    const applied = actions(ENRICH_APPLIED_ACTION);
+    const staged = actions(ENRICH_PROPOSED_ACTION);
+    expect(applied).toHaveLength(1);
+    expect(staged).toHaveLength(1);
+    expect(JSON.parse(staged[0].payloadJson!).autoApply.basis).toBe("trusted");
+    expect(staged[0].createdAt.getTime()).toBe(applied[0].createdAt.getTime());
   });
 });
 

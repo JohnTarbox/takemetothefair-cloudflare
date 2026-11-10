@@ -47,6 +47,7 @@ import {
   emailSendLedger,
   operatorOutboundDrafts,
   inboundEmails,
+  supportObligations,
   users,
   tunableThresholds,
 } from "@takemetothefair/db-schema";
@@ -215,6 +216,11 @@ export interface OperatorQueueCounts {
    * FORMER venues and venues the gate calls `not-a-point` are excluded.
    */
   unpinnedVenueImminent: number;
+  /**
+   * OPE-1510 — open contact obligations past their one-business-day target.
+   * Each is a known contact John owes a reply to, already late.
+   */
+  contactObligationsPastTarget: number;
   /** OPE-1290 landmark: upcoming events the unpinned-venue check examined. */
   unpinnedVenueExamined?: number;
   /** Oldest waiting row in either queue, in days. */
@@ -244,6 +250,7 @@ export function decideOperatorQueueNotice(
     | "venueDateShifts"
     | "authEmailProblems"
     | "unpinnedVenueImminent"
+    | "contactObligationsPastTarget"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -275,6 +282,7 @@ export function totalWaiting(
     | "venueDateShifts"
     | "authEmailProblems"
     | "unpinnedVenueImminent"
+    | "contactObligationsPastTarget"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -305,7 +313,9 @@ export function totalWaiting(
     (counts.venueDateShifts ?? 0) +
     (counts.authEmailProblems ?? 0) +
     // OPE-1290 — `?? 0` for the reason the comment above gives.
-    (counts.unpinnedVenueImminent ?? 0)
+    (counts.unpinnedVenueImminent ?? 0) +
+    // OPE-1510 — `?? 0` for the same reason.
+    (counts.contactObligationsPastTarget ?? 0)
   );
 }
 
@@ -820,6 +830,40 @@ export async function readOperatorQueues(
     // Observability must not take the notice down with it.
   }
 
+  // OPE-1510 — contact obligations past target. Read apart from everything
+  // above so a failure here costs this one line, not the notice.
+  let contactObligationsPastTarget = 0;
+  try {
+    const late = await db
+      .select({
+        fromAddress: supportObligations.fromAddress,
+        subject: supportObligations.subject,
+        targetAt: supportObligations.targetAt,
+      })
+      .from(supportObligations)
+      .where(
+        and(
+          eq(supportObligations.status, "open"),
+          eq(supportObligations.kind, "contact"),
+          lte(supportObligations.targetAt, now)
+        )
+      )
+      .limit(100);
+    contactObligationsPastTarget = late.length;
+    for (const o of late) {
+      lines.push(
+        `known contact ${o.fromAddress} is past the one-business-day reply target ` +
+          `(was due ${o.targetAt?.toISOString().slice(0, 16)}Z): ${o.subject ?? "(no subject)"} (OPE-1510)`
+      );
+    }
+  } catch (error) {
+    await logError(db, {
+      source: SOURCE,
+      message: "[operator-queue] contact-obligation read failed",
+      error,
+    });
+  }
+
   return {
     agedClaims: claims.length,
     agedReplies: replies.length,
@@ -833,6 +877,7 @@ export async function readOperatorQueues(
     venueDateShifts,
     authEmailProblems,
     unpinnedVenueImminent,
+    contactObligationsPastTarget,
     unpinnedVenueExamined,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
@@ -906,6 +951,7 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
       venueDateShifts: counts.venueDateShifts,
       authEmailProblems: counts.authEmailProblems,
       unpinnedVenueImminent: counts.unpinnedVenueImminent,
+      contactObligationsPastTarget: counts.contactObligationsPastTarget,
     },
     severity: ageBucket(counts.oldestDays),
   };

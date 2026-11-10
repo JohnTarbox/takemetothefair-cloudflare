@@ -4,6 +4,7 @@ import { containsCI } from "@/lib/db/contains-ci";
 import { withAuth } from "@/lib/api/with-auth";
 import { errorLogs } from "@/lib/db/schema";
 import { desc, eq, and, sql, lt } from "drizzle-orm";
+import { loadErrorLogGroups } from "@/lib/admin/error-log-groups";
 
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const searchParams = request.nextUrl.searchParams;
@@ -11,6 +12,15 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const level = searchParams.get("level");
   const q = searchParams.get("q");
   const source = searchParams.get("source");
+
+  // OPE-1601 — the default view of /admin/logs.
+  if (searchParams.get("view") === "grouped") {
+    const parsedDays = parseInt(searchParams.get("days") || "7", 10);
+    const days = Math.min(Math.max(Number.isNaN(parsedDays) ? 7 : parsedDays, 1), 30);
+    const since = new Date(Date.now() - days * 86400 * 1000);
+    const result = await loadErrorLogGroups(db as never, { since, level, source, q });
+    return NextResponse.json({ ...result, windowDays: days });
+  }
 
   const conditions = [];
   if (level) conditions.push(eq(errorLogs.level, level));

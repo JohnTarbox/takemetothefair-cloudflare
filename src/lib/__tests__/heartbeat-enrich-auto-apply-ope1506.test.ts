@@ -74,6 +74,22 @@ describe("OPE-1506 enrich-auto-apply probe", () => {
     expect(Date.now() - (await probe.lastEvidenceAt(db))!.getTime()).toBeLessThan(60_000);
   });
 
+  it("OPE-1529: an applied row sharing the demand's second clears it (the writer's real shape)", async () => {
+    arm("2026-10-20T00:00:00Z");
+    action("dedup.enrich_applied", "2026-10-22T10:00:00Z");
+    staged("2026-10-22T10:00:00Z", "trusted", ["estimated_attendance"]);
+    expect(count()).toBe(2);
+    expect(Date.now() - (await probe.lastEvidenceAt(db))!.getTime()).toBeLessThan(60_000);
+  });
+
+  it("OPE-1529: an applied row one second BEFORE the demand does not clear it, so the writer must share one timestamp", async () => {
+    arm("2026-10-20T00:00:00Z");
+    action("dedup.enrich_applied", "2026-10-22T09:59:59Z");
+    staged("2026-10-22T10:00:00Z", "trusted", ["estimated_attendance"]);
+    expect(count()).toBe(2);
+    expect((await probe.lastEvidenceAt(db))?.toISOString()).toBe("2026-10-22T10:00:00.000Z");
+  });
+
   it("no demand from an unqualified sender or a match with nothing eligible", async () => {
     arm("2026-10-20T00:00:00Z");
     staged("2026-10-22T10:00:00Z", null, ["estimated_attendance"]);

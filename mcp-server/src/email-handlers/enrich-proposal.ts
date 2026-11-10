@@ -482,6 +482,12 @@ export async function stageEnrichOnMatch(
     errors?: Record<string, string>;
   } | null = null;
   const eligible = Object.keys(disposition.proposals).filter((f) => AUTO_APPLY_FIELDS.has(f));
+  // OPE-1529 — one timestamp for this match's audit rows. The applied row is
+  // written BEFORE the staged row and `created_at` has whole-second resolution,
+  // so separate clocks could put the staged row a second later, and the
+  // enrich-auto-apply probe (evidence >= demand) would read a working writer as
+  // silent.
+  const auditAt = new Date();
   // The amendment's candidates — decided below, once the basis is known.
   const overwriteCandidates = Object.keys(disposition.differing).filter((f) =>
     OVERWRITE_FIELDS.has(f)
@@ -541,6 +547,7 @@ export async function stageEnrichOnMatch(
             inboundEmailId: input.inboundEmailId,
             path: input.path,
             matchType: input.matchType,
+            createdAt: auditAt,
           });
         }
         disposition.proposals = r.notApplied;
@@ -591,7 +598,7 @@ export async function stageEnrichOnMatch(
       // field: the probe reads `basis` + `eligible` here as its DEMAND.
       ...(autoApply ? { autoApply } : {}),
     }),
-    createdAt: new Date(),
+    createdAt: auditAt,
   });
 
   if (flag && input.inboundEmailId) {

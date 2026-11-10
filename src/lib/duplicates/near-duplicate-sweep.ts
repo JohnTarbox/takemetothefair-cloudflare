@@ -68,6 +68,7 @@ export interface SweepEventRow {
   venueName?: string | null;
   venueCity?: string | null;
   seriesId?: string | null;
+  sourceUrl?: string | null;
   promoterId: string | null;
   startDate: Date | null;
   /** OPE-1229 — the range matters: a sub-event sits INSIDE its parent's dates. */
@@ -197,6 +198,9 @@ export function nearDuplicateReason(
   const dayB = b.startDate.toISOString().slice(0, 10);
   const startDeltaDays = Math.round(Math.abs(Date.parse(dayA) - Date.parse(dayB)) / DAY_MS);
   if (startDeltaDays > NEAR_DUPLICATE_WINDOW_DAYS) return null;
+  // OPE-1597 — two dates listed on one source page are a schedule. WaterFire's
+  // lightings each got their own series_id, so the series check alone misses them.
+  if (a.sourceUrl && a.sourceUrl === b.sourceUrl && dayA !== dayB) return null;
 
   const place = [a.venueName, a.venueCity];
   const ta = identifyingTokens(a.name, place);
@@ -346,6 +350,7 @@ export async function runNearDuplicateSweep(
       venueName: venues.name,
       venueCity: venues.city,
       seriesId: events.seriesId,
+      sourceUrl: events.sourceUrl,
       promoterId: events.promoterId,
       startDate: events.startDate,
       endDate: events.endDate,

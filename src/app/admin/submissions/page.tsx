@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate, formatDateRange } from "@/lib/utils";
 import { getIngestionProvenance } from "@/lib/ingestion-provenance";
+import { daysSince, pendingBucket, type PendingBucket } from "@/lib/pending-buckets";
 
 interface Event {
   id: string;
@@ -35,11 +36,21 @@ interface Event {
   } | null;
 }
 
+const BUCKET_LABELS: Record<PendingBucket, string> = {
+  upcoming: "Upcoming",
+  ended: "Ended",
+  no_date: "No date",
+};
+
 export default function AdminSubmissionsPage() {
   const [submissions, setSubmissions] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [processing, setProcessing] = useState<string | null>(null);
+  // OPE-1596 — the queue opens on what can still be acted on.
+  const [bucket, setBucket] = useState<PendingBucket>("upcoming");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   useEffect(() => {
     fetchSubmissions();
@@ -113,6 +124,53 @@ export default function AdminSubmissionsPage() {
     }
   };
 
+  const now = new Date();
+  const bucketOf = (e: Event) => pendingBucket(e.startDate, e.endDate, now);
+  const inBucket = (b: PendingBucket) => submissions.filter((e) => bucketOf(e) === b);
+  const visible = inBucket(bucket);
+
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const expireSelected = async () => {
+    const ids = visible.filter((e) => selected.has(e.id)).map((e) => e.id);
+    if (ids.length === 0) return;
+    const ok = confirm(
+      `Reject ${ids.length} ended submission(s) as elapsed_unreviewed?\n\nThe submitters are not emailed. Rows that only need a date roll should be edited instead.`
+    );
+    if (!ok) return;
+    setBulkBusy(true);
+    try {
+      const res = await fetch("/api/admin/events/expire-elapsed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        expired?: number;
+        skipped?: number;
+        error?: string;
+      };
+      if (!res.ok) {
+        alert(data.error ?? `Bulk reject failed (${res.status}).`);
+        return;
+      }
+      alert(`Rejected ${data.expired ?? 0}. Skipped ${data.skipped ?? 0}.`);
+      setSelected(new Set());
+      await fetchSubmissions();
+    } catch (error) {
+      console.error("Bulk reject failed:", error);
+      alert("Bulk reject failed. Check console for details.");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
@@ -131,6 +189,58 @@ export default function AdminSubmissionsPage() {
         </p>
       </div>
 
+      {!error && (
+        <div
+          className="flex flex-wrap items-center gap-2 mb-6"
+          role="tablist"
+          aria-label="Filter by date"
+        >
+          {(["upcoming", "ended", "no_date"] as PendingBucket[]).map((b) => (
+            <Button
+              key={b}
+              type="button"
+              role="tab"
+              aria-selected={bucket === b}
+              variant={bucket === b ? "primary" : "outline"}
+              size="sm"
+              onClick={() => {
+                setBucket(b);
+                setSelected(new Set());
+              }}
+            >
+              {BUCKET_LABELS[b]} ({inBucket(b).length})
+            </Button>
+          ))}
+          {bucket === "ended" && visible.length > 0 && (
+            <div className="ml-auto flex items-center gap-3">
+              <button
+                type="button"
+                className="text-sm text-royal hover:underline"
+                onClick={() =>
+                  setSelected(
+                    selected.size === visible.length ? new Set() : new Set(visible.map((e) => e.id))
+                  )
+                }
+              >
+                {selected.size === visible.length
+                  ? "Clear selection"
+                  : `Select all ${visible.length}`}
+              </button>
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                disabled={selected.size === 0 || bulkBusy}
+                isLoading={bulkBusy}
+                onClick={expireSelected}
+              >
+                Reject selected as elapsed ({selected.size})
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
       {error ? (
         <Card>
           <CardContent className="py-12 text-center">
@@ -140,32 +250,51 @@ export default function AdminSubmissionsPage() {
             </Button>
           </CardContent>
         </Card>
-      ) : submissions.length === 0 ? (
+      ) : visible.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <p className="text-muted-foreground">No pending submissions</p>
+            <p className="text-muted-foreground">
+              {submissions.length === 0
+                ? "No pending submissions"
+                : `No ${BUCKET_LABELS[bucket].toLowerCase()} submissions`}
+            </p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-6">
-          {submissions.map((event) => {
+          {visible.map((event) => {
             // OPE-29 — bot-found vs human-submitted, from ingestion_method.
             const provenance = getIngestionProvenance(event.ingestionMethod);
             return (
               <Card key={event.id}>
                 <CardHeader className="flex flex-row items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground">{event.name}</h2>
-                    <p className="text-sm text-muted-foreground">
-                      {provenance.kind === "bot" ? "Found by" : "Submitted by"}{" "}
-                      {event.submitter?.name ||
-                        event.submitter?.email ||
-                        event.suggesterEmail ||
-                        event.sourceName ||
-                        event.promoter?.companyName ||
-                        "Unknown"}{" "}
-                      on {formatDate(event.createdAt)}
-                    </p>
+                  <div className="flex items-start gap-3">
+                    {bucket === "ended" && (
+                      <input
+                        type="checkbox"
+                        className="mt-1.5"
+                        checked={selected.has(event.id)}
+                        onChange={() => toggleSelected(event.id)}
+                        aria-label={`Select ${event.name}`}
+                      />
+                    )}
+                    <div>
+                      <h2 className="text-lg font-semibold text-foreground">{event.name}</h2>
+                      <p className="text-sm text-muted-foreground">
+                        {provenance.kind === "bot" ? "Found by" : "Submitted by"}{" "}
+                        {event.submitter?.name ||
+                          event.submitter?.email ||
+                          event.suggesterEmail ||
+                          event.sourceName ||
+                          event.promoter?.companyName ||
+                          "Unknown"}{" "}
+                        on {formatDate(event.createdAt)}
+                        {" · "}
+                        {bucketOf(event) === "ended"
+                          ? `ended ${daysSince((event.endDate ?? event.startDate) as string, now)} days ago`
+                          : `waiting ${daysSince(event.createdAt, now)} days`}
+                      </p>
+                    </div>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1.5">
                     <Badge variant="warning">Pending Review</Badge>
