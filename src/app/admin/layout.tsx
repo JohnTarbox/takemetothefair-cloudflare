@@ -43,6 +43,7 @@ const adminNav = [
   { name: "Analytics", href: "/admin/analytics", icon: BarChart3 },
   { name: "Database", href: "/admin/database", icon: Database },
   { name: "Error Logs", href: "/admin/logs", icon: FileWarning },
+  { name: "Problem Reports", href: "/admin/problem-reports", icon: FileWarning },
 ];
 
 // OPE-1380 — a nonce-CSP route (src/lib/csp.ts): it must render per request,
