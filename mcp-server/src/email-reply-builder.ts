@@ -563,6 +563,28 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    // OPE-1505 Ask 4 — copy approved by John, 2026-11-10. Trusted senders only.
+    case "trusted-listing-match": {
+      const applied = params.appliedFields as string | undefined;
+      const outcome = [
+        ...(applied ? [`We filled in these empty fields from the email: ${applied}.`] : []),
+        ...(params.staged ? ["The rest is queued for review in the admin inbox."] : []),
+      ].join("\n");
+      return `Thanks for emailing Meet Me at the Fair!
+
+This matches our listing for ${params.eventName as string}: ${params.eventUrl as string}
+${outcome ? `\n${outcome}\n` : ""}
+Nothing on the listing that already had a value was changed.
+
+${SIGN_OFF}`;
+    }
+    case "trusted-no-match": {
+      return `Thanks for emailing Meet Me at the Fair!
+
+We couldn't match this to a listing we have, and couldn't read enough from it to draft a new one. It's saved in the admin inbox for a manual look.
+
+${SIGN_OFF}`;
+    }
     case "no-url-prose-failed": {
       // Used when classifier said free_text (no URL) AND extractor ran on
       // the body AND the result didn't carry enough fields. The user did

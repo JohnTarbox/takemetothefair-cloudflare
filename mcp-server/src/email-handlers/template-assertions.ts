@@ -276,6 +276,8 @@ export const TEMPLATE_ASSERTIONS: Record<string, TemplateAssertion[]> = {
   "ok-low-body-extract": [],
   "ok-medium-dup": [],
   "no-url-prose-failed": [],
+  "trusted-listing-match": [],
+  "trusted-no-match": [],
   "extract-failed": [],
   "submit-failed": [],
   "sweep-exceeded": [],
