@@ -1913,6 +1913,17 @@ const FEED_PROVENANCE_SQL = (() => {
   return sql.slice(0, end);
 })();
 
+// OPE-1618 — the spreadsheet-import ledger, loaded from the migration itself.
+const PROMOTER_IMPORT_SQL = (() => {
+  const sql = readFileSync(
+    join(__dirname, "../../drizzle/0410_ope1618_promoter_spreadsheet_import.sql"),
+    "utf8"
+  );
+  if (!sql.includes("CREATE TABLE promoter_import_rows"))
+    throw new Error("0410 shape changed — the loader is reading the wrong file");
+  return sql;
+})();
+
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
   const raw = new Database(":memory:");
   raw.pragma("foreign_keys = ON");
@@ -1924,6 +1935,7 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   // the tests run against the exact SQL prod runs (one source, no copy to drift).
   raw["exec"](FORMER_VENUE_TRIGGERS_SQL);
   raw["exec"](FEED_PROVENANCE_SQL);
+  raw["exec"](PROMOTER_IMPORT_SQL);
   const db = drizzle(raw, { schema });
   // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.
   // Shim it so code paths that batch — e.g. SYN1's outbox-row + version-bump

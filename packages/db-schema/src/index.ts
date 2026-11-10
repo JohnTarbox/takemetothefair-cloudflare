@@ -2010,6 +2010,43 @@ export const eventVendors = sqliteTable(
   ]
 );
 
+/**
+ * OPE-1618 — one row per spreadsheet row a promoter (or an operator for them)
+ * committed. UNIQUE(promoter, file hash, row) makes re-uploading the same file
+ * create nothing new. `outcome`: `created` (a PENDING event) or `update_staged`
+ * (the row matched the promoter's own event; the differences are held in
+ * `proposed_changes` for review and the event carries a
+ * `promoter_import_update` review flag — nothing is written to it).
+ */
+export const promoterImportRows = sqliteTable(
+  "promoter_import_rows",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    fileHash: text("file_hash").notNull(),
+    fileName: text("file_name"),
+    rowNumber: integer("row_number").notNull(),
+    outcome: text("outcome", { enum: ["created", "update_staged"] }).notNull(),
+    eventId: text("event_id").references(() => events.id, { onDelete: "set null" }),
+    /** JSON: the row's values as read. */
+    rowValues: text("row_values").notNull(),
+    /** JSON: { field: { current, proposed } } — only for update_staged. */
+    proposedChanges: text("proposed_changes"),
+    uploadedBy: text("uploaded_by"),
+    /** `portal` (the promoter) or `operator` (admin/MCP on the promoter's behalf). */
+    channel: text("channel", { enum: ["portal", "operator"] }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_import_rows_file_row").on(t.promoterId, t.fileHash, t.rowNumber),
+    index("idx_promoter_import_rows_event").on(t.eventId),
+  ]
+);
+
 /** OPE-1613 — the authority rungs a citation can record (drizzle/0406, TS-only enum). */
 export const CITATION_PROVENANCE_KINDS = [
   "feed",
@@ -2017,6 +2054,8 @@ export const CITATION_PROVENANCE_KINDS = [
   "validated_contact",
   "operator",
   "extraction",
+  // OPE-1618 — a claimed promoter's own spreadsheet upload in the portal.
+  "promoter_portal",
 ] as const;
 export type CitationProvenanceKind = (typeof CITATION_PROVENANCE_KINDS)[number];
 
