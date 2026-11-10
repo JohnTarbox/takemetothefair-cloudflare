@@ -196,6 +196,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "text-match-record": 24,
       "outreach-reply-link": 24,
       "enrich-auto-apply": 24,
+      "contact-lane": 720,
       "photo-intake-storage-record": 30 * 24,
       // OPE-325 — demand-conditional: counts from an unanswered poster, not
       // from the last success, so a short window cannot cry wolf in a quiet month.
