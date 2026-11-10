@@ -43,20 +43,23 @@ import type {
  */
 const BRAND_KEYWORDS = ["meet me at the fair", "meetmeatthefair", "mmatf", "take me to the fair"];
 
-export async function loadSearchVisibilitySparkline(env: ScEnv): Promise<SparklineSeries> {
+export async function loadSearchVisibilitySparkline(
+  env: ScEnv,
+  days: number = SPARKLINE_DAYS
+): Promise<SparklineSeries> {
   // GSC daily aggregation. Returns 0-filled empty series on config/api errors so
   // the UI doesn't break — error visibility lives in the Google tab.
   try {
-    const rows = await getDailyClicks(env, { days: SPARKLINE_DAYS });
+    const rows = await getDailyClicks(env, { days });
     const byDate = new Map<string, number>();
     for (const r of rows) byDate.set(r.date, r.clicks);
     // OPE-95: trim the unreported trailing days (GSC lags ~2-3d) so the chart
     // ends at the last day with data instead of a false cliff to zero.
-    return fillDailySeriesTrimTrailing(byDate, SPARKLINE_DAYS);
+    return fillDailySeriesTrimTrailing(byDate, days);
   } catch (e) {
     if (e instanceof ScConfigError || e instanceof ScApiError) {
       // Zero-filled so the chart draws; TAGGED so the total is not read as 0.
-      return Object.assign(emptyDailySeries(SPARKLINE_DAYS), {
+      return Object.assign(emptyDailySeries(days), {
         unavailableReason: `GSC unavailable — ${e.message}`,
       });
     }
@@ -289,26 +292,11 @@ export async function loadBrandVsNonBrand(env: ScEnv, days: number): Promise<Bra
 }
 
 export async function loadKpiStrip90d(db: Db, env: ScEnv): Promise<KpiSparklineStrip> {
-  // 90-day sparklines for the three top KPIs. Reuses the 30-day loaders
-  // by passing a deeper sinceDate; GSC daily clicks call uses days=90.
+  // 90 days of daily points. The Overview charts trim these to the selected
+  // window (OPE-1602), so this is the only daily read they need.
   const since90 = new Date(Date.now() - 90 * 86400 * 1000);
   const [searchVisibility, conversions, publishing] = await Promise.all([
-    (async () => {
-      try {
-        const rows = await getDailyClicks(env, { days: 90 });
-        const byDate = new Map<string, number>();
-        for (const r of rows) byDate.set(r.date, r.clicks);
-        // OPE-95: trim the unreported GSC trailing days (see the 30d loader).
-        return fillDailySeriesTrimTrailing(byDate, 90);
-      } catch (e) {
-        if (e instanceof ScConfigError || e instanceof ScApiError) {
-          return Object.assign(emptyDailySeries(90), {
-            unavailableReason: `GSC unavailable — ${e.message}`,
-          });
-        }
-        throw e;
-      }
-    })(),
+    loadSearchVisibilitySparkline(env, 90),
     loadConversionsSparklineDays(db, since90, 90),
     loadPublishingSparklineDays(db, since90, 90),
   ]);

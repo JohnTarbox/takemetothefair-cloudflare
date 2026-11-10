@@ -357,9 +357,7 @@ export type OverviewSnapshot = {
   recentErrors: RecentErrorsCard;
   recommendations: RecommendationsSummaryCard;
   blogCoverage: BlogCoverageCard;
-  conversionsSparkline: SparklinePoint[];
   publishingSparkline: SparklinePoint[];
-  searchVisibilitySparkline: SparklineSeries;
   activity: ActivityEntry[];
   // §10.3 additions
   siteCtr: SiteCtrCard;

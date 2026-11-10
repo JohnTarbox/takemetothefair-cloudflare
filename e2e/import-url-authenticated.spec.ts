@@ -12,18 +12,14 @@ test.describe("Import URL Page - Authenticated", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/admin/import-url");
     // Wait for the page heading instead of networkidle (which can stall under load)
-    await expect(
-      page.getByRole("heading", { name: "Import from URL" })
-    ).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole("heading", { name: "Import from URL" })).toBeVisible({
+      timeout: 15000,
+    });
   });
 
-  test("page loads with correct heading and step indicator", async ({
-    page,
-  }) => {
+  test("page loads with correct heading and step indicator", async ({ page }) => {
     // Heading
-    await expect(
-      page.getByRole("heading", { name: "Import from URL" })
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Import from URL" })).toBeVisible();
 
     // Step indicator should be visible
     await expect(page.getByText("URL", { exact: true })).toBeVisible();
@@ -38,10 +34,7 @@ test.describe("Import URL Page - Authenticated", () => {
     // URL input
     const urlInput = page.locator('input[type="url"]');
     await expect(urlInput).toBeVisible();
-    await expect(urlInput).toHaveAttribute(
-      "placeholder",
-      "https://example.com/event-page"
-    );
+    await expect(urlInput).toHaveAttribute("placeholder", "https://example.com/event-page");
 
     // Fetch button is disabled when empty
     const fetchButton = page.getByRole("button", { name: /Fetch Page/i });
@@ -72,31 +65,21 @@ test.describe("Import URL Page - Authenticated", () => {
     await enableManualPaste(page);
 
     // Should show "Extract Event Data" button
-    await expect(
-      page.getByRole("button", { name: /Extract Event Data/i })
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: /Extract Event Data/i })).toBeVisible();
 
     // Extract button disabled when textarea is empty
-    await expect(
-      page.getByRole("button", { name: /Extract Event Data/i })
-    ).toBeDisabled();
+    await expect(page.getByRole("button", { name: /Extract Event Data/i })).toBeDisabled();
   });
 
-  test("manual paste mode enables extract button with content", async ({
-    page,
-  }) => {
+  test("manual paste mode enables extract button with content", async ({ page }) => {
     await enableManualPaste(page);
 
     // Fill textarea
     const textarea = page.locator("textarea");
-    await textarea.fill(
-      "Blue Hill Fair - September 5-8, 2025 at Blue Hill Fairgrounds"
-    );
+    await textarea.fill("Blue Hill Fair - September 5-8, 2025 at Blue Hill Fairgrounds");
 
     // Extract button should be enabled now
-    await expect(
-      page.getByRole("button", { name: /Extract Event Data/i })
-    ).toBeEnabled();
+    await expect(page.getByRole("button", { name: /Extract Event Data/i })).toBeEnabled();
   });
 
   test("can switch back from manual paste mode", async ({ page }) => {
@@ -110,9 +93,7 @@ test.describe("Import URL Page - Authenticated", () => {
     await expect(page.locator("textarea")).not.toBeVisible();
   });
 
-  test("shows loading step with cancel button when fetching", async ({
-    page,
-  }) => {
+  test("shows loading step with cancel button when fetching", async ({ page }) => {
     // Intercept the fetch API to create a reliable, controlled loading state
     // instead of depending on external httpbin.org which can be unreliable
     await page.route("**/api/admin/import-url/fetch**", async (route) => {
@@ -145,17 +126,13 @@ test.describe("Import URL Page - Authenticated", () => {
     });
   });
 
-  test("shows extracting state with cancel for manual paste", async ({
-    page,
-  }) => {
+  test("shows extracting state with cancel for manual paste", async ({ page }) => {
     await enableManualPaste(page);
 
     // Fill with content
     await page
       .locator("textarea")
-      .fill(
-        "Sample Fair - June 15, 2025 at Town Fairgrounds, 123 Main St, Portland, ME"
-      );
+      .fill("Sample Fair - June 15, 2025 at Town Fairgrounds, 123 Main St, Portland, ME");
 
     // Click extract
     await page.getByRole("button", { name: /Extract Event Data/i }).click();
@@ -166,14 +143,12 @@ test.describe("Import URL Page - Authenticated", () => {
     });
 
     // Cancel button should be visible
-    await expect(
-      page.getByRole("button", { name: /Cancel/i })
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: /Cancel/i })).toBeVisible();
   });
 
-  test("back to admin link works", async ({ page }) => {
-    const backLink = page.getByRole("link", { name: /Back to Admin/i });
-    await expect(backLink).toBeVisible();
-    await expect(backLink).toHaveAttribute("href", "/admin");
+  test("the Import tab bar links back to Import Events", async ({ page }) => {
+    const tab = page.getByRole("link", { name: "Import Events" });
+    await expect(tab).toBeVisible();
+    await expect(tab).toHaveAttribute("href", "/admin/import");
   });
 });
