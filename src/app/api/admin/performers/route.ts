@@ -12,6 +12,9 @@ import { withAuth } from "@/lib/api/with-auth";
 import { performers } from "@/lib/db/schema";
 import { createSlug, appendSlugSegment, unsafeSlug } from "@takemetothefair/utils";
 import { eq } from "drizzle-orm";
+import { performerList } from "@/lib/admin-list/lists";
+import { isPagedRequest, parseListParams } from "@/lib/admin-list/params";
+import { respondWithList } from "@/lib/admin-list/respond";
 
 const ACT_CATEGORY = new Set([
   "MUSIC",
@@ -29,6 +32,13 @@ const ACT_CATEGORY = new Set([
 
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const url = new URL(request.url);
+  // OPE-1595 — the list page asks for one page; the name lookup below stays.
+  if (isPagedRequest(url.searchParams)) {
+    return respondWithList(
+      performerList(db, url.searchParams, parseListParams(url.searchParams)),
+      url.searchParams
+    );
+  }
   const q = (url.searchParams.get("q") ?? "").trim();
   const limit = Math.min(Number(url.searchParams.get("limit") ?? 25) || 25, 100);
   const conds = [isNull(performers.deletedAt)];

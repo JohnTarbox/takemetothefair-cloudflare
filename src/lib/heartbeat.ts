@@ -19,6 +19,7 @@
  */
 import { and, eq, gte, inArray, isNotNull, isNull, notInArray, or, sql } from "drizzle-orm";
 import {
+  entityDuplicateSweepRuns,
   analyticsEvents,
   entityWriteLog,
   adminActions,
@@ -58,9 +59,11 @@ import {
   gembaObservations,
   promoterListArrivals,
   venues,
+  supportObligations,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
+import { FULL_SWEEP_TYPES } from "@/lib/duplicates/full-sweep-types";
 import {
   ENRICH_NOTHING_STAGED_ACTION,
   ENRICH_PROPOSED_ACTION,
@@ -1039,8 +1042,10 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // A field filled meanwhile is a legitimate non-apply, so a single miss
     // reads red until the next qualifying match applies — that is the intent.
     //
-    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0385): the writer is in the
-    // separately deployed MCP Worker. Arm once that deploy is live.
+    // Armed by OPE-1529 (drizzle/0400) with zero qualifying matches so far, so
+    // the writer's first real match is checked. The writer stamps the applied
+    // row and the demand row with ONE timestamp: the applied row is written
+    // first, and a demand row a second later would read as silent here.
     name: "enrich-auto-apply",
     ownerOpe: "OPE-1506",
     label: "Enrich-on-match auto-apply (trusted/verified senders) → dedup.enrich_applied",
@@ -1075,6 +1080,24 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         new Date()
       );
     },
+  },
+  {
+    // OPE-1510 — proof the contact-mail lane still opens its obligations. A
+    // known contact's ack is withheld by the same step that writes this row, so
+    // a lane that stopped running would mean contacts back on generic acks, or
+    // silence, with nothing else to say so.
+    name: "contact-lane",
+    ownerOpe: "OPE-1510",
+    label: "Contact-mail lane → contact obligation opened",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: async (db) =>
+      maxTs(
+        db,
+        supportObligations,
+        supportObligations.openedAt,
+        eq(supportObligations.kind, "contact")
+      ),
   },
   {
     // OPE-403 — proof the lane still RECORDS what it stored.
@@ -2413,6 +2436,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1597 — proof the daily full-table similarity sweep still runs for
+    // EVERY entity type. Reads the OLDEST run row, not the newest: vendors is
+    // the type most likely to fail alone, and a newest-row read would stay
+    // green on the other three.
+    name: "entity-duplicate-full-sweep",
+    ownerOpe: "OPE-1597",
+    label: "daily full-table duplicate sweep running for every entity type",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({
+          oldest: sql<number | null>`min(${entityDuplicateSweepRuns.lastRunAt})`,
+          types: sql<number>`count(*)`,
+        })
+        .from(entityDuplicateSweepRuns);
+      if (!r || r.oldest == null || Number(r.types) < FULL_SWEEP_TYPES.length) return null;
+      return new Date(Number(r.oldest) * 1000);
+    },
+  },
+  {
     // OPE-1152 — proof enrich-on-match still RECORDS a disposition for every
     // match. It staged ONE proposal in its lifetime because its writer was
     // reachable from one branch with a scope that was always already filled —
@@ -2449,6 +2493,23 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       );
       return demandConditionalEvidence(demand, evidence, new Date());
     },
+  },
+  {
+    // OPE-1609 — proof the hourly replied-row ledger check still RUNS. Its
+    // normal output is "0 faults", so it writes one info row per run. 3h = three
+    // runs missed. Literal source: the checker lives in the MCP Worker.
+    name: "replied-ledger-check",
+    ownerOpe: "OPE-1609",
+    label: "hourly check that replied inbound rows have a ledger row is running",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "mcp:inbound:replied-without-ledger"), eq(errorLogs.level, "info"))
+      ),
   },
   {
     // OPE-1205 — proof the daily sync-staleness sweep still RUNS. It writes one

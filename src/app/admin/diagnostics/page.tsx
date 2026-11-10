@@ -4,18 +4,18 @@
  * Surfaces pipeline health, not business metrics. Operator visits when
  * deciding "do I trust the analytics dashboard right now?" Includes:
  *
- *   - Recent error grouping (group last-7-days error_logs by source/message)
- *   - Pipeline health cards: enrichment success rate by source, IndexNow
- *     success rate, time-to-index reconciliation rate
+ *   - Pipeline health cards: enrichment success rate by source and
+ *     time-to-index reconciliation rate. IndexNow lives on its Analytics tab;
+ *     grouped errors live on /admin/logs.
  *
  * Auth: redirected to /signin if not admin (mirrors /admin/analytics).
  */
+import Link from "next/link";
 import { requireAdmin } from "@/lib/require-admin";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { loadDiagnosticsSnapshot } from "@/lib/diagnostics";
 import { formatTimestampForServer } from "@/lib/datetime";
-import { measurementText } from "@/lib/analytics-overview/render-state";
 
 export const dynamic = "force-dynamic";
 
@@ -50,29 +50,16 @@ export default async function AdminDiagnosticsPage() {
         </p>
       </div>
 
-      {/* Pipeline health cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        <Card
-          className={
-            snapshot.indexnow.successMeasured.state === "ok" && snapshot.indexnow.successRate < 0.9
-              ? "border-red-300"
-              : ""
-          }
-        >
-          <CardHeader>
-            <CardTitle>IndexNow ({snapshot.indexnow.windowDays}d)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-3xl font-bold text-foreground tabular-nums">
-              {measurementText(snapshot.indexnow.successMeasured, (v) => fmtPct(v))}
-            </p>
-            <p className="text-xs text-muted-foreground mt-2">
-              {fmt(snapshot.indexnow.success)} success / {fmt(snapshot.indexnow.failure)} failure /{" "}
-              {fmt(snapshot.indexnow.total)} total
-            </p>
-          </CardContent>
-        </Card>
+      <p className="text-sm text-muted-foreground mb-4">
+        IndexNow health is on the{" "}
+        <Link prefetch={false} href="/admin/analytics?tab=indexnow" className="underline">
+          IndexNow tab
+        </Link>
+        .
+      </p>
 
+      {/* Pipeline health cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
         <Card
           className={
             snapshot.timeToIndex.unresolved > 100 ||
@@ -129,44 +116,13 @@ export default async function AdminDiagnosticsPage() {
         </Card>
       </div>
 
-      {/* Error grouping */}
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            Recent errors grouped (last 7 days · top {snapshot.errorGroups.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {snapshot.errorGroups.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No errors logged in the last 7 days.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left border-b border-border">
-                    <th className="pb-2 pr-4 text-xs font-semibold text-foreground">Count</th>
-                    <th className="pb-2 pr-4 text-xs font-semibold text-foreground">Source</th>
-                    <th className="pb-2 pr-4 text-xs font-semibold text-foreground">Message</th>
-                    <th className="pb-2 text-xs font-semibold text-foreground">Last seen</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {snapshot.errorGroups.map((g, i) => (
-                    <tr key={i} className="border-b border-border last:border-0">
-                      <td className="py-2 pr-4 tabular-nums font-medium">{fmt(g.count)}</td>
-                      <td className="py-2 pr-4 font-mono text-xs text-foreground">{g.source}</td>
-                      <td className="py-2 pr-4 text-xs text-foreground">{g.message}</td>
-                      <td className="py-2 text-xs text-muted-foreground">
-                        {formatTimestampForServer(new Date(g.lastSeenMs))}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <p className="text-sm text-muted-foreground">
+        Grouped errors are on{" "}
+        <Link prefetch={false} href="/admin/logs" className="underline">
+          Error Logs
+        </Link>
+        .
+      </p>
     </div>
   );
 }

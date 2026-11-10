@@ -27,10 +27,7 @@ export type OutreachReason =
 
 /** Can we actually write to anyone about it? */
 export type ContactStatus =
-  | "contactable"
-  | "placeholder_promoter"
-  | "promoter_missing_email"
-  | "no_promoter";
+  "contactable" | "placeholder_promoter" | "promoter_missing_email" | "no_promoter";
 
 /**
  * The system placeholder used when a submission names no promoter.
@@ -108,7 +105,8 @@ export function evaluateOutreachReasons(
 
   // Only ask about vendor applications where they are actually accepted.
   // Asking a fair that takes no vendors wastes the one reply we get.
-  if (input.commercialVendorsAllowed && !input.vendorApplicationUrl?.trim()) {
+  // OPE-1606 — unknown still gets asked; only an explicit no does not.
+  if (input.commercialVendorsAllowed !== false && !input.vendorApplicationUrl?.trim()) {
     reasons.push("missing_vendor_application");
   }
 

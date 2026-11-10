@@ -110,6 +110,14 @@ export default async function AdminDashboard() {
         </Link>
         .
       </p>
+      {/* OPE-1602: a phone tool, so it is linked here on small screens, not in the sidebar. */}
+      <Link
+        prefetch={false}
+        href="/admin/snap"
+        className="md:hidden inline-block mb-6 text-sm font-medium text-royal hover:text-navy"
+      >
+        Snap booth photo
+      </Link>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {queues.map((tile) => (

@@ -37,6 +37,7 @@ const SCHEMA_SQL = `
     end_date INTEGER,
     source_name TEXT,
     source_url TEXT,
+    series_id TEXT,
     created_at INTEGER,
     updated_at INTEGER,
     merged_into TEXT,
@@ -250,6 +251,49 @@ beforeEach(() => {
 
 const ids = async () =>
   (await listUnresolvedDuplicateFlags(db as never, NOW)).map((f) => f.flagged.id).sort();
+
+describe("OPE-1597 — one schedule's dates are not a duplicate", () => {
+  const sec = (day: string) => Math.floor(Date.parse(`${day}T12:00:00Z`) / 1000);
+  const insert = (
+    id: string,
+    day: string,
+    url: string | null,
+    series: string | null,
+    flag?: string
+  ) =>
+    raw
+      .prepare(
+        `INSERT INTO events (id, name, slug, status, start_date, source_url, series_id, possible_duplicate_of)
+         VALUES (?, 'WaterFire Full Lighting', ?, 'TENTATIVE', ?, ?, ?, ?)`
+      )
+      .run(id, `slug-${id}`, sec(day), url, series, flag ?? null);
+
+  it("drops a flag between two dates of one source page, the WaterFire pair", async () => {
+    const before = (await ids()).length;
+    insert("oct24", "2026-10-24", "https://waterfire.org/schedule/", "series-a");
+    insert("oct17", "2026-10-17", "https://waterfire.org/schedule/", "series-b", "oct24");
+    expect((await ids()).length).toBe(before);
+  });
+
+  it("drops a flag between two dates of one series", async () => {
+    const before = (await ids()).length;
+    insert("a", "2026-10-24", null, "same");
+    insert("b", "2026-10-17", null, "same", "a");
+    expect((await ids()).length).toBe(before);
+  });
+
+  it("keeps a same-day pair even when the source page matches", async () => {
+    insert("c", "2026-10-24", "https://x.example/", null);
+    insert("d", "2026-10-24", "https://x.example/", null, "c");
+    expect(await ids()).toContain("d");
+  });
+
+  it("keeps a different-date pair from different pages", async () => {
+    insert("e", "2026-10-24", "https://a.example/", null);
+    insert("f", "2026-10-17", "https://b.example/", null, "e");
+    expect(await ids()).toContain("f");
+  });
+});
 
 describe("the unresolved-flag queue, over prod's real eight rows", () => {
   it("lists exactly the two rows the ticket names", async () => {

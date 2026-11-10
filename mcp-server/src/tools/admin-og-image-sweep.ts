@@ -2,7 +2,7 @@
  * `trigger_og_image_sweep` admin MCP tool.
  *
  * Thin wrapper over `POST /api/admin/og-image/sweep` on the main app.
- * Mirrors the dry-run / apply controls at `/admin/og-image-sweep` so the
+ * Keeps the dry-run / apply controls the retired /admin page had, so the
  * sweep can run from a Claude conversation without driving a browser.
  *
  * Analyst F1 (2026-05-29 backlog). Phase 2a of the og:image sweep

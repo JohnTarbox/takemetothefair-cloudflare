@@ -34,7 +34,7 @@ export interface ClaimEstate {
   unverifiedClaimants: number;
   /** Claimed vendor listings with no `entity_claims` row at all — all time. */
   divergent: number;
-  /** The same, restricted to the last DIVERGENCE_WINDOW_DAYS. Should be 0. */
+  /** Claimed in the last DIVERGENCE_WINDOW_DAYS, excluding self-registration. Should be 0. */
   divergentRecent: number;
 }
 
@@ -59,6 +59,16 @@ export async function getClaimEstate(db: Db): Promise<ClaimEstate> {
     SELECT 1 FROM ${entityClaims}
     WHERE ${entityClaims.entityType} = 'VENDOR'
       AND ${entityClaims.entityId} = ${vendors.id}
+  )`;
+
+  // OPE-1599 — the register route creates the listing and marks it claimed in
+  // one write, so a signup has claimed_at = created_at, and no claim row by
+  // design (authoring is not claiming). All 27 rows this figure read on
+  // 2026-11-09 were that shape, so the "should stay at 0" number counted every
+  // new signup. A real bypass claims a row that already existed.
+  const notSelfRegistered = sql`NOT (
+    ${vendors.claimedAt} = ${vendors.createdAt}
+    AND ${vendors.userId} = ${vendors.claimedBy}
   )`;
 
   const [vendorsClaimed, promotersClaimed, unverified, divergent, divergentRecent] =
@@ -97,7 +107,9 @@ export async function getClaimEstate(db: Db): Promise<ClaimEstate> {
         db
           .select({ n: sql<number>`count(*)` })
           .from(vendors)
-          .where(and(claimedVendors, hasNoClaimRow, gte(vendors.claimedAt, cutoff)))
+          .where(
+            and(claimedVendors, hasNoClaimRow, notSelfRegistered, gte(vendors.claimedAt, cutoff))
+          )
       ),
     ]);
 
