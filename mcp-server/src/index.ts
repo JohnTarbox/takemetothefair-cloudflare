@@ -81,6 +81,7 @@ import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledNearDuplicateSweep } from "./near-duplicate-sweep-cron.js";
 import { runScheduledCiTriggerWatchdog } from "./ci-trigger-watchdog.js";
 import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
+import { runScheduledPendingContactAttach } from "./inbound/pending-promoter-contact-attach.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
 import { runScheduledBurstCapSelfTest } from "./burst-cap-selftest-canary.js";
@@ -1812,6 +1813,8 @@ export default {
           // has sat destination-less past the age threshold. The standing
           // backlog stays in the Monday inventory. Failsoft (catches its own).
           ["unterminated-crossing-notice", () => runUnterminatedCrossingNotice(env, getDb(env.DB))],
+          // OPE-1610 — a pending contact joins its promoter once that row exists.
+          ["pending-contact-attach", () => runScheduledPendingContactAttach(env)],
         ]).then(() => undefined)
       );
       return;
