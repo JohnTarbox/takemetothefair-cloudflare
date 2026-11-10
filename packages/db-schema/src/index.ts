@@ -4332,6 +4332,47 @@ export const promoterContacts = sqliteTable(
   ]
 );
 
+/**
+ * OPE-1610 — a DMARC-aligned sender whose org has no promoter row yet. Held here
+ * until a promoter with that website domain exists, then copied to
+ * `promoter_contacts` by the hourly attach job. drizzle/0404.
+ */
+export const pendingPromoterContacts = sqliteTable(
+  "pending_promoter_contacts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    email: text("email").notNull().unique(),
+    orgDomain: text("org_domain").notNull(),
+    name: text("name"),
+    /** The non-promoter record the sender resolved to; NULL when none. */
+    matchedEntityType: text("matched_entity_type"),
+    matchedEntityId: text("matched_entity_id"),
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }),
+    validationEvidence: text("validation_evidence"),
+    senderAuth: text("sender_auth", { enum: ["pass", "partial", "fail"] }),
+    authDomain: text("auth_domain"),
+    status: text("status", { enum: ["pending", "attached"] })
+      .notNull()
+      .default("pending"),
+    attachedPromoterId: text("attached_promoter_id").references(() => promoters.id, {
+      onDelete: "set null",
+    }),
+    attachedAt: integer("attached_at", { mode: "timestamp" }),
+    firstValidatedAt: integer("first_validated_at", { mode: "timestamp" }).notNull(),
+    lastHeardAt: integer("last_heard_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_pending_promoter_contacts_status").on(t.status),
+    index("idx_pending_promoter_contacts_domain").on(t.orgDomain),
+  ]
+);
+
 /** OPE-1265 — one row per inbound email to lists@ / lists+*@. drizzle/0350. */
 export const promoterListArrivals = sqliteTable(
   "promoter_list_arrivals",

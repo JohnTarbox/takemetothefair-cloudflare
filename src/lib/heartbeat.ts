@@ -2470,6 +2470,23 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     },
   },
   {
+    // OPE-1610 — proof the hourly pending-contact attach job still RUNS. Most
+    // runs attach nothing, so it writes one info row per run. 3h = three runs
+    // missed. Literal source: the job lives in the MCP Worker.
+    name: "pending-contact-attach",
+    ownerOpe: "OPE-1610",
+    label: "hourly attach of pending promoter contacts is running",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "mcp:inbound:pending-contact-attach"), eq(errorLogs.level, "info"))
+      ),
+  },
+  {
     // OPE-1205 — proof the daily sync-staleness sweep still RUNS. It writes one
     // admin_actions row per run (event.sync_stale_sweep) whether or not it
     // downgrades anything, so silence means the cron stopped, not that nothing

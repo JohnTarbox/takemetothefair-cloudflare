@@ -209,6 +209,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "near-duplicate-sweep": 48,
       // OPE-1205 — daily cron, one run row each; two cycles before it pages.
       "sync-stale-sweep": 48,
+      "pending-contact-attach": 3,
       // OPE-1239 — */10 cron, run row at most hourly; three missed before it pages.
       "ci-trigger-watchdog": 3,
       "ocr-attachment": 21 * 24,
