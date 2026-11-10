@@ -12,9 +12,9 @@
  * import that file here because it would drag in main-app-only deps.
  */
 
-import { lt } from "drizzle-orm";
+import { eq, lt } from "drizzle-orm";
 import { getDb, type Db } from "./db.js";
-import { indexnowSubmissions, emailSendLedger } from "./schema.js";
+import { indexnowSubmissions, emailSendLedger, operatorOutboundDrafts } from "./schema.js";
 import { loadJobAttachments, type JobAttachment } from "./email-attachments.js";
 import { ledgerEmailSend, wasEmailSent } from "./mailer.js";
 import { logError } from "./logger.js";
@@ -99,6 +99,8 @@ type EmailJobMessage = {
    *  their next reply lands back correlated. */
   inReplyTo?: string;
   references?: string;
+  /** OPE-1605 — the draft this send delivers; its sent_message_id is written here. */
+  operatorDraftId?: string;
   /** OPE-1579 — references to stored files; the bytes are read at send time. */
   attachments?: JobAttachment[];
   /**
@@ -361,6 +363,24 @@ export async function handleEmailBatch(
         bodyText: m.body.text,
         attachmentsJson: m.body.attachments?.length ? JSON.stringify(m.body.attachments) : null,
       });
+      // OPE-1605 — the draft records which ledger row delivered it. Never fails
+      // the send: the mail has already gone.
+      if (m.body.operatorDraftId) {
+        try {
+          await db
+            .update(operatorOutboundDrafts)
+            .set({ sentMessageId: m.id })
+            .where(eq(operatorOutboundDrafts.id, m.body.operatorDraftId));
+        } catch (err) {
+          await logError(env.DB, {
+            source: "mcp:email-queue",
+            message: `sent_message_id write failed for draft ${m.body.operatorDraftId}`,
+            sessionId,
+            error: err,
+            context: { id: m.id },
+          });
+        }
+      }
       // OPE-1252 — a manual reply closes the person's obligation only now that
       // the provider accepted it and the `sent` row exists. Before the ack, so a
       // crash leaves the redelivery to close it (the close is idempotent: it
