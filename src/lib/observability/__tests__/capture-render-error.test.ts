@@ -163,3 +163,32 @@ describe("captureServerRenderError", () => {
     expect(row.message.endsWith("…[truncated]")).toBe(true);
   });
 });
+
+describe("OPE-1601 — one failure, one row", () => {
+  function fakeDb() {
+    const values = vi.fn().mockResolvedValue(undefined);
+    return { db: { insert: () => ({ values }) } as never, values };
+  }
+
+  it("writes one row when Next reports the same error object twice", async () => {
+    const { db, values } = fakeDb();
+    const error = new Error("Fetch failed (getPerformer)");
+    await captureServerRenderError(db, { error });
+    await captureServerRenderError(db, { error });
+    expect(values).toHaveBeenCalledTimes(1);
+  });
+
+  it("still writes a row per occurrence when two requests fail the same way", async () => {
+    const { db, values } = fakeDb();
+    await captureServerRenderError(db, { error: new Error("Fetch failed") });
+    await captureServerRenderError(db, { error: new Error("Fetch failed") });
+    expect(values).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not choke on a thrown non-object", async () => {
+    const { db, values } = fakeDb();
+    await captureServerRenderError(db, { error: "boom" });
+    await captureServerRenderError(db, { error: "boom" });
+    expect(values).toHaveBeenCalledTimes(2);
+  });
+});

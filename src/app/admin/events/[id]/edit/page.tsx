@@ -59,7 +59,7 @@ interface Event {
   imageFocalX: number;
   imageFocalY: number;
   featured: boolean;
-  commercialVendorsAllowed: boolean;
+  commercialVendorsAllowed: boolean | null;
   status: string;
   lifecycleStatus?: string;
   // Pre-ingest gate trace. JSON array of short reason codes; surfaced
@@ -253,7 +253,13 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       imageFocalX,
       imageFocalY,
       featured: formData.get("featured") === "on",
-      commercialVendorsAllowed: formData.get("commercialVendorsAllowed") === "on",
+      // OPE-1606 — three states. A checkbox would write "no" over an unknown.
+      commercialVendorsAllowed:
+        formData.get("commercialVendorsAllowed") === "yes"
+          ? true
+          : formData.get("commercialVendorsAllowed") === "no"
+            ? false
+            : null,
       status: formData.get("status"),
       eventDays: eventDays.length > 0 ? eventDays : [],
       vendorFeeMin: formData.get("vendorFeeMin")
@@ -711,16 +717,25 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   </Label>
                 </div>
                 <div className="flex items-center gap-2">
-                  <input
-                    id="commercialVendorsAllowed"
-                    name="commercialVendorsAllowed"
-                    type="checkbox"
-                    defaultChecked={event.commercialVendorsAllowed}
-                    className="h-4 w-4 rounded border-border"
-                  />
                   <Label htmlFor="commercialVendorsAllowed" className="font-normal">
                     Commercial Vendors Allowed
                   </Label>
+                  <select
+                    id="commercialVendorsAllowed"
+                    name="commercialVendorsAllowed"
+                    defaultValue={
+                      event.commercialVendorsAllowed === null
+                        ? "unknown"
+                        : event.commercialVendorsAllowed
+                          ? "yes"
+                          : "no"
+                    }
+                    className="rounded border border-border bg-background px-2 py-1 text-sm"
+                  >
+                    <option value="unknown">Unknown</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
                 </div>
               </div>
 

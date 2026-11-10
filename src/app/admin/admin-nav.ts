@@ -44,7 +44,6 @@ export const adminNavGroups: AdminNavGroup[] = [
       { name: "Submissions", href: "/admin/submissions", icon: ClipboardList },
       { name: "Claims", href: "/admin/claims", icon: ShieldCheck },
       { name: "Duplicates", href: "/admin/duplicates", icon: GitMerge },
-      { name: "Duplicate Flags", href: "/admin/duplicates/flags", icon: GitMerge },
       { name: "Inbox", href: "/admin/inbound-emails", icon: Inbox },
       { name: "Problem Reports", href: "/admin/problem-reports", icon: AlertTriangle },
     ],

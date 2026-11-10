@@ -22,9 +22,9 @@ const NOT_IN_SIDEBAR: Record<string, string> = {
   "/admin/analytics/ga4": "tab on Analytics",
   "/admin/stuck-urls": "link in the Analytics tab bar, beside Google",
   "/admin/analytics/page": "stray route, removed by OPE-1604",
-  "/admin/og-image-sweep": "retired by OPE-1604",
   "/admin/backfill-source-domain": "retired by OPE-1604",
   "/admin/snap": "phone tool, linked from the dashboard on small screens",
+  "/admin/duplicates/flags": "tab on Duplicates (OPE-1597)",
 };
 
 function adminRoutes(dir = ADMIN_ROOT, route = "/admin"): string[] {

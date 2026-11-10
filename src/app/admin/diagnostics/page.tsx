@@ -4,9 +4,9 @@
  * Surfaces pipeline health, not business metrics. Operator visits when
  * deciding "do I trust the analytics dashboard right now?" Includes:
  *
- *   - Recent error grouping (group last-7-days error_logs by source/message)
  *   - Pipeline health cards: enrichment success rate by source and
- *     time-to-index reconciliation rate. IndexNow lives on its Analytics tab.
+ *     time-to-index reconciliation rate. IndexNow lives on its Analytics tab;
+ *     grouped errors live on /admin/logs.
  *
  * Auth: redirected to /signin if not admin (mirrors /admin/analytics).
  */
@@ -116,44 +116,13 @@ export default async function AdminDiagnosticsPage() {
         </Card>
       </div>
 
-      {/* Error grouping */}
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            Recent errors grouped (last 7 days · top {snapshot.errorGroups.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {snapshot.errorGroups.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No errors logged in the last 7 days.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left border-b border-border">
-                    <th className="pb-2 pr-4 text-xs font-semibold text-foreground">Count</th>
-                    <th className="pb-2 pr-4 text-xs font-semibold text-foreground">Source</th>
-                    <th className="pb-2 pr-4 text-xs font-semibold text-foreground">Message</th>
-                    <th className="pb-2 text-xs font-semibold text-foreground">Last seen</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {snapshot.errorGroups.map((g, i) => (
-                    <tr key={i} className="border-b border-border last:border-0">
-                      <td className="py-2 pr-4 tabular-nums font-medium">{fmt(g.count)}</td>
-                      <td className="py-2 pr-4 font-mono text-xs text-foreground">{g.source}</td>
-                      <td className="py-2 pr-4 text-xs text-foreground">{g.message}</td>
-                      <td className="py-2 text-xs text-muted-foreground">
-                        {formatTimestampForServer(new Date(g.lastSeenMs))}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <p className="text-sm text-muted-foreground">
+        Grouped errors are on{" "}
+        <Link prefetch={false} href="/admin/logs" className="underline">
+          Error Logs
+        </Link>
+        .
+      </p>
     </div>
   );
 }

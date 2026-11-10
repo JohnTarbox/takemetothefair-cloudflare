@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, notLike, or, isNull, lte, count } from "drizzle-orm";
+import { and, eq, isNotNull, notLike, or, isNull, lte, count, sql } from "drizzle-orm";
 import { events, eventInStateWhere } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
@@ -107,7 +107,8 @@ export async function countPublicFilteredEvents(
   }
 
   if (searchParams.commercialVendors === "true") {
-    conditions.push(eq(events.commercialVendorsAllowed, true));
+    // OPE-1606 — unknown stays in; only an explicit no is filtered out.
+    conditions.push(sql`${events.commercialVendorsAllowed} IS NOT 0`);
   }
 
   if (searchParams.excludeFarmersMarkets === "true") {

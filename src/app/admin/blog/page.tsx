@@ -314,8 +314,7 @@ export default async function BlogCoveragePage({
         <CardHeader>
           <CardTitle className="text-sm font-semibold">Effectiveness by cluster</CardTitle>
           <p className="text-xs text-muted-foreground mt-1">
-            The 113 published posts grouped by an{" "}
-            <strong>explicit canonical slug→cluster map</strong> ({" "}
+            Published posts grouped by an <strong>explicit canonical slug→cluster map</strong> ({" "}
             <code>src/lib/admin/blog-clusters.ts</code>, OPE-101) — every published post is assigned
             by hand (no keyword heuristic); a new/unmapped post shows as{" "}
             <strong>&quot;Unclustered&quot;</strong> until it&apos;s added to the map. Drafts are

@@ -223,8 +223,8 @@ export default async function StuckUrlsPage() {
         <h1 className="text-2xl font-bold text-foreground">Stuck URLs (GSC index state)</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Clusters of URLs the URL-Inspection sweep marked non-indexed, grouped by entity type and
-          (for events) state. The point: turn a list of 39 separate &quot;Discovered – currently not
-          indexed&quot; rows into a worked list of 3–4 action targets (one pillar post + bulk{" "}
+          (for events) state. The point: turn a long list of separate &quot;Discovered – currently
+          not indexed&quot; rows into a worked list of 3–4 action targets (one pillar post + bulk{" "}
           <code>request_indexing</code>). Pulls from <code>gsc_inspection_state</code>.
         </p>
       </header>

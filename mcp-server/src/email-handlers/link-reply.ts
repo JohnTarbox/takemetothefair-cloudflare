@@ -21,10 +21,16 @@
  *
  * ⚠️ The match never writes to the matched event (ticket note). It only picks
  * the reply.
+ *
+ * OPE-1591 — a fourth case, ahead of A: the link is a Google AI answer
+ * → `ai-answer-link`. We never tried to open it, so B and C are both false.
+ * It MAY name a text match, in copy John approved 2026-11-08 that says "may":
+ * unlike A, it asks the sender to check rather than asserting a listing.
  */
-import { and, asc, desc, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { upcomingEndPredicate } from "@takemetothefair/db-schema";
 import { formatDateMedium } from "@takemetothefair/datetime";
+import { isAiAnswerLink } from "@takemetothefair/utils";
 import { events } from "../schema.js";
 import type { Db } from "../db.js";
 import { publicEventWhere } from "../helpers.js";
@@ -128,6 +134,30 @@ export async function findListedEventByExactLink(
   return (recent as ListedEvent | undefined) ?? null;
 }
 
+/**
+ * OPE-1591 — the public, non-tombstone event with this id, or null. The text
+ * matcher also returns PENDING rows, and the reply hands the sender our URL, so
+ * a match only reaches the copy if its page is live.
+ */
+export async function findPublicListedEventById(
+  db: Db,
+  id: string | null | undefined
+): Promise<ListedEvent | null> {
+  if (!id) return null;
+  const [row] = await db
+    .select({
+      id: events.id,
+      slug: events.slug,
+      name: events.name,
+      startDate: events.startDate,
+      endDate: events.endDate,
+    })
+    .from(events)
+    .where(and(eq(events.id, id), isNull(events.mergedInto), publicEventWhere()))
+    .limit(1);
+  return (row as ListedEvent | undefined) ?? null;
+}
+
 /** "Oct 2, 2026", or "Oct 2, 2026 – Oct 3, 2026" when the days differ. */
 export function listedEventDates(ev: Pick<ListedEvent, "startDate" | "endDate">): string {
   const s = ev.startDate ? formatDateMedium(ev.startDate) : "";
@@ -148,7 +178,7 @@ export function linkCauseSentence(url: string | null | undefined): string {
 }
 
 export interface LinkReplyDecision {
-  kind: "already-listed-link" | "unfetchable-url";
+  kind: "already-listed-link" | "unfetchable-url" | "ai-answer-link";
   params: ReplyParams;
   /** B promises a person will look, so B must put the row in the review queue. */
   flagForReview: boolean;
@@ -163,9 +193,26 @@ export function decideLinkReply(input: {
   link: string | null | undefined;
   linkOutcome: LinkOutcome | null | undefined;
   listed: ListedEvent | null;
+  /** OPE-1591 — the public event the email's TEXT matched, if any. */
+  textMatched?: ListedEvent | null;
   params: ReplyParams;
 }): LinkReplyDecision {
-  const { link, linkOutcome, listed, params } = input;
+  const { link, linkOutcome, listed, textMatched, params } = input;
+  // First, so a row that stored an AI link as its source_url before this
+  // existed can never turn it into "that event is already listed".
+  if (isAiAnswerLink(link)) {
+    return {
+      kind: "ai-answer-link",
+      params: textMatched
+        ? {
+            ...params,
+            textMatchedEventName: textMatched.name,
+            textMatchedEventUrl: `https://meetmeatthefair.com/events/${textMatched.slug}`,
+          }
+        : params,
+      flagForReview: false,
+    };
+  }
   if (listed) {
     return {
       kind: "already-listed-link",
