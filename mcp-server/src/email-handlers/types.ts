@@ -93,6 +93,9 @@ export type ReplyKind =
   // the inbound_emails persistence so the row still exists for admin
   // review even though the auto-reply was a soft fail.
   | "no-url-prose-failed"
+  // OPE-1505 Ask 4 — a trusted sender is never asked for the fields back.
+  | "trusted-listing-match"
+  | "trusted-no-match"
   | "extract-failed"
   | "submit-failed"
   | "already-exists"
