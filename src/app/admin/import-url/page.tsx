@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { useImportWizard } from "./use-import-wizard";
 import { StepIndicator } from "./components/StepIndicator";
 import { UrlInputStep } from "./components/UrlInputStep";
@@ -37,16 +37,6 @@ export default function ImportUrlPage() {
   return (
     <div>
       {/* Header */}
-      <div className="mb-6">
-        <Link
-          href="/admin"
-          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="w-4 h-4 mr-1" />
-          Back to Admin
-        </Link>
-      </div>
-
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Import from URL</h1>

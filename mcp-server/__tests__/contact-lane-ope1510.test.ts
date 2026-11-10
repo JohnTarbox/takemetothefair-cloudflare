@@ -489,6 +489,7 @@ describe("approving a contact draft", () => {
     toolsOf((s) =>
       registerOperatorOutboundTools(s, db as never, admin, {
         OPERATOR_OUTBOUND_ENABLED: "true",
+        INTERNAL_API_KEY: "test-signing-key",
         EMAIL_JOBS: { send: async (m: unknown) => void sent.push(m as Record<string, unknown>) },
       })
     ).get("review_operator_draft")!(args as never);
@@ -504,7 +505,8 @@ describe("approving a contact draft", () => {
     const [d] = drafts();
     expect(d.inboundEmailId).toBe("parent");
     await review({ id: d.id, action: "approve", body_text: "Thanks, Debra. Edited by John." });
-    expect(sent).toHaveLength(1);
+    // The reply, plus the operator's BCC copy (OPE-1605).
+    expect(sent).toHaveLength(2);
     expect(sent[0]).toMatchObject({
       inboundEmailId: "parent",
       inReplyTo: "<orig@mail>",
@@ -527,12 +529,14 @@ describe("approving a contact draft", () => {
       })
       .run();
     await review({ id: "dr-composed", action: "approve" });
-    expect(sent[0]).toEqual({
+    expect(sent[0]).toMatchObject({
       to: "a@b.example",
       subject: "Hello there",
-      text: "A composed message body.",
       source: "operator:outbound",
     });
+    expect(sent[0].inboundEmailId).toBeUndefined();
+    expect(sent[0].inReplyTo).toBeUndefined();
+    expect(String(sent[0].text)).toContain("A composed message body.");
   });
 });
 

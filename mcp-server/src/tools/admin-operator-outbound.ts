@@ -33,16 +33,28 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull, or } from "drizzle-orm";
 import { inboundEmails, operatorOutboundDrafts, PENDING_REPLY_STATUS } from "../schema.js";
 import { jsonContent } from "../helpers.js";
+import { logError } from "../logger.js";
+import {
+  applyCanSpamFooter,
+  BCC_TO,
+  paragraphsToHtml,
+  type SendVendorEmailEnv,
+} from "./admin-send-vendor-email.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
 /** The ledger source for this queue. NOT `reply:*` — see the header. */
 export const OPERATOR_OUTBOUND_SOURCE = "operator:outbound";
+/** OPE-1605 — the operator's copy. Its own source, so it is never read as the send. */
+export const OPERATOR_OUTBOUND_BCC_SOURCE = "operator:outbound-bcc";
 
-export interface OperatorOutboundEnv {
+export interface OperatorOutboundEnv extends Pick<
+  SendVendorEmailEnv,
+  "INTERNAL_API_KEY" | "UNSUBSCRIBE_SECRET" | "MAILING_ADDRESS"
+> {
   OPERATOR_OUTBOUND_ENABLED?: string;
   EMAIL_JOBS?: { send: (msg: unknown) => Promise<void> };
 }
@@ -122,15 +134,26 @@ export function registerOperatorOutboundTools(
       status: z
         .enum(["pending", "approved", "discarded", "sent"])
         .optional()
-        .default("pending")
-        .describe("Default 'pending' — the ones needing a decision."),
+        .describe(
+          "Omit for everything still waiting: pending drafts, plus approved drafts that never sent (OPE-1605)."
+        ),
       limit: z.number().int().min(1).max(100).optional().default(25),
     },
     async (params) => {
       const rows = await db
         .select()
         .from(operatorOutboundDrafts)
-        .where(eq(operatorOutboundDrafts.status, params.status ?? "pending"))
+        .where(
+          params.status
+            ? eq(operatorOutboundDrafts.status, params.status)
+            : or(
+                eq(operatorOutboundDrafts.status, PENDING_REPLY_STATUS.PENDING),
+                and(
+                  eq(operatorOutboundDrafts.status, PENDING_REPLY_STATUS.APPROVED),
+                  isNull(operatorOutboundDrafts.sentAt)
+                )
+              )
+        )
         .orderBy(asc(operatorOutboundDrafts.composedAt))
         .limit(params.limit ?? 25);
 
@@ -167,7 +190,11 @@ export function registerOperatorOutboundTools(
     {
       id: z.string().min(8).describe("Draft id from list_operator_drafts."),
       action: z.enum(["approve", "discard"]),
-      note: z.string().max(1000).optional().describe("Why — recorded on the row."),
+      note: z
+        .string()
+        .max(1000)
+        .optional()
+        .describe("Why — recorded on the row. Required to discard an approved, unsent draft."),
       body_text: z
         .string()
         .min(10)
@@ -186,6 +213,43 @@ export function registerOperatorOutboundTools(
 
       if (!row) {
         return { content: [jsonContent({ ok: false, error: "not_found", id })], isError: true };
+      }
+      // OPE-1605 — an approved draft that never sent has an exit. Without one it
+      // is a permanent duplicate-send hazard (the OPE-635 shape).
+      const approvedUnsent = row.status === PENDING_REPLY_STATUS.APPROVED && !row.sentAt;
+      if (action === "discard" && approvedUnsent) {
+        if (!note?.trim()) {
+          return {
+            content: [
+              jsonContent({
+                ok: false,
+                error: "note_required",
+                id,
+                message: "Discarding an approved draft reverses a decision. Say why in `note`.",
+              }),
+            ],
+            isError: true,
+          };
+        }
+        await settle(
+          db,
+          id,
+          PENDING_REPLY_STATUS.DISCARDED,
+          auth,
+          note,
+          PENDING_REPLY_STATUS.APPROVED
+        );
+        return {
+          content: [
+            jsonContent({
+              ok: true,
+              id,
+              status: "discarded",
+              sent: false,
+              message: "Discarded. Retained for audit; it will not be sent.",
+            }),
+          ],
+        };
       }
       if (row.status !== PENDING_REPLY_STATUS.PENDING) {
         // Re-reviewing a settled draft would overwrite the original decision
@@ -261,14 +325,50 @@ export function registerOperatorOutboundTools(
       // OPE-1510 — a draft answering an inbound threads under it, and the
       // consumer closes the obligation once the send is confirmed.
       const threading = row.inboundEmailId ? await inboundThreading(db, row.inboundEmailId) : null;
+      //
+      // OPE-1605 — a composed message carries the CAN-SPAM footer. A reply to
+      // someone who wrote to us does not, matching reply_to_inbound_email.
+      const footered = row.inboundEmailId
+        ? null
+        : await applyCanSpamFooter(
+            { subject: row.subject, text: bodyText, html: paragraphsToHtml(bodyText) },
+            {
+              recipientEmail: row.toAddress,
+              reasonLine: "Meet Me at the Fair contacted you about a listing or event.",
+              env: {
+                INTERNAL_API_KEY: env.INTERNAL_API_KEY,
+                UNSUBSCRIBE_SECRET: env.UNSUBSCRIBE_SECRET,
+                MAILING_ADDRESS: env.MAILING_ADDRESS,
+              },
+            }
+          );
       await env.EMAIL_JOBS.send({
         to: row.toAddress,
         subject: row.subject,
-        text: bodyText,
+        text: footered?.text ?? bodyText,
+        ...(footered ? { html: footered.html } : {}),
         source: OPERATOR_OUTBOUND_SOURCE,
+        operatorDraftId: id,
         ...(row.inboundEmailId ? { inboundEmailId: row.inboundEmailId } : {}),
         ...(threading ? { inReplyTo: threading, references: threading } : {}),
       });
+      // The binding has no bcc field, so the copy is a second message. A failed
+      // copy must not read as a failed send.
+      try {
+        await env.EMAIL_JOBS.send({
+          to: BCC_TO,
+          subject: `[BCC] ${row.subject}`.slice(0, 200),
+          text: `[BCC copy] Sent to ${row.toAddress} via review_operator_draft.\n\n----------\n\n${bodyText}`,
+          source: OPERATOR_OUTBOUND_BCC_SOURCE,
+        });
+      } catch (error) {
+        await logError(db, {
+          source: "mcp:operator-outbound",
+          message: "operator BCC copy failed to enqueue; the primary send was queued",
+          error,
+          context: { draftId: id },
+        });
+      }
 
       const now = new Date();
       await db
@@ -322,13 +422,14 @@ async function inboundThreading(db: Db, inboundEmailId: string): Promise<string 
   return parent?.messageId ?? null;
 }
 
-/** Settle a draft without sending. Concurrency-guarded on `pending`. */
+/** Settle a draft without sending. Concurrency-guarded on the state it left. */
 async function settle(
   db: Db,
   id: string,
   status: string,
   auth: AuthContext,
-  note: string | undefined
+  note: string | undefined,
+  from: string = PENDING_REPLY_STATUS.PENDING
 ) {
   await db
     .update(operatorOutboundDrafts)
@@ -338,10 +439,5 @@ async function settle(
       reviewedAt: new Date(),
       reviewNote: note ?? null,
     })
-    .where(
-      and(
-        eq(operatorOutboundDrafts.id, id),
-        eq(operatorOutboundDrafts.status, PENDING_REPLY_STATUS.PENDING)
-      )
-    );
+    .where(and(eq(operatorOutboundDrafts.id, id), eq(operatorOutboundDrafts.status, from)));
 }

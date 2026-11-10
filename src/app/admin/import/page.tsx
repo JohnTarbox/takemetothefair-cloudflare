@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
-  ArrowLeft,
   Download,
   RefreshCw,
   Calendar,
@@ -974,16 +973,6 @@ export default function ImportEventsPage() {
 
   return (
     <div>
-      <div className="mb-6">
-        <Link
-          href="/admin"
-          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="w-4 h-4 mr-1" />
-          Back to Admin
-        </Link>
-      </div>
-
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Import Events</h1>

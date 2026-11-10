@@ -11,14 +11,8 @@ import {
 import { analyticsEvents } from "@/lib/db/schema";
 import { getOrganicSessions, type Ga4Env } from "@/lib/ga4";
 import { freshness, rate as rateOf, unavailable } from "./render-state";
-import {
-  CONVERSION_EVENT_NAMES,
-  SPARKLINE_DAYS,
-  fillDailySeries,
-  trendOf,
-  type Db,
-} from "./shared";
-import type { ConversionRateCard, ConversionsCard, SparklinePoint } from "./types";
+import { CONVERSION_EVENT_NAMES, trendOf, type Db } from "./shared";
+import type { ConversionRateCard, ConversionsCard } from "./types";
 
 export async function loadConversions(
   db: Db,
@@ -67,28 +61,6 @@ export async function loadConversions(
       typeof lastSec === "number" ? lastSec * 1000 : null
     ),
   };
-}
-
-export async function loadConversionsSparkline(db: Db, sinceDate: Date): Promise<SparklinePoint[]> {
-  // strftime expects seconds; columns store seconds (mode:"timestamp").
-  const dayExpr = sql<string>`strftime('%Y-%m-%d', ${analyticsEvents.timestamp}, 'unixepoch')`;
-  const rows = await db
-    .select({
-      day: dayExpr,
-      c: count(),
-    })
-    .from(analyticsEvents)
-    .where(
-      and(
-        inArray(analyticsEvents.eventName, [...CONVERSION_EVENT_NAMES]),
-        gte(analyticsEvents.timestamp, sinceDate)
-      )
-    )
-    .groupBy(dayExpr);
-
-  const byDate = new Map<string, number>();
-  for (const r of rows) byDate.set(r.day, r.c);
-  return fillDailySeries(byDate, SPARKLINE_DAYS);
 }
 
 export async function loadConversionRate(

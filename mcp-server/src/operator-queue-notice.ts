@@ -217,6 +217,12 @@ export interface OperatorQueueCounts {
    */
   unpinnedVenueImminent: number;
   /**
+   * OPE-1605 — approved drafts that never sent. Karen's sat unseen for 68 days:
+   * approved while delivery was off, it left the pending count and nothing else
+   * counted it.
+   */
+  approvedUnsentDrafts: number;
+  /**
    * OPE-1510 — open contact obligations past their one-business-day target.
    * Each is a known contact John owes a reply to, already late.
    */
@@ -251,6 +257,7 @@ export function decideOperatorQueueNotice(
     | "authEmailProblems"
     | "unpinnedVenueImminent"
     | "contactObligationsPastTarget"
+    | "approvedUnsentDrafts"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -283,6 +290,7 @@ export function totalWaiting(
     | "authEmailProblems"
     | "unpinnedVenueImminent"
     | "contactObligationsPastTarget"
+    | "approvedUnsentDrafts"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -315,7 +323,9 @@ export function totalWaiting(
     // OPE-1290 — `?? 0` for the reason the comment above gives.
     (counts.unpinnedVenueImminent ?? 0) +
     // OPE-1510 — `?? 0` for the same reason.
-    (counts.contactObligationsPastTarget ?? 0)
+    (counts.contactObligationsPastTarget ?? 0) +
+    // OPE-1605 — `?? 0` for the same reason.
+    (counts.approvedUnsentDrafts ?? 0)
   );
 }
 
@@ -501,6 +511,27 @@ export async function readOperatorQueues(
     }
   } catch {
     // The table may not exist on an older deploy; never take the notice down.
+  }
+
+  // OPE-1605 — approved and never sent. Its own count: "awaiting approval" would
+  // be false for these, and folding them in would hide which kind is waiting.
+  let approvedUnsentDrafts = 0;
+  try {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(operatorOutboundDrafts)
+      .where(
+        and(eq(operatorOutboundDrafts.status, "approved"), isNull(operatorOutboundDrafts.sentAt))
+      );
+    approvedUnsentDrafts = Number(row?.n ?? 0);
+    if (approvedUnsentDrafts > 0) {
+      lines.push(
+        `${approvedUnsentDrafts} approved operator draft(s) never sent — discard them, or send ` +
+          `them again as new drafts.`
+      );
+    }
+  } catch {
+    // Same reason as the pending count above: never take the notice down.
   }
 
   // OPE-761 — inbound mail hibernating on the workflow's `admin-decision`
@@ -878,6 +909,7 @@ export async function readOperatorQueues(
     authEmailProblems,
     unpinnedVenueImminent,
     contactObligationsPastTarget,
+    approvedUnsentDrafts,
     unpinnedVenueExamined,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
@@ -952,6 +984,7 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
       authEmailProblems: counts.authEmailProblems,
       unpinnedVenueImminent: counts.unpinnedVenueImminent,
       contactObligationsPastTarget: counts.contactObligationsPastTarget,
+      approvedUnsentDrafts: counts.approvedUnsentDrafts,
     },
     severity: ageBucket(counts.oldestDays),
   };
