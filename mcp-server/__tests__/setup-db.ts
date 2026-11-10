@@ -1899,6 +1899,20 @@ const FORMER_VENUE_TRIGGERS_SQL = (() => {
   return sql.slice(start);
 })();
 
+// OPE-1613 — feed/provenance/pin tables and the citation provenance column,
+// loaded from the migration itself (DDL only: the heartbeat_probes seed row is
+// cut off, since this harness has no heartbeat_probes table).
+const FEED_PROVENANCE_SQL = (() => {
+  const sql = readFileSync(
+    join(__dirname, "../../drizzle/0406_ope1613_feed_provenance.sql"),
+    "utf8"
+  );
+  const end = sql.indexOf("INSERT INTO heartbeat_probes");
+  if (end < 0 || !sql.includes("CREATE TABLE event_field_pins"))
+    throw new Error("0406 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
   const raw = new Database(":memory:");
   raw.pragma("foreign_keys = ON");
@@ -1909,6 +1923,7 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   // OPE-1180 — the FORMER-venue triggers, loaded from the migration itself so
   // the tests run against the exact SQL prod runs (one source, no copy to drift).
   raw["exec"](FORMER_VENUE_TRIGGERS_SQL);
+  raw["exec"](FEED_PROVENANCE_SQL);
   const db = drizzle(raw, { schema });
   // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.
   // Shim it so code paths that batch — e.g. SYN1's outbox-row + version-bump
