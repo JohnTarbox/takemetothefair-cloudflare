@@ -1280,8 +1280,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       featured: z.boolean().optional().describe("Whether the event is featured"),
       commercial_vendors_allowed: z
         .boolean()
+        .nullable()
         .optional()
-        .describe("Whether commercial vendors are allowed"),
+        .describe(
+          "Whether commercial vendors are allowed. Pass null to clear it back to unknown (OPE-1606)."
+        ),
       vendor_fee_min: z.number().optional().describe("Minimum vendor/booth fee"),
       vendor_fee_max: z.number().optional().describe("Maximum vendor/booth fee"),
       vendor_fee_notes: z.string().optional().describe("Details about vendor/booth fees"),

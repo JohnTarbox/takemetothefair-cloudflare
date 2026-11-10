@@ -1776,7 +1776,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                           "You've been invited to participate!"}
                       </p>
                     </div>
-                  ) : vendorInfo.vendor.commercial && !event.commercialVendorsAllowed ? (
+                  ) : vendorInfo.vendor.commercial && event.commercialVendorsAllowed === false ? (
                     <div className="text-center">
                       <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
                       <p className="text-sm text-muted-foreground">
