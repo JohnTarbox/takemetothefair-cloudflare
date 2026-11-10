@@ -248,6 +248,13 @@ describe("no PUBLIC MCP path reads the private table", () => {
     walk(dir);
     // Landmark: the two readers/writers exist. Any NEW file here is a review
     // point — is it admin-gated?
-    expect(hits.sort()).toEqual(["tools/admin-event-read.ts", "tools/admin.ts"]);
+    // OPE-1622: goodwill/community-default.ts APPENDS a marker and never returns
+    // the notes. Its only caller is captureCitationLiveDefect, reached only from
+    // the admin citation tools (registered in registerAdminTools).
+    expect(hits.sort()).toEqual([
+      "goodwill/community-default.ts",
+      "tools/admin-event-read.ts",
+      "tools/admin.ts",
+    ]);
   });
 });
