@@ -83,7 +83,10 @@ import {
   type OwedHumanVerdict,
 } from "../email-handlers/owed-human.js";
 import { openObligationIfOwed } from "../email-handlers/open-obligation.js";
-import { chooseTrustedNoUrlReply } from "../email-handlers/trusted-no-url-reply.js";
+import {
+  chooseTrustedNoUrlReply,
+  chooseTrustedVenueDateReply,
+} from "../email-handlers/trusted-no-url-reply.js";
 import { runContactLane } from "../inbound/contact-lane.js";
 import { heldSendReason } from "../inbound/replies-suppressed.js";
 import {
@@ -2923,7 +2926,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             messageRowId,
             true, // OPE-185 — drafted from body prose → ok-low-body-extract reply
             // OPE-465 — the body IS the source on this path.
-            [rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""]
+            [rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""],
+            senderTrust
           );
         }
         // Not enough to draft — fall through to the prose-failed reply (closes
@@ -3144,7 +3148,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 null, // no successful fetch — this is a body-prose draft
                 messageRowId,
                 true, // OPE-185 — drafted from body prose → ok-low-body-extract reply
-                [rawBody] // OPE-465 — the body IS the source on this path
+                [rawBody], // OPE-465 — the body IS the source on this path
+                senderTrust
               );
             }
             // Prose present but not enough to draft — record the reason, then bounce.
@@ -3262,7 +3267,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       false,
       // OPE-465 — the page we fetched AND the email body. Both are sources the
       // extractor was given, so a value stated in either is grounded.
-      [fetched.content, rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""]
+      [fetched.content, rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""],
+      senderTrust
     );
   }
 
@@ -3329,7 +3335,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // OPE-465 — the exact text the fields were read from. Empty means "no
     // source captured", which grounds everything as supported and drops
     // nothing, so an unwired caller behaves exactly as it does today.
-    sourceTexts: string[] = []
+    sourceTexts: string[] = [],
+    /** OPE-1506 — the same verdict the handlers receive via HandlerCtx. */
+    senderTrust: SenderTrustTier = "unknown"
   ): Promise<HandlerResult> {
     // C1 Phase 2 (analyst, 2026-05-30): multi-event landing pages
     // (e.g. https://downtownfarmington.com/farmers-markets/ listing 3
@@ -3483,8 +3491,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // `dedup.would_enrich` observation above. OPE-1152 widened the scope and
         // made a stage-nothing match record itself (enrich-proposal.ts). Failsoft
         // — a hiccup here must not block the already-exists reply.
+        let highEnrich: { applied: string[]; staged: boolean } | null = null;
         if (dedup.existingEventId) {
-          await this.stageEnrichBestEffort(step, "submit/enrich-proposal", {
+          highEnrich = await this.stageEnrichBestEffort(step, "submit/enrich-proposal", {
             existingEventId: dedup.existingEventId,
             url: extracted.url,
             event: extracted.event as unknown as Record<string, unknown>,
@@ -3493,6 +3502,28 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             inboundEmailId: messageRowId,
             fromAddress,
           });
+        }
+
+        // OPE-1506 — John, 2026-11-10: on this path a trusted sender gets the
+        // approved "matched a listing" reply. It needs a link we may send, so a
+        // listing that is not public keeps `already-exists`.
+        const trustedHighReply = chooseTrustedVenueDateReply({
+          senderTrust,
+          matchType: dedup.matchType ?? null,
+          listingUrl: publicEventUrlIfVisible(dedup.existingEventSlug, dedup.existingEventStatus),
+          name: dedup.existingEventName ?? extracted.event.name ?? "",
+          applied: highEnrich?.applied ?? [],
+          staged: highEnrich?.staged ?? false,
+        });
+        if (trustedHighReply) {
+          return {
+            replyKind: trustedHighReply.replyKind,
+            replyParams: { subject, ...trustedHighReply.replyParams },
+            status: "replied",
+            resultingEventId: dedup.existingEventId ?? null,
+            fetchMethod,
+            extractionMethod: extracted.extractionMethod,
+          };
         }
 
         return {

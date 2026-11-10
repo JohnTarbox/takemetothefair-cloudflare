@@ -23,6 +23,48 @@ export function plainFieldList(fields: readonly string[]): string {
   return [...new Set(fields.map(plainFieldName))].join(", ");
 }
 
+/** The listing-match reply's params. Shared by both paths that use it. */
+export function trustedListingParams(input: {
+  name: string;
+  url: string;
+  applied: readonly string[];
+  staged: boolean;
+}): ReplyParams {
+  return {
+    eventName: input.name,
+    eventUrl: input.url,
+    ...(input.applied.length > 0 ? { appliedFields: plainFieldList(input.applied) } : {}),
+    ...(input.staged ? { staged: true } : {}),
+  };
+}
+
+/**
+ * OPE-1506 — the reply on a trusted sender's single-high venue+date match. It
+ * needs a link we may send, so a listing that is not public returns null and
+ * the caller keeps `already-exists`.
+ */
+export function chooseTrustedVenueDateReply(input: {
+  senderTrust: string;
+  matchType: string | null;
+  listingUrl: string | null;
+  name: string;
+  applied: readonly string[];
+  staged: boolean;
+}): { replyKind: ReplyKind; replyParams: ReplyParams } | null {
+  if (input.senderTrust !== "trusted" || input.matchType !== "venue_date" || !input.listingUrl) {
+    return null;
+  }
+  return {
+    replyKind: "trusted-listing-match",
+    replyParams: trustedListingParams({
+      name: input.name,
+      url: input.listingUrl,
+      applied: input.applied,
+      staged: input.staged,
+    }),
+  };
+}
+
 export function chooseTrustedNoUrlReply(input: {
   replyKind: ReplyKind;
   trusted: boolean;
@@ -34,11 +76,11 @@ export function chooseTrustedNoUrlReply(input: {
   if (!input.matched) return { replyKind: "trusted-no-match", replyParams: {} };
   return {
     replyKind: "trusted-listing-match",
-    replyParams: {
-      eventName: input.matched.name,
-      eventUrl: `${PUBLIC_HOST}/events/${input.matched.slug}`,
-      ...(input.applied.length > 0 ? { appliedFields: plainFieldList(input.applied) } : {}),
-      ...(input.staged ? { staged: true } : {}),
-    },
+    replyParams: trustedListingParams({
+      name: input.matched.name,
+      url: `${PUBLIC_HOST}/events/${input.matched.slug}`,
+      applied: input.applied,
+      staged: input.staged,
+    }),
   };
 }
