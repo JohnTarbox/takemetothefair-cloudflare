@@ -29,6 +29,7 @@ const LABEL: Record<string, string> = {
   organizer_website: "Organizer website",
   operator: "Operator",
   extraction: "Extraction",
+  promoter_portal: "Promoter upload",
   unclassified: "Unclassified (pre-provenance)",
 };
 
