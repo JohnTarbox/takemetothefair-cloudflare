@@ -199,7 +199,7 @@ const SCHEMA_SQL = `
     ticket_price_max_cents INTEGER,
     image_url TEXT,
     featured INTEGER DEFAULT 0,
-    commercial_vendors_allowed INTEGER DEFAULT 1,
+    commercial_vendors_allowed INTEGER,
     status TEXT NOT NULL DEFAULT 'DRAFT',
     view_count INTEGER DEFAULT 0,
     source_name TEXT,

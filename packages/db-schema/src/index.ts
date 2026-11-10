@@ -516,9 +516,9 @@ export const events = sqliteTable(
     ticketPriceMaxCents: integer("ticket_price_max_cents"),
     imageUrl: text("image_url"),
     featured: integer("featured", { mode: "boolean" }).default(false),
-    commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }).default(
-      true
-    ),
+    // OPE-1606 — NULL means unknown. It defaulted to true, so a row saying "yes"
+    // usually meant nobody had checked. Read a NULL as unknown, never as no.
+    commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }),
     status: text("status", {
       enum: ["DRAFT", "PENDING", "TENTATIVE", "APPROVED", "REJECTED", "CANCELLED"],
     })

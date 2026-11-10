@@ -139,10 +139,11 @@ function crowdSignal(e: VendorDigestEvent): string | null {
   return null;
 }
 
-function fitLine(e: VendorDigestEvent): string | null {
+export function fitLine(e: VendorDigestEvent): string | null {
   const parts: string[] = [];
   if (e.categories.length > 0) parts.push(e.categories.slice(0, 4).join(", "));
-  if (e.commercialVendorsAllowed) parts.push("commercial vendors welcome");
+  // OPE-1606 — only an explicit yes. NULL prints nothing.
+  if (e.commercialVendorsAllowed === true) parts.push("commercial vendors welcome");
   return parts.length ? parts.join(" · ") : null;
 }
 
