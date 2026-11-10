@@ -679,6 +679,10 @@ function CatalogGrowthCard({ snapshot }: { snapshot: OverviewSnapshot }) {
             {fmt(card.totals.events)} events · {fmt(card.totals.venues)} venues ·{" "}
             {fmt(card.totals.vendors)} vendors
           </span>
+          <span className="text-xs text-muted-foreground">
+            {fmt(card.totals.promoters)} promoters · {fmt(card.totals.users)} real users ·{" "}
+            {fmt(card.totals.eventVendorLinks)} event-vendor links
+          </span>
           {/* OPE-1347 #2 — say which population each count is. */}
           <span className="text-[11px] text-muted-foreground">{CATALOG_BASIS_NOTE}</span>
         </div>

@@ -44,7 +44,7 @@ const EXEMPT: Record<string, { count: number; why: string }> = {
     count: 1,
     why: "CSV export of an internal API path; callers pass /api/admin/… literals",
   },
-  "src/app/admin/page.tsx::stat.href": { count: 1, why: "static dashboard tiles, internal routes" },
+  "src/app/admin/page.tsx::tile.href": { count: 1, why: "queue tiles, internal routes from code" },
   "src/app/admin/layout.tsx::item.href": { count: 1, why: "static nav config, internal routes" },
   "src/app/admin/admin-section-tabs.tsx::tab.href": {
     count: 1,

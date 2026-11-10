@@ -1,72 +1,29 @@
 import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
-import { Calendar, MapPin, Store, Users, Clock, UserPlus, BarChart3 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, vendors, promoters, users, eventVendors } from "@/lib/db/schema";
-import { and, count, eq } from "drizzle-orm";
-import { isPublicVendorStatus } from "@/lib/vendor-status";
-import { upcomingEndPredicate } from "@/lib/event-dates";
-import { eventJoinProjection, eventVenueJoinProjection } from "@/lib/db/event-join-projection";
-import { EventVendorsPanel } from "@/components/admin/event-vendors-panel";
-import { toEventVendorsPanelRow } from "@/lib/admin/event-vendors-panel-row";
+import { eventSchemaOrg, events, venues, promoters } from "@/lib/db/schema";
+import { count, eq, isNotNull } from "drizzle-orm";
+import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { SchemaOrgSyncButton } from "@/components/admin/SchemaOrgSyncButton";
 import { logError } from "@/lib/logger";
-import { pendingBucketCounts } from "@/lib/pending-buckets";
-import { realUserWhere } from "@takemetothefair/db-schema";
+import { formatQueueAge, loadQueueHealth, type QueueTile } from "@/lib/admin/queue-health";
 
-async function getStats() {
+async function getSchemaOrgSummary(): Promise<{ synced: number; ticketed: number } | null> {
   const db = getCloudflareDb();
-
   try {
-    const [
-      totalEventsResult,
-      pendingBuckets,
-      totalVenuesResult,
-      totalVendorsResult,
-      totalPromotersResult,
-      totalUsersResult,
-      totalEventVendorsResult,
-    ] = await Promise.all([
-      db.select({ count: count() }).from(events),
-      pendingBucketCounts(db, new Date()),
-      db.select({ count: count() }).from(venues),
-      db.select({ count: count() }).from(vendors),
-      db.select({ count: count() }).from(promoters),
-      // OPE-292 — real people only. 6,741 of 6,950 rows are placeholder OWNER
-      // accounts minted by the vendor/promoter creation tools, so an unfiltered
-      // count reports ~33x the real figure on the admin dashboard.
-      db.select({ count: count() }).from(users).where(realUserWhere()),
-      db.select({ count: count() }).from(eventVendors).where(isPublicVendorStatus()),
+    const [[ticketed], [synced]] = await Promise.all([
+      db.select({ n: count() }).from(events).where(isNotNull(events.ticketUrl)),
+      db.select({ n: count() }).from(eventSchemaOrg).where(eq(eventSchemaOrg.status, "available")),
     ]);
-
-    return {
-      totalEvents: totalEventsResult[0]?.count || 0,
-      // OPE-1596 — the headline is what can still be acted on.
-      pendingEvents: pendingBuckets.upcoming,
-      pendingEnded: pendingBuckets.ended,
-      totalVenues: totalVenuesResult[0]?.count || 0,
-      totalVendors: totalVendorsResult[0]?.count || 0,
-      totalPromoters: totalPromotersResult[0]?.count || 0,
-      totalUsers: totalUsersResult[0]?.count || 0,
-      totalEventVendors: totalEventVendorsResult[0]?.count || 0,
-    };
+    return { ticketed: ticketed?.n ?? 0, synced: synced?.n ?? 0 };
   } catch (e) {
     await logError(db, {
-      message: "Error fetching stats",
+      message: "Error fetching Schema.org summary",
       error: e,
-      source: "app/admin/page.tsx:getStats",
+      source: "app/admin/page.tsx:getSchemaOrgSummary",
     });
-    return {
-      totalEvents: 0,
-      pendingEvents: 0,
-      pendingEnded: 0,
-      totalVenues: 0,
-      totalVendors: 0,
-      totalPromoters: 0,
-      totalUsers: 0,
-      totalEventVendors: 0,
-    };
+    return null;
   }
 }
 
@@ -110,150 +67,61 @@ async function getRecentSubmissions() {
   }
 }
 
-async function getUpcomingEventsWithVendorCounts() {
-  const db = getCloudflareDb();
+export const dynamic = "force-dynamic";
 
-  try {
-    const now = new Date();
-
-    // Get upcoming approved events. Narrow projection via
-    // eventVenueJoinProjection — bare .select() = 62 + 30 = 92 cols, 8
-    // cols of headroom below D1's 100 cap. Narrowed = 62 + 7 = 69 cols.
-    const upcomingEvents = await db
-      .select(eventVenueJoinProjection)
-      .from(events)
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
-      .where(and(eq(events.status, "APPROVED"), upcomingEndPredicate(now)))
-      .orderBy(events.startDate)
-      .limit(50);
-
-    if (upcomingEvents.length === 0) return [];
-
-    // Get vendor counts for these events
-    const vendorCounts = await db
-      .select({
-        eventId: eventVendors.eventId,
-        count: count(),
-      })
-      .from(eventVendors)
-      .where(isPublicVendorStatus())
-      .groupBy(eventVendors.eventId);
-
-    const countMap = new Map(vendorCounts.map((vc) => [vc.eventId, vc.count]));
-
-    // OPE-1397: the result is passed to a client component, so it is
-    // serialized into the page payload — project to only what it renders.
-    return upcomingEvents.map((e) =>
-      toEventVendorsPanelRow(e.events, e.venue, countMap.get(e.events.id) || 0)
-    );
-  } catch (e) {
-    await logError(db, {
-      message: "Error fetching upcoming events",
-      error: e,
-      source: "app/admin/page.tsx:getUpcomingEventsWithVendorCounts",
-    });
-    return [];
-  }
+function fmtCount(n: number | null): string {
+  return n == null ? "—" : n.toLocaleString("en-US");
 }
 
-export const dynamic = "force-dynamic";
+function QueueTileCard({ tile }: { tile: QueueTile }) {
+  return (
+    <Link prefetch={false} href={tile.href}>
+      <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
+        <CardContent className="p-5">
+          <p className="text-sm text-muted-foreground">{tile.label}</p>
+          <p className="text-3xl font-bold text-foreground mt-1 tabular-nums">
+            {fmtCount(tile.actionable)}
+          </p>
+          <p className="text-xs text-muted-foreground mt-2 tabular-nums">
+            Oldest {formatQueueAge(tile.oldestAgeHours)} · 7d in {fmtCount(tile.in7d)} / out{" "}
+            {fmtCount(tile.out7d)}
+          </p>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
 
 export default async function AdminDashboard() {
   await requireAdmin();
-  const [stats, recentSubmissions, upcomingEvents] = await Promise.all([
-    getStats(),
+  const [queues, recentSubmissions, schemaOrg] = await Promise.all([
+    loadQueueHealth(getCloudflareDb()),
     getRecentSubmissions(),
-    getUpcomingEventsWithVendorCounts(),
+    getSchemaOrgSummary(),
   ]);
-
-  const statCards = [
-    {
-      name: "Total Events",
-      value: stats.totalEvents,
-      icon: Calendar,
-      color: "blue",
-      href: "/admin/events",
-    },
-    {
-      name: "Pending Approval",
-      value: stats.pendingEvents,
-      note: stats.pendingEnded > 0 ? `${stats.pendingEnded} already ended` : undefined,
-      icon: Clock,
-      color: "yellow",
-      href: "/admin/submissions",
-    },
-    {
-      name: "Venues",
-      value: stats.totalVenues,
-      icon: MapPin,
-      color: "green",
-      href: "/admin/venues",
-    },
-    {
-      name: "Vendors",
-      value: stats.totalVendors,
-      icon: Store,
-      color: "purple",
-      href: "/admin/vendors",
-    },
-    {
-      name: "Event-Vendor Links",
-      value: stats.totalEventVendors,
-      icon: UserPlus,
-      color: "indigo",
-      href: "/admin/events",
-    },
-    {
-      name: "Users",
-      value: stats.totalUsers,
-      icon: Users,
-      color: "gray",
-      href: "/admin/users",
-    },
-    {
-      name: "Analytics",
-      value: "\u2192" as string | number,
-      icon: BarChart3,
-      color: "blue",
-      href: "/admin/analytics",
-    },
-  ];
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-foreground mb-8">Admin Dashboard</h1>
+      <h1 className="text-2xl font-bold text-foreground mb-2">Admin Dashboard</h1>
+      <p className="text-sm text-muted-foreground mb-6">
+        What needs doing, by queue. Catalog totals are on{" "}
+        <Link prefetch={false} href="/admin/analytics" className="underline">
+          Analytics
+        </Link>
+        .
+      </p>
       {/* OPE-1602: a phone tool, so it is linked here on small screens, not in the sidebar. */}
       <Link
         prefetch={false}
         href="/admin/snap"
-        className="md:hidden -mt-4 inline-block mb-6 text-sm font-medium text-royal hover:text-navy"
+        className="md:hidden inline-block mb-6 text-sm font-medium text-royal hover:text-navy"
       >
         Snap booth photo
       </Link>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-        {statCards.map((stat) => (
-          <Link key={stat.name} href={stat.href}>
-            <Card className="hover:shadow-md transition-shadow cursor-pointer">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">{stat.name}</p>
-                    <p className="text-3xl font-bold text-foreground mt-1">{stat.value}</p>
-                    {"note" in stat && stat.note && (
-                      <p className="text-xs text-muted-foreground mt-1">{stat.note}</p>
-                    )}
-                  </div>
-                  <div
-                    className={`w-12 h-12 rounded-lg flex items-center justify-center bg-${stat.color}-100`}
-                  >
-                    <stat.icon className={`w-6 h-6 text-${stat.color}-600`} />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {queues.map((tile) => (
+          <QueueTileCard key={tile.key} tile={tile} />
         ))}
       </div>
 
@@ -289,13 +157,27 @@ export default async function AdminDashboard() {
           </CardContent>
         </Card>
 
-        {/* Upcoming Events - Manage Vendors */}
-        <EventVendorsPanel events={upcomingEvents} />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Schema.org Sync */}
-        <SchemaOrgSyncButton />
+        {/* OPE-1603 — compact: the sync controls open on demand. */}
+        <Card>
+          <CardContent className="p-5">
+            <details>
+              <summary className="cursor-pointer">
+                <span className="text-sm text-muted-foreground">Schema.org sync</span>
+                <span className="block text-2xl font-bold text-foreground mt-1 tabular-nums">
+                  {schemaOrg
+                    ? `${fmtCount(schemaOrg.synced)} of ${fmtCount(schemaOrg.ticketed)}`
+                    : "—"}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  ticket-URL events synced · open for controls
+                </span>
+              </summary>
+              <div className="mt-4">
+                <SchemaOrgSyncButton />
+              </div>
+            </details>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

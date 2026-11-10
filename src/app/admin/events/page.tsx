@@ -110,6 +110,16 @@ const FILTERS: AdminFilter[] = [
       { value: "clean", label: "Review-clean only" },
     ],
   },
+  {
+    // OPE-1603 — replaces the dashboard's "Manage Event Vendors" list.
+    param: "roster",
+    allLabel: "All (roster)",
+    title: "Filter by whether any vendor is linked to the event",
+    options: [
+      { value: "has-roster", label: "Has roster" },
+      { value: "no-roster", label: "No roster" },
+    ],
+  },
 ];
 
 export default function AdminEventsPage() {

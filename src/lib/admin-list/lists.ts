@@ -469,6 +469,9 @@ export function eventList(
   const gate = sp.get("gate");
   const review = sp.get("review");
   const date = sp.get("date");
+  // OPE-1603 — any vendor linked, whatever its status, as the old client filter read it.
+  const hasRoster = sql`EXISTS (SELECT 1 FROM event_vendors ev WHERE ev.event_id = "events"."id")`;
+  const roster = sp.get("roster");
   return {
     name: "events",
     spec: {
@@ -511,6 +514,8 @@ export function eventList(
         review === "clean" ? sql`NOT (${reviewFlagged})` : undefined,
         date === "needs-date" ? isNull(events.startDate) : undefined,
         date === "has-date" ? isNotNull(events.startDate) : undefined,
+        roster === "has-roster" ? hasRoster : undefined,
+        roster === "no-roster" ? sql`NOT ${hasRoster}` : undefined,
       ],
       sortColumns: {
         name: { expr: events.name, nocase: true },

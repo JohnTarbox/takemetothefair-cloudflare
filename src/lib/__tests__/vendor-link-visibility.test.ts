@@ -35,7 +35,7 @@ const PUBLIC_SURFACES = [
 ];
 
 /** Operator-only surfaces, which MUST still see hidden links. */
-const ADMIN_SURFACES = ["src/app/admin/page.tsx"];
+const ADMIN_SURFACES = ["src/lib/analytics-overview/catalog.ts"];
 
 describe("OPE-316 — hidden participation never renders publicly", () => {
   it.each(PUBLIC_SURFACES)("%s filters on link visibility", (file) => {

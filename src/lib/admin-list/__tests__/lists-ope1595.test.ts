@@ -240,6 +240,15 @@ describe("events", () => {
     expect((await list("page=1&date=needs-date")).rows.map((r) => r.id)).toEqual(["nodate"]);
   });
 
+  it("filters on whether any vendor is linked (OPE-1603's roster filter)", async () => {
+    run("INSERT INTO event_vendors (id, event_id, vendor_id) VALUES ('ev1', 'late', 'v1')");
+    expect((await list("page=1&roster=has-roster")).rows.map((r) => r.id)).toEqual(["late"]);
+    expect((await list("page=1&roster=no-roster")).rows.map((r) => r.id)).toEqual([
+      "early",
+      "nodate",
+    ]);
+  });
+
   it("applies the status and gate filters on the server", async () => {
     run(`UPDATE events SET gate_flags = '["x"]' WHERE id = 'early'`);
     run(`UPDATE events SET gate_flags = '[]' WHERE id = 'late'`);
