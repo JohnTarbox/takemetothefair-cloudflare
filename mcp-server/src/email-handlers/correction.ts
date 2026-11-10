@@ -46,6 +46,8 @@
  * recorded misleads the sender).
  */
 
+import { handle as handleOnboarding } from "./promoter-onboarding.js";
+import { claimBelongsInOnboarding } from "../inbound/promoter-onboarding.js";
 import { adminActions, events } from "../schema.js";
 import { getDb } from "../db.js";
 import { unsafeSlug } from "../helpers.js";
@@ -69,6 +71,12 @@ const MAX_CANDIDATES = 5;
 
 export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> => {
   const db = getDb(env.DB);
+
+  // OPE-1608 — a claim from an org with no promoter row has nothing to claim
+  // yet, so it is an onboarding request, not a claim for an admin to review.
+  if (row.classifiedIntent === "claim_request" && claimBelongsInOnboarding(row)) {
+    return handleOnboarding(env, ctx, row);
+  }
 
   // OPE-254 Defect 2 — a reply naming the fair on a held photo-intake
   // notification lands here as intent=correction. When it threads back to a

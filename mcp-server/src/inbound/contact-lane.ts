@@ -195,7 +195,7 @@ export interface ContactLaneOutcome {
   draftId: string | null;
 }
 
-interface ObligationRow {
+export interface ObligationRow {
   id: string;
   inboundEmailId: string;
   kind: string;
@@ -203,7 +203,7 @@ interface ObligationRow {
 }
 
 /** The single open obligation for this message, created or converted. */
-async function settleObligation(
+export async function settleObligation(
   db: Db,
   args: {
     rootId: string;

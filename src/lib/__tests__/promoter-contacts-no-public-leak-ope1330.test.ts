@@ -54,6 +54,10 @@ const ALLOWED: Array<{ path: RegExp; why: string }> = [
     path: /^mcp-server\/src\/inbound\/pending-promoter-contact-attach\.ts$/,
     why: "writer (OPE-1610 hourly attach), returns only counts",
   },
+  {
+    path: /^mcp-server\/src\/inbound\/promoter-onboarding\.ts$/,
+    why: "reader (OPE-1608), only asks whether the sender's own address is validated",
+  },
   { path: /^mcp-server\/src\/promoter-claimant-contact\.ts$/, why: "writer (MCP claim twin)" },
   { path: /^mcp-server\/src\/tools\/admin-promoter-contacts\.ts$/, why: "admin-gated tools" },
   {

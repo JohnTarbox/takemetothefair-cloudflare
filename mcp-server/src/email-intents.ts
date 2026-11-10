@@ -61,7 +61,10 @@ export type EmailIntent =
   // OPE-1265 — lists@ / lists+<promoter-slug>@: promoter mailing lists we
   // subscribed our own address to. Address-bound (the classifier never runs on
   // it), never replied to, never forwarded.
-  | "list_subscription";
+  | "list_subscription"
+  // OPE-1608 — an organizer asking how to get their events listed or to set up
+  // a promoter account. Classifier-only; it gets a drafted reply, never an ack.
+  | "promoter_onboarding";
 
 const INTENT_MAP: Record<string, EmailIntent> = {
   "submit@meetmeatthefair.com": "submit",

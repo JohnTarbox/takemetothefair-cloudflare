@@ -37,6 +37,7 @@ export type ClassifiedIntent =
   | "correction"
   | "claim_request"
   | "vendor_inquiry"
+  | "promoter_onboarding"
   | "support"
   | "press"
   | "unsubscribe"
@@ -45,12 +46,7 @@ export type ClassifiedIntent =
 
 /** Sub-intent for new_event only. NULL for everything else. */
 export type ClassifiedSubIntent =
-  | "single_url"
-  | "multi_url"
-  | "free_text"
-  | "attachment_only"
-  | "mixed"
-  | null;
+  "single_url" | "multi_url" | "free_text" | "attachment_only" | "mixed" | null;
 
 /** Trust tier as defined in drizzle/0075 (inbound_email_senders). */
 export type SenderTrustTier = "unknown" | "trusted" | "watchlist" | "blocked";
@@ -395,6 +391,7 @@ const VALID_INTENTS: ClassifiedIntent[] = [
   "correction",
   "claim_request",
   "vendor_inquiry",
+  "promoter_onboarding",
   "support",
   "press",
   "unsubscribe",

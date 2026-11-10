@@ -171,6 +171,7 @@ const FANOUT_INTENT_LABELS: Record<string, string> = {
   claim_request: "a request to claim a listing",
   vendor_inquiry: "a vendor question",
   source_suggestion: "a suggestion for a source to follow",
+  promoter_onboarding: "a question about listing your events",
   press: "a press inquiry",
   support: "a general question",
   unsubscribe: "an unsubscribe request",

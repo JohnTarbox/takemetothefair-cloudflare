@@ -82,6 +82,7 @@ import { runScheduledNearDuplicateSweep } from "./near-duplicate-sweep-cron.js";
 import { runScheduledCiTriggerWatchdog } from "./ci-trigger-watchdog.js";
 import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledPendingContactAttach } from "./inbound/pending-promoter-contact-attach.js";
+import { runScheduledPromoterOnboarding } from "./inbound/promoter-onboarding.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
 import { runScheduledBurstCapSelfTest } from "./burst-cap-selftest-canary.js";
@@ -1797,6 +1798,8 @@ export default {
           ["kpi-recompute", () => runScheduledKpiRecompute(env)],
           ["inbound-email-stale-sweep", () => runScheduledInboundEmailStaleSweep(env)],
           ["page-error-canary", () => runScheduledPageErrorCanary(env)],
+          // OPE-1608 — enrich, draft, alert and follow up on onboarding requests.
+          ["promoter-onboarding", () => runScheduledPromoterOnboarding(env)],
           // OPE-1239 — main's HEAD must have a push CI run (else it never deployed).
           ["ci-trigger-watchdog", () => runScheduledCiTriggerWatchdog(env)],
         ]).then(() => undefined)

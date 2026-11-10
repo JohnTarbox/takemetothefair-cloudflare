@@ -4333,6 +4333,60 @@ export const promoterContacts = sqliteTable(
 );
 
 /**
+ * OPE-1608 — one organizer asking how to get their events listed. The staged
+ * promoter lives here as JSON because a `promoters` row is public as soon as it
+ * exists: the /promoters index and its sitemap read the whole table.
+ */
+export const promoterOnboardingRequests = sqliteTable(
+  "promoter_onboarding_requests",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    /** The root message: the parent row of a multi-intent email. */
+    inboundEmailId: text("inbound_email_id")
+      .notNull()
+      .unique()
+      .references(() => inboundEmails.id, { onDelete: "cascade" }),
+    fromAddress: text("from_address").notNull(),
+    orgDomain: text("org_domain"),
+    orgName: text("org_name"),
+    matchReport: text("match_report"),
+    stagedPromoter: text("staged_promoter"),
+    enrichmentStatus: text("enrichment_status", {
+      enum: ["queued", "finished", "timed_out"],
+    })
+      .notNull()
+      .default("queued"),
+    enrichmentDetail: text("enrichment_detail"),
+    enrichmentFinishedAt: integer("enrichment_finished_at", { mode: "timestamp" }),
+    obligationId: text("obligation_id"),
+    targetAt: integer("target_at", { mode: "timestamp" }),
+    draftId: text("draft_id"),
+    draftComposedAt: integer("draft_composed_at", { mode: "timestamp" }),
+    draftMissingFaultAt: integer("draft_missing_fault_at", { mode: "timestamp" }),
+    notifiedAt: integer("notified_at", { mode: "timestamp" }),
+    remindedAt: integer("reminded_at", { mode: "timestamp" }),
+    deadlineFaultAt: integer("deadline_fault_at", { mode: "timestamp" }),
+    repliedAt: integer("replied_at", { mode: "timestamp" }),
+    claimedAt: integer("claimed_at", { mode: "timestamp" }),
+    firstSubmissionAt: integer("first_submission_at", { mode: "timestamp" }),
+    followupDraftId: text("followup_draft_id"),
+    followupComposedAt: integer("followup_composed_at", { mode: "timestamp" }),
+    followupTargetAt: integer("followup_target_at", { mode: "timestamp" }),
+    followupNotifiedAt: integer("followup_notified_at", { mode: "timestamp" }),
+    followupRemindedAt: integer("followup_reminded_at", { mode: "timestamp" }),
+    followupDeadlineFaultAt: integer("followup_deadline_fault_at", { mode: "timestamp" }),
+    followupSentAt: integer("followup_sent_at", { mode: "timestamp" }),
+    closedAt: integer("closed_at", { mode: "timestamp" }),
+    closeReason: text("close_reason"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_promoter_onboarding_open").on(t.closedAt, t.createdAt)]
+);
+
+/**
  * OPE-1610 — a DMARC-aligned sender whose org has no promoter row yet. Held here
  * until a promoter with that website domain exists, then copied to
  * `promoter_contacts` by the hourly attach job. drizzle/0404.
