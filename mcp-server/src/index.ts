@@ -83,6 +83,7 @@ import { runScheduledFullDuplicateSweep } from "./full-duplicate-sweep-cron.js";
 import { runScheduledCiTriggerWatchdog } from "./ci-trigger-watchdog.js";
 import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledPendingContactAttach } from "./inbound/pending-promoter-contact-attach.js";
+import { runScheduledFeedPoll } from "./feeds/schedule.js";
 import { runScheduledPromoterOnboarding } from "./inbound/promoter-onboarding.js";
 import { runScheduledRepliedLedgerCheck } from "./inbound/replied-without-ledger.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
@@ -175,6 +176,8 @@ type Env = WorkerEnv &
      * to admin; only the outbound question is withheld.
      */
     UNROUTED_ASK_ENABLED?: string;
+    /** OPE-1617 — scheduled organizer-feed polling. Ships "false". */
+    FEED_POLLING_ENABLED?: string;
     INDEXNOW_PINGS?: Queue;
     // GW1.1 (2026-06-03) — ingest_addverify discrepancy capture. Producer
     // here is used by the /api/admin/internal/enqueue-discrepancy proxy
@@ -1823,6 +1826,8 @@ export default {
           ["pending-contact-attach", () => runScheduledPendingContactAttach(env)],
           // OPE-1609 — a `replied` row must have a ledger row behind it.
           ["replied-ledger-check", () => runScheduledRepliedLedgerCheck(env)],
+          // OPE-1617 — organizer feed polling; reads nothing unless FEED_POLLING_ENABLED = "true".
+          ["organizer-feed-poll", () => runScheduledFeedPoll(env)],
         ]).then(() => undefined)
       );
       return;

@@ -41,6 +41,9 @@ export interface FeedEvent {
   cost: string | null;
   /** The feed's own cancelled marker, if it carries one. */
   statusCancelled: boolean;
+  /** iCal SEQUENCE / LAST-MODIFIED (OPE-1617), when the source carries them. */
+  sequence?: number | null;
+  lastModified?: string | null;
 }
 
 type Json = Record<string, unknown>;

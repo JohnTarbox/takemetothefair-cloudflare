@@ -230,6 +230,12 @@ PHOTO_AUTOWRITE_ENABLED = "true"
 # to "true", deploy, run it, and set it back — a dashboard edit is reverted by
 # the next `wrangler deploy` (OPE-284/OPE-509).
 REPLAY_COMMIT_ENABLED = "false"
+# OPE-1617 — scheduled organizer-feed polling (hourly cron; each feed's own
+# interval, default 6h). A scheduled read WRITES feed items and organizer_feed
+# discrepancies but SENDS nothing (questions go out only as operator drafts John
+# approves). Ships "false": flip only on John's word, after a feed is registered.
+# Edit THIS line — a dashboard edit is reverted by the next deploy.
+FEED_POLLING_ENABLED = "false"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 # Inbound-email failures (parse / extract / submit) get forwarded here.
 # Must be a verified destination address in Cloudflare Email Routing —

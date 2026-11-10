@@ -216,6 +216,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // OPE-1205 — daily cron, one run row each; two cycles before it pages.
       "sync-stale-sweep": 48,
       "pending-contact-attach": 3,
+      // OPE-1617 — hourly poll, one info row per run even with the flag off.
+      "organizer-feed-poll": 3,
       "promoter-onboarding": 3,
       "replied-ledger-check": 3,
       // OPE-1239 — */10 cron, run row at most hourly; three missed before it pages.

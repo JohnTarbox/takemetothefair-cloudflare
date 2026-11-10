@@ -98,7 +98,7 @@ function socialFromSameAs(sameAs: unknown): string | null {
 }
 
 /** Collect every object node in the JSON-LD (handles arrays + @graph nesting). */
-function collectObjects(parsed: unknown): Record<string, unknown>[] {
+export function collectObjects(parsed: unknown): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   const visit = (v: unknown) => {
     if (Array.isArray(v)) {

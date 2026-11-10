@@ -1937,6 +1937,20 @@ const FEED_PROVENANCE_SQL = (() => {
   return sql.slice(0, end);
 })();
 
+// OPE-1617 — calendar-reader columns (polling, validators, ownership, missing_since),
+// loaded from the migration itself. It ALTERs 0406's tables, so it runs after them.
+const CALENDAR_READER_SQL = (() => {
+  const sql = readFileSync(
+    join(__dirname, "../../drizzle/0409_ope1617_calendar_reader.sql"),
+    "utf8"
+  );
+  // DDL only: the heartbeat_probes seed is cut off (this harness has no such table).
+  const end = sql.indexOf("INSERT INTO heartbeat_probes");
+  if (end < 0 || !sql.includes("ADD COLUMN missing_since"))
+    throw new Error("0409 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
 // OPE-1618 — the spreadsheet-import ledger, loaded from the migration itself.
 const PROMOTER_IMPORT_SQL = (() => {
   const sql = readFileSync(
@@ -1959,6 +1973,7 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   // the tests run against the exact SQL prod runs (one source, no copy to drift).
   raw["exec"](FORMER_VENUE_TRIGGERS_SQL);
   raw["exec"](FEED_PROVENANCE_SQL);
+  raw["exec"](CALENDAR_READER_SQL);
   raw["exec"](PROMOTER_IMPORT_SQL);
   const db = drizzle(raw, { schema });
   // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.

@@ -13,8 +13,10 @@ import { adminActions, promoterEventFeeds, promoters } from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
-import { readTecFeed } from "../feeds/tec.js";
-import { ingestFeedItems } from "../feeds/ingest.js";
+import { runFeedRead } from "../feeds/run.js";
+import { checkFeedOwnership } from "../feeds/ownership.js";
+import { normalizeCalendarUrl } from "../feeds/ical.js";
+import { DEFAULT_POLL_HOURS } from "../feeds/fetch-feed.js";
 import { parseInclusionRules } from "../feeds/inclusion.js";
 import { getEventFieldProvenance } from "../feeds/provenance.js";
 import { recordContactAnswer } from "../feeds/contact-answer.js";
@@ -35,18 +37,29 @@ export function registerOrganizerFeedTools(
 
   server.tool(
     "register_promoter_feed",
-    "OPE-1613 — register (or update) a promoter's own event feed. kind 'tec_rest' = The Events Calendar WordPress REST API (site root or the /wp-json/tribe/events/v1/events URL). 'ical' is refused in this version (OPE-1617). inclusion_rules is JSON overriding the defaults (closures and children's programs dropped, multi-day kept). batch_min_interval_days is the feed-question limit per contact, separate from the pre-season outreach cap (default 7). Reads nothing from the site.",
+    "OPE-1613 / OPE-1617 — register (or update) a promoter's own event feed. kind: 'tec_rest' = The Events Calendar WordPress REST API (site root or /wp-json/tribe/events/v1/events); 'ical' = any iCal/ICS URL (webcal:// accepted), including the public iCal address of a shared Google or Outlook/365 calendar; 'jsonld' = schema.org Event markup on an event page, a listing page (its event links are followed) or a sitemap. OWNERSHIP is checked here and refused if unproven: the feed's host must be on the promoter's domain list (OPE-1614), or — for a Google/Outlook/iCloud calendar address, whose host proves nothing — inbound_email_id must name a DMARC-passing message from a validated contact of this promoter that contains the address. inclusion_rules is JSON overriding the defaults. batch_min_interval_days is the feed-question limit per contact (default 7). poll_interval_hours is how often a scheduled read may run (default 6; scheduled reads are off until FEED_POLLING_ENABLED). Reads nothing from the site.",
     {
       promoter_id: z.string().min(1),
-      feed_url: z.string().url(),
-      kind: z.enum(["tec_rest", "ical"]).default("tec_rest"),
+      feed_url: z
+        .string()
+        .min(1)
+        .refine((u) => {
+          try {
+            new URL(normalizeCalendarUrl(u));
+            return true;
+          } catch {
+            return false;
+          }
+        }, "must be a URL (http, https or webcal)"),
+      kind: z.enum(["tec_rest", "ical", "jsonld"]).default("tec_rest"),
       inclusion_rules: z.string().max(4000).optional(),
       batch_min_interval_days: z.number().int().min(1).max(90).default(7),
+      poll_interval_hours: z.number().int().min(1).max(168).default(DEFAULT_POLL_HOURS),
+      inbound_email_id: z.string().min(1).optional(),
       enabled: z.boolean().default(true),
     },
     async (p) => {
-      if (p.kind === "ical")
-        return err("ical feeds are not supported yet (OPE-1617); use tec_rest");
+      const feedUrl = normalizeCalendarUrl(p.feed_url);
       try {
         parseInclusionRules(p.inclusion_rules);
       } catch (e) {
@@ -58,6 +71,12 @@ export function registerOrganizerFeedTools(
         .where(eq(promoters.id, p.promoter_id))
         .limit(1);
       if (!pr) return err("promoter not found");
+      const own = await checkFeedOwnership(db, {
+        promoterId: p.promoter_id,
+        feedUrl,
+        inboundEmailId: p.inbound_email_id ?? null,
+      });
+      if (!own.ok) return err(`ownership not proven: ${own.reason}`);
       const t = now();
       const [existing] = await db
         .select({ id: promoterEventFeeds.id })
@@ -65,7 +84,7 @@ export function registerOrganizerFeedTools(
         .where(
           and(
             eq(promoterEventFeeds.promoterId, p.promoter_id),
-            eq(promoterEventFeeds.feedUrl, p.feed_url)
+            eq(promoterEventFeeds.feedUrl, feedUrl)
           )
         )
         .limit(1);
@@ -74,7 +93,11 @@ export function registerOrganizerFeedTools(
         kind: p.kind,
         inclusionRules: p.inclusion_rules ?? null,
         batchMinIntervalDays: p.batch_min_interval_days,
+        pollIntervalHours: p.poll_interval_hours,
         enabled: p.enabled,
+        ownershipBasis: own.basis,
+        ownershipEvidence: own.evidence,
+        ownershipInboundEmailId: own.inboundEmailId,
         updatedAt: t,
       };
       if (existing) {
@@ -83,7 +106,7 @@ export function registerOrganizerFeedTools(
         await db.insert(promoterEventFeeds).values({
           id,
           promoterId: p.promoter_id,
-          feedUrl: p.feed_url,
+          feedUrl,
           createdBy: actor,
           createdAt: t,
           ...values,
@@ -95,16 +118,30 @@ export function registerOrganizerFeedTools(
         actorUserId: actor,
         targetType: "promoter",
         targetId: p.promoter_id,
-        payloadJson: JSON.stringify({ feed_id: id, ...p }),
+        payloadJson: JSON.stringify({
+          feed_id: id,
+          ...p,
+          feed_url: feedUrl,
+          ownership: { basis: own.basis, evidence: own.evidence },
+        }),
         createdAt: t,
       });
-      return { content: [jsonContent({ feed_id: id, created: !existing })] };
+      return {
+        content: [
+          jsonContent({
+            feed_id: id,
+            created: !existing,
+            feed_url: feedUrl,
+            ownership: { basis: own.basis, evidence: own.evidence },
+          }),
+        ],
+      };
     }
   );
 
   server.tool(
     "ingest_promoter_feed",
-    "OPE-1613 — read a registered feed and apply it: record items, link them to events, evaluate pins, and open organizer_feed discrepancies for events we publish. The feed WRITES NO event field — every disagreement is asked of the validated contact. dry_run defaults to TRUE (report only, no writes). New feed events are marked awaiting_review, not created.",
+    "OPE-1613 / OPE-1617 — read a registered feed (tec_rest, ical or jsonld) and apply it: record items, link them to events, evaluate pins, and open organizer_feed discrepancies for events we publish — including a CANCELLATION signal when the feed marks an event cancelled or a later read no longer carries it (never a silent delete or status change). The feed WRITES NO event field — every disagreement is asked of the validated contact. A real read sends the feed's stored ETag / Last-Modified, so an unchanged feed answers 304 and nothing is parsed; it also sets the feed's next scheduled read (interval, or backoff after errors). dry_run defaults to TRUE (report only, no writes, no validators sent). New feed events are marked awaiting_review, not created.",
     {
       feed_id: z.string().min(1),
       start_date: ymd.optional(),
@@ -113,53 +150,26 @@ export function registerOrganizerFeedTools(
     },
     async (p) => {
       const [feed] = await db
-        .select()
+        .select({ id: promoterEventFeeds.id, enabled: promoterEventFeeds.enabled })
         .from(promoterEventFeeds)
         .where(eq(promoterEventFeeds.id, p.feed_id))
         .limit(1);
       if (!feed) return err("feed not found");
       if (!feed.enabled) return err("feed is disabled");
-      if (feed.kind !== "tec_rest") return err(`feed kind ${feed.kind} is not supported yet`);
-      const t = now();
-      const start = p.start_date ?? t.toISOString().slice(0, 10);
-      const end = p.end_date ?? new Date(t.getTime() + 400 * 86_400_000).toISOString().slice(0, 10);
-      let read;
-      try {
-        read = await readTecFeed(feed.feedUrl, {
-          startDate: start,
-          endDate: end,
-          fetchImpl: opts.fetchImpl,
-        });
-      } catch (e) {
-        if (!p.dry_run) {
-          await db
-            .update(promoterEventFeeds)
-            .set({
-              lastReadAt: t,
-              lastReadStatus: `error: ${(e as Error).message}`.slice(0, 300),
-              updatedAt: t,
-            })
-            .where(eq(promoterEventFeeds.id, feed.id));
-        }
-        return err(`feed read failed: ${(e as Error).message}`);
-      }
-      const report = await ingestFeedItems(db, {
+      const r = await runFeedRead(db, {
         feedId: feed.id,
-        items: read.events,
-        now: t,
+        now: now(),
         dryRun: p.dry_run,
         actor,
+        startDate: p.start_date,
+        endDate: p.end_date,
+        fetchImpl: opts.fetchImpl,
       });
-      return {
-        content: [
-          jsonContent({
-            ...report,
-            pages: read.pages,
-            unmappable_items: read.skipped,
-            window: { start, end },
-          }),
-        ],
-      };
+      if (r.outcome === "error") return err(`feed read failed: ${r.error}`);
+      // The ingest report stays at the top level (the OPE-1613 shape); the
+      // read's own facts sit beside it. A 304 has no report.
+      const { report, ...meta } = r;
+      return { content: [jsonContent({ ...(report ?? {}), ...meta })] };
     }
   );
 
