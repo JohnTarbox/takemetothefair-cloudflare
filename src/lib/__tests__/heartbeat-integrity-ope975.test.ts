@@ -278,6 +278,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "self-announced-exhibitor": 720,
       "gemba-observation": 720,
       "event-document-post": 2160,
+      // OPE-1613 — dormant placeholder until feeds are read on a schedule.
+      "organizer-feed-ingest": 720,
       // OPE-1265 — dormant placeholder, same stance as gemba-observation.
       "promoter-list-arrival": 720,
       // OPE-1264 — measured: the largest gap between workflow emails over 60 days was 50.5h.

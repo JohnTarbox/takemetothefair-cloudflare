@@ -1,0 +1,220 @@
+/**
+ * OPE-1613 — organizer feed ingestion, field provenance and pins, over MCP.
+ *
+ * Every writer here is operator-invoked; nothing reads a feed on a schedule
+ * yet. `ingest_promoter_feed` and `compose_feed_discrepancy_batch` default to
+ * DRY RUN. No tool here sends mail: a batch is an operator draft that only goes
+ * out through `review_operator_draft`.
+ */
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { and, eq } from "drizzle-orm";
+import { adminActions, promoterEventFeeds, promoters } from "../schema.js";
+import { jsonContent } from "../helpers.js";
+import type { Db } from "../db.js";
+import type { AuthContext } from "../auth.js";
+import { readTecFeed } from "../feeds/tec.js";
+import { ingestFeedItems } from "../feeds/ingest.js";
+import { parseInclusionRules } from "../feeds/inclusion.js";
+import { getEventFieldProvenance } from "../feeds/provenance.js";
+import { recordContactAnswer } from "../feeds/contact-answer.js";
+import { composeFeedDiscrepancyBatch, feedDiscrepancyMetrics } from "../feeds/batch.js";
+
+const err = (text: string) => ({ content: [{ type: "text" as const, text }], isError: true });
+const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
+
+export function registerOrganizerFeedTools(
+  server: McpServer,
+  db: Db,
+  auth: AuthContext,
+  opts: { fetchImpl?: typeof fetch; now?: () => Date } = {}
+) {
+  if (auth.role !== "ADMIN") return;
+  const actor = auth.userId ?? "admin";
+  const now = opts.now ?? (() => new Date());
+
+  server.tool(
+    "register_promoter_feed",
+    "OPE-1613 — register (or update) a promoter's own event feed. kind 'tec_rest' = The Events Calendar WordPress REST API (site root or the /wp-json/tribe/events/v1/events URL). 'ical' is refused in this version (OPE-1617). inclusion_rules is JSON overriding the defaults (closures and children's programs dropped, multi-day kept). batch_min_interval_days is the feed-question limit per contact, separate from the pre-season outreach cap (default 7). Reads nothing from the site.",
+    {
+      promoter_id: z.string().min(1),
+      feed_url: z.string().url(),
+      kind: z.enum(["tec_rest", "ical"]).default("tec_rest"),
+      inclusion_rules: z.string().max(4000).optional(),
+      batch_min_interval_days: z.number().int().min(1).max(90).default(7),
+      enabled: z.boolean().default(true),
+    },
+    async (p) => {
+      if (p.kind === "ical")
+        return err("ical feeds are not supported yet (OPE-1617); use tec_rest");
+      try {
+        parseInclusionRules(p.inclusion_rules);
+      } catch (e) {
+        return err(`inclusion_rules: ${(e as Error).message}`);
+      }
+      const [pr] = await db
+        .select({ id: promoters.id })
+        .from(promoters)
+        .where(eq(promoters.id, p.promoter_id))
+        .limit(1);
+      if (!pr) return err("promoter not found");
+      const t = now();
+      const [existing] = await db
+        .select({ id: promoterEventFeeds.id })
+        .from(promoterEventFeeds)
+        .where(
+          and(
+            eq(promoterEventFeeds.promoterId, p.promoter_id),
+            eq(promoterEventFeeds.feedUrl, p.feed_url)
+          )
+        )
+        .limit(1);
+      const id = existing?.id ?? crypto.randomUUID();
+      const values = {
+        kind: p.kind,
+        inclusionRules: p.inclusion_rules ?? null,
+        batchMinIntervalDays: p.batch_min_interval_days,
+        enabled: p.enabled,
+        updatedAt: t,
+      };
+      if (existing) {
+        await db.update(promoterEventFeeds).set(values).where(eq(promoterEventFeeds.id, id));
+      } else {
+        await db.insert(promoterEventFeeds).values({
+          id,
+          promoterId: p.promoter_id,
+          feedUrl: p.feed_url,
+          createdBy: actor,
+          createdAt: t,
+          ...values,
+        });
+      }
+      await db.insert(adminActions).values({
+        id: crypto.randomUUID(),
+        action: existing ? "feed.updated" : "feed.registered",
+        actorUserId: actor,
+        targetType: "promoter",
+        targetId: p.promoter_id,
+        payloadJson: JSON.stringify({ feed_id: id, ...p }),
+        createdAt: t,
+      });
+      return { content: [jsonContent({ feed_id: id, created: !existing })] };
+    }
+  );
+
+  server.tool(
+    "ingest_promoter_feed",
+    "OPE-1613 — read a registered feed and apply it: record items, link them to events, evaluate pins, and open organizer_feed discrepancies for events we publish. The feed WRITES NO event field — every disagreement is asked of the validated contact. dry_run defaults to TRUE (report only, no writes). New feed events are marked awaiting_review, not created.",
+    {
+      feed_id: z.string().min(1),
+      start_date: ymd.optional(),
+      end_date: ymd.optional(),
+      dry_run: z.boolean().default(true),
+    },
+    async (p) => {
+      const [feed] = await db
+        .select()
+        .from(promoterEventFeeds)
+        .where(eq(promoterEventFeeds.id, p.feed_id))
+        .limit(1);
+      if (!feed) return err("feed not found");
+      if (!feed.enabled) return err("feed is disabled");
+      if (feed.kind !== "tec_rest") return err(`feed kind ${feed.kind} is not supported yet`);
+      const t = now();
+      const start = p.start_date ?? t.toISOString().slice(0, 10);
+      const end = p.end_date ?? new Date(t.getTime() + 400 * 86_400_000).toISOString().slice(0, 10);
+      let read;
+      try {
+        read = await readTecFeed(feed.feedUrl, {
+          startDate: start,
+          endDate: end,
+          fetchImpl: opts.fetchImpl,
+        });
+      } catch (e) {
+        if (!p.dry_run) {
+          await db
+            .update(promoterEventFeeds)
+            .set({
+              lastReadAt: t,
+              lastReadStatus: `error: ${(e as Error).message}`.slice(0, 300),
+              updatedAt: t,
+            })
+            .where(eq(promoterEventFeeds.id, feed.id));
+        }
+        return err(`feed read failed: ${(e as Error).message}`);
+      }
+      const report = await ingestFeedItems(db, {
+        feedId: feed.id,
+        items: read.events,
+        now: t,
+        dryRun: p.dry_run,
+        actor,
+      });
+      return {
+        content: [
+          jsonContent({
+            ...report,
+            pages: read.pages,
+            unmappable_items: read.skipped,
+            window: { start, end },
+          }),
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    "get_event_field_provenance",
+    "OPE-1613 — for one event: each tracked field (start/end date and time, venue, status) plus every other cited field, with its current value, the authority rung of the active citation (feed / organizer_website / validated_contact / operator / extraction; 'unclassified' = a citation written before provenance existed; 'none' = uncited), the citation, and any live pin. Read-only.",
+    { event_id: z.string().min(1) },
+    async (p) => {
+      const rows = await getEventFieldProvenance(db, p.event_id);
+      if (!rows) return err("event not found");
+      return { content: [jsonContent({ event_id: p.event_id, fields: rows })] };
+    }
+  );
+
+  server.tool(
+    "record_feed_discrepancy_answer",
+    "OPE-1613 — record ONE answer from an inbound reply to ONE organizer_feed discrepancy. If the sender is a validated contact of the event's promoter AND the message passed aligned DMARC, the value is written (date/time fields; venue and status are pinned and cited for an operator to apply), cited as validated_contact, and PINNED so the feed cannot overwrite it. Otherwise the answer is staged on the discrepancy and nothing is written. Sends nothing.",
+    {
+      discrepancy_id: z.string().min(1),
+      answer: z.string().min(1).max(500),
+      inbound_email_id: z.string().min(1),
+    },
+    async (p) => {
+      const r = await recordContactAnswer(db, {
+        discrepancyId: p.discrepancy_id,
+        answer: p.answer,
+        inboundEmailId: p.inbound_email_id,
+        actor,
+        now: now(),
+      });
+      if (r.outcome === "refused") return err(r.reason);
+      return { content: [jsonContent(r)] };
+    }
+  );
+
+  server.tool(
+    "compose_feed_discrepancy_batch",
+    "OPE-1613 — compose ONE batched question email for a promoter's validated contact from its open organizer_feed discrepancies, into the operator draft queue (status pending; John approves via review_operator_draft). Enforces the feed's own per-contact limit (default one batch per 7 days), independent of the pre-season outreach cap. dry_run defaults to TRUE (returns the draft text, writes nothing). Sends nothing.",
+    { promoter_id: z.string().min(1), dry_run: z.boolean().default(true) },
+    async (p) => {
+      const r = await composeFeedDiscrepancyBatch(db, {
+        promoterId: p.promoter_id,
+        now: now(),
+        dryRun: p.dry_run,
+      });
+      return { content: [jsonContent(r)] };
+    }
+  );
+
+  server.tool(
+    "get_feed_discrepancy_metrics",
+    "OPE-1613 / OPE-1511 — feed lane metrics: discrepancies raised, questions sent (in a SENT batch draft), answered, answer rate, median hours to answer, pins created, pins released because the feed was fixed, third-value changes caught, batches composed/sent. Optional promoter_id. Read-only.",
+    { promoter_id: z.string().optional() },
+    async (p) => ({
+      content: [jsonContent(await feedDiscrepancyMetrics(db, { promoterId: p.promoter_id }))],
+    })
+  );
+}

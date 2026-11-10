@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import { SchemaOrgPanel } from "@/components/admin/SchemaOrgPanel";
+import { FieldProvenancePanel } from "@/components/admin/FieldProvenancePanel";
 import { RescrapePanel } from "@/components/admin/RescrapePanel";
 import { FocalPointPicker } from "@/components/admin/FocalPointPicker";
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
@@ -920,6 +921,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
           />
         )}
         <SchemaOrgPanel eventId={id} onFieldsApplied={handleSchemaOrgFieldsApplied} />
+        <FieldProvenancePanel eventId={id} />
       </div>
     </div>
   );
