@@ -138,43 +138,30 @@ export const OVERVIEW_KPI_TILES = {
     thresholds:
       "Badge on the 30-day median, lower is better: green at 24h or less, red above 72h. STALE when no row admitted in 7 days, which is where it sits. Stale or red is a P0 action.",
   },
-  "overview.search-visibility-30d": {
+  "overview.search-visibility-trend": {
     measures:
       "Daily Google search clicks for the whole property, one point per day, with the chart's total.",
     source: "Google Search Console API (date dimension).",
     window:
-      "Last 30 calendar days, minus the unreported tail (usually the latest 3 days), so about 27 points. Ignores the window selector. Cached 15 min.",
-    caveats: "Google only; no Bing. The total is the sum of the days drawn, not a full 30 days.",
+      "The selected window (7 days when the selector is 1d), minus the unreported tail (usually the latest 3 days). Cached 15 min.",
+    caveats:
+      "Google only; no Bing. The total is the sum of the days drawn, so it covers fewer days than the title says.",
   },
-  "overview.conversions-30d": {
+  "overview.conversions-trend": {
     measures:
       "Daily count of outbound_ticket_click plus outbound_application_click events, one point per UTC day, with the chart's total.",
     source: "D1 `analytics_events`.",
-    window: "Last 30 UTC days including today; ignores the window selector. Live D1 read.",
+    window:
+      "The selected window in UTC days, today included (7 days when the selector is 1d). Live D1 read.",
     caveats:
       "Clicks out, not purchases or submitted applications. Contact clicks are not counted. No bot filter.",
   },
-  "overview.publishing-30d": {
+  "overview.publishing-trend": {
     measures: "Daily count of IndexNow submission rows with status success, one point per UTC day.",
     source: "D1 `indexnow_submissions`.",
-    window: "Last 30 UTC days including today; ignores the window selector. Live D1 read.",
+    window:
+      "The selected window in UTC days, today included (7 days when the selector is 1d, and at most 30). Live D1 read.",
     caveats:
       "Counts successful IndexNow pings, not content published. While the indexnow:paused kill-switch is set the total reads 'not measured — paused', not 0. There is no 90-day version: rows older than 30 days are deleted.",
-  },
-  "overview.search-visibility-90d": {
-    measures:
-      "Daily Google search clicks for the whole property, one point per day, with the chart's total.",
-    source: "Google Search Console API (date dimension).",
-    window:
-      "Last 90 calendar days, minus the unreported tail (usually the latest 3 days), so about 87 points. Ignores the window selector. Cached 15 min.",
-    caveats: "Google only; no Bing. The total is the sum of the days drawn, not a full 90 days.",
-  },
-  "overview.conversions-90d": {
-    measures:
-      "Daily count of outbound_ticket_click plus outbound_application_click events, one point per UTC day, with the chart's total.",
-    source: "D1 `analytics_events`.",
-    window: "Last 90 UTC days including today; ignores the window selector. Live D1 read.",
-    caveats:
-      "Clicks out, not purchases or submitted applications. Contact clicks are not counted. No bot filter.",
   },
 } satisfies Record<string, TileDefinition>;

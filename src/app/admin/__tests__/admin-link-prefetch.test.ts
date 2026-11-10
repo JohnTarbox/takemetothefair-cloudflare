@@ -18,8 +18,13 @@ import { describe, expect, it } from "vitest";
 const FILES: { file: string; minLinks: number }[] = [
   // The sidebar: one <Link> rendered once per adminNav entry, on every admin page.
   { file: "src/app/admin/layout.tsx", minLinks: 1 },
+  // OPE-1602: the section tab bar renders in that same layout, on every tabbed page.
+  { file: "src/app/admin/admin-section-tabs.tsx", minLinks: 1 },
   // The default analytics tab's in-page links (tile overlays, tabs, row links).
   { file: "src/app/admin/analytics/page.tsx", minLinks: 13 },
+  // OPE-1602: the back-links added with the IndexNow and Stuck URLs moves.
+  { file: "src/app/admin/diagnostics/page.tsx", minLinks: 1 },
+  { file: "src/app/admin/stuck-urls/page.tsx", minLinks: 1 },
 ];
 
 function linkOpenings(source: string): string[] {

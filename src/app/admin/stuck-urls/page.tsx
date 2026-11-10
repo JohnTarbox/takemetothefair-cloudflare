@@ -24,6 +24,7 @@
  * pattern as /admin/source-quality + /admin/blog.
  */
 
+import Link from "next/link";
 import { requireAdmin } from "@/lib/require-admin";
 import { inArray, notInArray } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -212,6 +213,13 @@ export default async function StuckUrlsPage() {
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
       <header>
+        <Link
+          prefetch={false}
+          href="/admin/analytics?tab=google"
+          className="text-sm text-muted-foreground hover:underline"
+        >
+          ← Search
+        </Link>
         <h1 className="text-2xl font-bold text-foreground">Stuck URLs (GSC index state)</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Clusters of URLs the URL-Inspection sweep marked non-indexed, grouped by entity type and
