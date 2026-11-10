@@ -202,6 +202,7 @@ import { registerSeriesEditionModeTool } from "./admin-series-edition-mode.js";
 import { registerEventApplicationTools } from "./admin-event-applications.js";
 import { registerUpdateSeriesTool } from "./admin-update-series.js";
 import { registerPromoterContactTools } from "./admin-promoter-contacts.js";
+import { registerOrgDomainTools } from "./admin-org-domains.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
 import { registerRequestImageUploadSlotTool } from "./request-image-upload-slot.js";
@@ -498,6 +499,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   // OPE-1330 — promoter contacts: list / upsert / set status (admin only, audit-logged).
   registerPromoterContactTools(server, db, auth);
+  // OPE-1614 — an org's domain list: list / add / retire / review / discover / shared.
+  registerOrgDomainTools(server, db, auth);
 
   // Read-only recommendations feed — same data as /admin/analytics ▸
   // Recommendations. Adds get_recommendations, get_recommendation_rule.

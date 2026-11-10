@@ -96,3 +96,22 @@ describe("registrableDomainFromEmail / registrableDomainFromWebsite", () => {
     expect(registrableDomainFromWebsite("  ")).toBeNull();
   });
 });
+
+describe("OPE-1614 — decideDomainMatch over a domain list", () => {
+  it("matches when the email's domain is any entry", () => {
+    expect(decideDomainMatch("a@ohtm.org", ["owlshead.org", "ohtm.org"])).toEqual({
+      match: true,
+      registrableDomain: "ohtm.org",
+    });
+  });
+  it("an empty list is no_website; a non-ownable-only list is non_matchable_website", () => {
+    expect(decideDomainMatch("a@ohtm.org", [])).toEqual({ match: false, reason: "no_website" });
+    expect(decideDomainMatch("a@ohtm.org", ["facebook.com"])).toEqual({
+      match: false,
+      reason: "non_matchable_website",
+    });
+  });
+  it("a gmail address never matches, whatever the list", () => {
+    expect(decideDomainMatch("a@gmail.com", ["gmail.com", "ohtm.org"]).match).toBe(false);
+  });
+});

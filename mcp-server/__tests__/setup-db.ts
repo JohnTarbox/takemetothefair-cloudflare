@@ -1671,10 +1671,34 @@ const SCHEMA_SQL = `
     status TEXT NOT NULL DEFAULT 'pending',
     attached_promoter_id TEXT,
     attached_at INTEGER,
+    domain_probed_at INTEGER,
     first_validated_at INTEGER NOT NULL,
     last_heard_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE org_domains (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    status TEXT NOT NULL,
+    method TEXT NOT NULL,
+    evidence TEXT,
+    source_url TEXT,
+    inbound_email_id TEXT,
+    added_by TEXT NOT NULL,
+    retired_by TEXT,
+    retired_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX uq_org_domains_entity_domain ON org_domains(entity_type, entity_id, domain);
+  CREATE TABLE shared_org_domains (
+    domain TEXT PRIMARY KEY,
+    note TEXT,
+    added_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL
   );
   CREATE TABLE promoter_list_arrivals (
     id TEXT PRIMARY KEY,

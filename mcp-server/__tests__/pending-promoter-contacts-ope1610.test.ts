@@ -161,6 +161,9 @@ describe("attachPendingPromoterContacts", () => {
       examined: 1,
       attached: 0,
       notQualified: 0,
+      probed: 0,
+      redirectAdded: 0,
+      shared: 0,
     });
     expect(pendingRows()).toEqual([expect.objectContaining({ status: "pending" })]);
   });
@@ -193,6 +196,9 @@ describe("attachPendingPromoterContacts", () => {
       examined: 0,
       attached: 0,
       notQualified: 0,
+      probed: 0,
+      redirectAdded: 0,
+      shared: 0,
     });
   });
 
@@ -227,6 +233,9 @@ describe("attachPendingPromoterContacts", () => {
       examined: 1,
       attached: 0,
       notQualified: 1,
+      probed: 0,
+      redirectAdded: 0,
+      shared: 0,
     });
     expect(contacts()).toEqual([]);
   });
