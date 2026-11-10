@@ -1255,6 +1255,13 @@ export const vendors = sqliteTable(
       t.deletedAt,
       t.businessName
     ),
+    // OPE-1573 (drizzle/0394) — /vendors `?type=` facet: seek on vendor_type,
+    // then deleted_at IS NULL + business_name order from the same index.
+    vendorsTypeDeletedBusinessNameIdx: index("idx_vendors_type_deleted_business_name").on(
+      t.vendorType,
+      t.deletedAt,
+      t.businessName
+    ),
   })
 );
 
