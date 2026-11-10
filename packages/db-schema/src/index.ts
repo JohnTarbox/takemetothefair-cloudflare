@@ -5268,6 +5268,34 @@ export const heartbeatProbes = sqliteTable("heartbeat_probes", {
     .$defaultFn(() => new Date()),
 });
 
+/**
+ * OPE-1597 (drizzle/0398) — the current full-table similarity sweep for one
+ * entity type. One row per type; its `runId` names the pairs a reader may use.
+ */
+export const entityDuplicateSweepRuns = sqliteTable("entity_duplicate_sweep_runs", {
+  entityType: text("entity_type").primaryKey(),
+  runId: text("run_id").notNull(),
+  lastRunAt: integer("last_run_at", { mode: "timestamp" }).notNull(),
+  checkedCount: integer("checked_count").notNull(),
+  liveCount: integer("live_count").notNull(),
+  comparisons: integer("comparisons").notNull(),
+  pairCount: integer("pair_count").notNull(),
+  storedPairCount: integer("stored_pair_count").notNull(),
+});
+
+/** OPE-1597 — the candidate pairs of a sweep run. Proposals only; nothing merges. */
+export const entityDuplicateSweepPairs = sqliteTable(
+  "entity_duplicate_sweep_pairs",
+  {
+    runId: text("run_id").notNull(),
+    entityType: text("entity_type").notNull(),
+    entity1Id: text("entity1_id").notNull(),
+    entity2Id: text("entity2_id").notNull(),
+    similarity: real("similarity").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.entity1Id, t.entity2Id] })]
+);
+
 export type HeartbeatProbeRow = typeof heartbeatProbes.$inferSelect;
 
 // Issue #326 — debounce state for the page-error Slack canary
