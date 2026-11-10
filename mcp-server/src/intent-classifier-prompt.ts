@@ -38,8 +38,16 @@
  *    in the body" from the `correction` examples. The event page's "ask a
  *    question" mailto puts that URL in every body, so with the template
  *    subject it pushed plain questions to `correction` at exactly 0.85.
- *    A link to our listing says WHICH event, not that anything is wrong. */
-export const CLASSIFIER_VERSION = "c-2026-10-01-v6";
+ *    A link to our listing says WHICH event, not that anything is wrong.
+ *  v7 (2026-11-04, OPE-1248): added `event_question` — a reader ASKING
+ *    about one event we list (hours, parking, accessibility, is it still
+ *    on) without claiming the listing is wrong. v6 alone still put 7
+ *    template questions in `correction` at 0.90; nothing in the taxonomy
+ *    was true for them. Three neighbouring edits: `support` is now site
+ *    help NOT about one event; `vendor_inquiry` covers a vendor question
+ *    about one specific event; `correction` gains the "your site says X,
+ *    other sites say Y" example (46af4630, the boundary case). */
+export const CLASSIFIER_VERSION = "c-2026-11-04-v7";
 
 /** Default confidence gate. Below this, we fall back to address-based
  *  routing and flag the row for admin review. Tuned per Q1 in spec —
@@ -69,6 +77,7 @@ export const INTENT_TAXONOMY_DOC = `INTENT TAXONOMY (pick exactly one per messag
                       event listing is wrong (date, venue, name, etc.) or
                       that a published event is incorrect/cancelled.
                       Examples: "the date is wrong"; "appears to be incorrect";
+                      "your site says X but other sites say Y";
                       a reply to one of our approval-notification emails.
 - claim_request:      Sender is EXPLICITLY claiming ownership/representation
                       of an event listing (organizer or promoter). Requires
@@ -83,11 +92,30 @@ export const INTENT_TAXONOMY_DOC = `INTENT TAXONOMY (pick exactly one per messag
                       content in an event submission, not an ownership
                       claim. Classify the message as new_event only.
 - vendor_inquiry:     A vendor/exhibitor asking about how to be listed,
-                      how to apply to events, or about their vendor profile.
+                      how to apply to events, or about their vendor profile
+                      (including one specific event: table price, vendor
+                      fee, application, space).
                       Examples: "How do I list my booth?";
                       "I exhibit at fairs and would like to be added";
                       "How do I sign up to vend?".
-- support:            General how-to / help / can-you-help questions that
+- event_question:     A reader ASKING about one specific event we list —
+                      hours, parking, prices, accessibility, what to bring,
+                      whether it is still on — WITHOUT claiming anything on
+                      our listing is wrong. Often arrives with a subject like
+                      "Question about <event>" and a link to our event page.
+                      Examples: "Can you rent wheelchairs at the festival?";
+                      "What are the parking choices?"; "Is it still happening?".
+                      NOT event_question: the sender says or implies our
+                      listing is WRONG ("you have it at the wrong location";
+                      "your site says Friday, other sites say Thursday —
+                      could you please clarify") — that is correction, even
+                      when phrased as a question.
+                      NOT event_question: a VENDOR/exhibitor asking about
+                      selling AT the event — tables, booth or vendor fees,
+                      vendor applications, vendor space, "can I sell X
+                      there" — that is vendor_inquiry.
+- support:            General how-to / help / can-you-help questions about
+                      the SITE that are not about one specific event and
                       don't fit the other buckets.
                       Examples: "How does your site work?";
                       "Can you help me find an event in Maine?".

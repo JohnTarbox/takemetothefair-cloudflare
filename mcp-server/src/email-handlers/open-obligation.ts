@@ -30,6 +30,8 @@ import { isEmailSuppressed } from "../tools/admin-send-vendor-email.js";
 import { logError } from "../logger.js";
 import { ref } from "../inbound/crossing-ledger.js";
 import type { InboundEmail } from "@takemetothefair/db-schema";
+import { isConversationClosing } from "./thread-ack-suppression.js";
+import { isReplyToOurThread } from "../intent-fastpath.js";
 
 /**
  * Open a `support_obligations` row when this inbound owes someone a human reply.
@@ -70,6 +72,21 @@ export async function openObligationIfOwed(
     });
 
     if (!decision.obligated) return null;
+
+    // OPE-1248 — a reply to OUR thread that only says thanks ends the
+    // conversation (OPE-1163), so nobody owes it an answer. The workflow's
+    // closed-by-sender check already suppresses the ack for this shape, but it
+    // runs AFTER the handler, so before this the obligation opened anyway: prod
+    // e188a9f7 ("Thank you very much for including us!") sits at
+    // status=closed_by_sender WITH an open obligation. Same predicate, same
+    // inputs, so the two can't disagree. It abstains hard: "Thanks! I'll call
+    // them about parking" (086a5878) is not closing and still opens one.
+    if (
+      isReplyToOurThread(row.inReplyTo ?? null, row.emailReferences ?? null) &&
+      isConversationClosing(row.bodyText)
+    ) {
+      return null;
+    }
 
     // ── OPE-768 scopes 2 + 3: one waiting obligation per CONVERSATION ───────
     //
