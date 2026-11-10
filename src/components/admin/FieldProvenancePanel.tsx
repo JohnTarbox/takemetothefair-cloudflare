@@ -30,6 +30,7 @@ const LABEL: Record<string, string> = {
   operator: "Operator",
   extraction: "Extraction",
   promoter_portal: "Promoter upload",
+  promoter_api: "Promoter API",
   unclassified: "Unclassified (pre-provenance)",
 };
 
