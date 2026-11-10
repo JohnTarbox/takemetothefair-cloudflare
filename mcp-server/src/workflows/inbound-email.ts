@@ -83,6 +83,7 @@ import {
   type OwedHumanVerdict,
 } from "../email-handlers/owed-human.js";
 import { openObligationIfOwed } from "../email-handlers/open-obligation.js";
+import { chooseTrustedNoUrlReply } from "../email-handlers/trusted-no-url-reply.js";
 import { heldSendReason } from "../inbound/replies-suppressed.js";
 import { isZeroConfidenceUnclear } from "../email-handlers/automated-mail.js";
 import { inboundEmails, adminActions } from "../schema.js";
@@ -862,7 +863,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     } else {
       try {
         if (intent === "submit" || intent === "new_event") {
-          result = await this.runSubmitPipeline(step, messageRowId, sessionId);
+          result = await this.runSubmitPipeline(step, messageRowId, sessionId, senderTrust);
         } else {
           result = await step.do(
             "dispatch",
@@ -1547,6 +1548,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               // you wanted?" feedback widget. Per memory feedback note on
               // RECEIPT_WIDGET_KINDS missing from PR-E.
               "no-url-prose-failed",
+              // OPE-1505 NOTE — the two trusted-sender replies are deliberately
+              // NOT here: John approved their copy without a widget.
               // OPE-453 — `unfetchable-url` IS here, deliberately: it is the
               // direct replacement for `no-url` on rows that carry a parsed URL,
               // so omitting it would silently strip the widget from the very
@@ -2189,7 +2192,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
   private async runSubmitPipeline(
     step: WorkflowStep,
     messageRowId: string,
-    instanceId: string
+    instanceId: string,
+    /** OPE-1505 Ask 4 — the same verdict the handlers receive via HandlerCtx. */
+    senderTrust: SenderTrustTier = "unknown"
   ): Promise<HandlerResult> {
     const rowSnapshot = await step.do(
       "submit/load-row",
@@ -2690,6 +2695,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // AI extraction, and records its candidates either way (Ask 5). On
       // 01ad5525 the extraction timed out and no match was ever attempted.
       const textMatch = await this.textMatchStep(step, instanceId, messageRowId, rowSnapshot);
+      // OPE-1505 Ask 4 — what the enrich step did, for the trusted-sender reply.
+      let textMatchEnrich: { applied: string[]; staged: boolean } | null = null;
       // Track whether we actually attempted prose extraction so the
       // fallback reply distinguishes "tried, didn't extract enough" from
       // "nothing to try." Drives `no-url-prose-failed` vs `no-url` below.
@@ -2819,7 +2826,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           if (!textMatchEvent.visitorFacts) {
             textMatchEvent.visitorFacts = findVisitorFacts(proseForExtract);
           }
-          await this.stageEnrichBestEffort(step, "submit/text-match-enrich", {
+          textMatchEnrich = await this.stageEnrichBestEffort(step, "submit/text-match-enrich", {
             existingEventId: textMatch.matched.id,
             url: null,
             event: textMatchEvent,
@@ -2873,16 +2880,25 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // but the reply copy then asserted the link did not exist. When
       // `parsed_url` is populated, "we couldn't find a link" is simply false —
       // and false in the direction that blames the sender for our failure.
-      const replyKind: ReplyKind = chooseNoUrlReplyKind({
+      const noUrlKind: ReplyKind = chooseNoUrlReplyKind({
         parsedUrl: rowSnapshot.parsedUrl,
         attemptedProse,
       });
+      // OPE-1505 Ask 4 — a trusted sender is never asked for the fields back.
+      const trustedReply = chooseTrustedNoUrlReply({
+        replyKind: noUrlKind,
+        trusted: senderTrust === "trusted",
+        matched: textMatch?.outcome === "matched" && textMatch.matched ? textMatch.matched : null,
+        applied: textMatchEnrich?.applied ?? [],
+        staged: textMatchEnrich?.staged ?? false,
+      });
       return {
-        replyKind,
+        replyKind: trustedReply?.replyKind ?? noUrlKind,
         replyParams: {
           subject,
           hasAttachments: rowSnapshot.attachmentCount > 0,
           ...(rowSnapshot.parsedUrl ? { attemptedUrl: rowSnapshot.parsedUrl } : {}),
+          ...trustedReply?.replyParams,
         },
         status: "replied",
         // OPE-174 — record why we bounced so URL-less submissions are visible in
@@ -3587,13 +3603,17 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     step: WorkflowStep,
     label: string,
     input: StageEnrichInput
-  ): Promise<void> {
-    await step.do(
+  ): Promise<{ applied: string[]; staged: boolean } | null> {
+    return await step.do(
       label,
       { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
       async () => {
         try {
-          await stageEnrichOnMatch(getDb(this.env.DB), input);
+          const r = await stageEnrichOnMatch(getDb(this.env.DB), input);
+          return {
+            applied: r.outcome === "event-missing" ? [] : (r.applied ?? []),
+            staged: r.outcome === "proposed",
+          };
         } catch (err) {
           await logError(getDb(this.env.DB), {
             source: "mcp:workflow:enrich-proposal",
@@ -3601,6 +3621,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             error: err,
             context: { path: input.path, existingEventId: input.existingEventId },
           });
+          return null;
         }
       }
     );
