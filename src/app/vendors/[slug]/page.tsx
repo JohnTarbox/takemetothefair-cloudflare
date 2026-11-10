@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { notFound, permanentRedirect } from "next/navigation";
 import { TrackedActionLink } from "@/components/analytics/TrackedActionLink";
 import { getVendorGallery } from "@/lib/vendor-photos";
@@ -150,9 +151,10 @@ function resolveDisplayName(vendor: NonNullable<VendorWithHierarchy>): string {
  * the error page on "D1_ERROR: Network connection lost" between 09-24 and 10-04.
  * Wraps a PURE read: the view counter lives in `countVendorView`, never retried.
  */
-function getVendor(slug: string) {
-  return withD1ReadLogged("app/vendors/[slug]/page.tsx:getVendor", () => getVendorOnce(slug));
-}
+// OPE-1601 — `cache`: generateMetadata and the page share one read per request.
+const getVendor = cache((slug: string) =>
+  withD1ReadLogged("app/vendors/[slug]/page.tsx:getVendor", () => getVendorOnce(slug))
+);
 
 /**
  * Count one view — once per render, from the page (not generateMetadata), OUTSIDE
