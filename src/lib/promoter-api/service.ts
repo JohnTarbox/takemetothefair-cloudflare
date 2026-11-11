@@ -15,12 +15,20 @@
  * UNIQUE(promoter, external_id)), so two concurrent first posts of one
  * external_id create one event. A claim whose create never finished is
  * reclaimed after CLAIM_STALE_MS.
+ *
+ * OPE-1625 — DRY RUN (`caller.dryRun`). The same functions decide, and every
+ * write is behind a `!c.dryRun` check: no ref claim or release, no merge-hop
+ * re-point, no event, no import-ledger row, no review flag. A dry run returns
+ * the result the real call WOULD return (a would-be create has no event id).
+ * The route also hands a dry run a `readOnlyDb`, whose writes throw, so a
+ * write this file forgot to gate fails loudly instead of happening.
  */
 import { and, asc, eq, gt, isNull, lt } from "drizzle-orm";
 import type { getCloudflareDb } from "@/lib/cloudflare";
 import { events, promoterApiEventRefs, venues } from "@/lib/db/schema";
 import {
   createEvent,
+  diffAgainstEvent,
   previewRows,
   stageCancellation,
   stageUpdateForEvent,
@@ -40,6 +48,8 @@ export interface Caller {
   promoterUserId: string | null;
   requestId: string;
   now: Date;
+  /** OPE-1625 — decide only; write nothing. */
+  dryRun?: boolean;
 }
 
 export type Outcome = "created" | "update_staged" | "unchanged" | "cancel_staged";
@@ -50,7 +60,8 @@ export type ServiceResult =
       httpStatus: 200 | 201;
       body: {
         external_id: string;
-        event_id: string;
+        /** Null only on a dry run's would-be create. */
+        event_id: string | null;
         outcome: Outcome;
         status: string;
         changes?: Record<string, { current: string | null; proposed: string | null }>;
@@ -103,7 +114,7 @@ async function findRef(db: Db, promoterId: string, externalId: string) {
 }
 
 /** The ref's event, following one merge hop (merge_events leaves a tombstone). */
-async function refEvent(db: Db, refId: string, eventId: string, now: Date) {
+async function refEvent(db: Db, refId: string, eventId: string, now: Date, dryRun = false) {
   const [e] = await db
     .select({ id: events.id, status: events.status, mergedInto: events.mergedInto })
     .from(events)
@@ -116,6 +127,7 @@ async function refEvent(db: Db, refId: string, eventId: string, now: Date) {
     .where(eq(events.id, e.mergedInto))
     .limit(1);
   if (!keeper) return e;
+  if (dryRun) return keeper;
   await db
     .update(promoterApiEventRefs)
     .set({ eventId: keeper.id, updatedAt: now })
@@ -148,9 +160,13 @@ async function stageAgainst(
       message: "Invalid fields.",
       errors,
     };
-  const staged = await stageUpdateForEvent(db, ctxFor(c, externalId), row, eventId);
-  await touchRef(db, refId, c.now);
-  const changed = Object.keys(staged.changes).length > 0;
+  const changes = c.dryRun
+    ? row.value
+      ? await diffAgainstEvent(db, eventId, row.value)
+      : {}
+    : (await stageUpdateForEvent(db, ctxFor(c, externalId), row, eventId)).changes;
+  if (!c.dryRun) await touchRef(db, refId, c.now);
+  const changed = Object.keys(changes).length > 0;
   const nc = notCompared(Object.keys(cells) as ImportField[]);
   return {
     ok: true,
@@ -160,7 +176,7 @@ async function stageAgainst(
       event_id: eventId,
       outcome: changed ? "update_staged" : "unchanged",
       status,
-      changes: staged.changes,
+      changes,
       ...(nc.length ? { not_compared: nc } : {}),
       ...(row.warnings.length ? { warnings: row.warnings } : {}),
     },
@@ -231,12 +247,23 @@ export async function upsertEvent(
 
   const existing = await findRef(db, c.promoterId, externalId);
   if (existing?.eventId) {
-    const e = await refEvent(db, existing.id, existing.eventId, c.now);
+    const e = await refEvent(db, existing.id, existing.eventId, c.now, c.dryRun);
     if (e) return stageAgainst(db, c, externalId, existing.id, e.id, e.status, cells);
   }
 
-  const refId = await claimRef(db, c, externalId);
-  if (!refId) return inProgress();
+  // A dry run claims nothing; a fresh claim another request holds is still "in progress".
+  if (
+    c.dryRun &&
+    existing &&
+    !existing.eventId &&
+    existing.updatedAt.getTime() >= c.now.getTime() - CLAIM_STALE_MS
+  )
+    return inProgress();
+  const refId = c.dryRun ? null : await claimRef(db, c, externalId);
+  if (!refId && !c.dryRun) return inProgress();
+  const release = async () => {
+    if (refId) await releaseClaim(db, refId);
+  };
   try {
     const ctx = ctxFor(c, externalId);
     const [p] = await previewRows(db, {
@@ -245,7 +272,7 @@ export async function upsertEvent(
       rows: [row],
     });
     if (p.status === "error" || p.status === "already_imported") {
-      await releaseClaim(db, refId);
+      await release();
       if (p.event)
         return {
           ok: false,
@@ -274,7 +301,7 @@ export async function upsertEvent(
         )
         .limit(1);
       if (other) {
-        await releaseClaim(db, refId);
+        await release();
         return {
           ok: false,
           httpStatus: 409,
@@ -283,15 +310,28 @@ export async function upsertEvent(
           event_id: eventId,
         };
       }
-      await db
-        .update(promoterApiEventRefs)
-        .set({ eventId, updatedAt: c.now })
-        .where(eq(promoterApiEventRefs.id, refId));
-      return stageAgainst(db, c, externalId, refId, eventId, p.event!.status, cells);
+      if (refId)
+        await db
+          .update(promoterApiEventRefs)
+          .set({ eventId, updatedAt: c.now })
+          .where(eq(promoterApiEventRefs.id, refId));
+      return stageAgainst(db, c, externalId, refId ?? "", eventId, p.event!.status, cells);
     }
+    if (c.dryRun || !refId)
+      return {
+        ok: true,
+        httpStatus: 201,
+        body: {
+          external_id: externalId,
+          event_id: null,
+          outcome: "created",
+          status: "PENDING",
+          ...(row.warnings.length ? { warnings: row.warnings } : {}),
+        },
+      };
     const created = await createEvent(db, ctx, row);
     if (created.outcome !== "created" || !created.event_id) {
-      await releaseClaim(db, refId);
+      await release();
       return {
         ok: false,
         httpStatus: 422,
@@ -316,7 +356,7 @@ export async function upsertEvent(
       },
     };
   } catch (e) {
-    await releaseClaim(db, refId);
+    await release();
     throw e;
   }
 }
@@ -333,7 +373,7 @@ async function resolveKnown(db: Db, c: Caller, externalId: string) {
   const ref = await findRef(db, c.promoterId, externalId);
   if (!ref) return { error: notFound(externalId) };
   if (!ref.eventId) return { error: inProgress() };
-  const e = await refEvent(db, ref.id, ref.eventId, c.now);
+  const e = await refEvent(db, ref.id, ref.eventId, c.now, c.dryRun);
   if (!e) return { error: notFound(externalId) };
   return { ref, event: e };
 }
@@ -413,7 +453,7 @@ export async function cancelEvent(
   if ("error" in known) return known.error!;
   const { ref, event } = known;
   if (event.status === "CANCELLED") {
-    await touchRef(db, ref.id, c.now);
+    if (!c.dryRun) await touchRef(db, ref.id, c.now);
     return {
       ok: true,
       httpStatus: 200,
@@ -425,8 +465,10 @@ export async function cancelEvent(
       },
     };
   }
-  await stageCancellation(db, ctxFor(c, externalId), event.id, event.status, reason);
-  await touchRef(db, ref.id, c.now);
+  if (!c.dryRun) {
+    await stageCancellation(db, ctxFor(c, externalId), event.id, event.status, reason);
+    await touchRef(db, ref.id, c.now);
+  }
   return {
     ok: true,
     httpStatus: 200,
@@ -435,6 +477,15 @@ export async function cancelEvent(
       event_id: event.id,
       outcome: "cancel_staged",
       status: event.status,
+      // What the staged request proposes (the ledger row's proposed_changes).
+      ...(c.dryRun
+        ? {
+            changes: {
+              status: { current: event.status, proposed: "CANCELLED" },
+              ...(reason ? { reason: { current: null, proposed: reason } } : {}),
+            },
+          }
+        : {}),
     },
   };
 }

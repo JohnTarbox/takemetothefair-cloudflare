@@ -31,6 +31,7 @@ import { and, eq, isNull, isNotNull } from "drizzle-orm";
 import { performers, events, eventSchemaOrg, adminActions } from "../schema.js";
 import { decodeHtmlEntities, jsonContent, unsafeSlug } from "../helpers.js";
 import { combinedSimilarity } from "@takemetothefair/utils";
+import { collectObjects } from "@takemetothefair/utils/feeds";
 import { ensureUniquePerformerSlug, linkAppearance, FUZZY_THRESHOLD } from "./admin-performers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -97,23 +98,12 @@ function socialFromSameAs(sameAs: unknown): string | null {
   return Object.keys(out).length ? JSON.stringify(out) : null;
 }
 
-/** Collect every object node in the JSON-LD (handles arrays + @graph nesting). */
-export function collectObjects(parsed: unknown): Record<string, unknown>[] {
-  const out: Record<string, unknown>[] = [];
-  const visit = (v: unknown) => {
-    if (Array.isArray(v)) {
-      v.forEach(visit);
-      return;
-    }
-    if (v && typeof v === "object") {
-      const o = v as Record<string, unknown>;
-      out.push(o);
-      if (Array.isArray(o["@graph"])) (o["@graph"] as unknown[]).forEach(visit);
-    }
-  };
-  visit(parsed);
-  return out;
-}
+/**
+ * Collect every object node in the JSON-LD (handles arrays + @graph nesting).
+ * OPE-1625 — the walk now lives with the shared JSON-LD event reader in
+ * @takemetothefair/utils/feeds, so the event reader and this harvest share it.
+ */
+export { collectObjects };
 
 /**
  * Extract performer nodes from a stored raw JSON-LD blob. Dedupes by

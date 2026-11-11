@@ -290,6 +290,40 @@ export default function PromoterApiDocsPage() {
       </section>
 
       <section className="space-y-3">
+        <h2 className="text-2xl font-semibold">Test without saving</h2>
+        <p>
+          Add <code>?dry_run=true</code> to the URL, or <code>&quot;dry_run&quot;: true</code> to
+          the JSON body, on <code>POST /api/v1/promoter/events</code>, <code>PATCH</code> and{" "}
+          <code>/cancel</code>. Sign the request exactly as usual. We check it the same way and save
+          nothing: no event, no link to your <code>external_id</code>, nothing for review.
+        </p>
+        <p>
+          A dry run answers <code>200</code> with <code>&quot;dry_run&quot;: true</code>,{" "}
+          <code>would_return</code> (the status and outcome the real request would get) and a{" "}
+          <code>report</code>:
+        </p>
+        <ul className="list-disc pl-6 space-y-1">
+          <li>
+            <code>read</code>: each field as we read it.
+          </li>
+          <li>
+            <code>outcome</code>: <code>new</code> (would go to review), <code>match</code> (your
+            listing, with the fields that would change, old and new), or <code>skip</code> with the
+            reason.
+          </li>
+          <li>
+            <code>problems</code>: missing or unreadable fields, a date that has passed, an
+            incomplete location, or a start time that looks like AM when the description says PM.
+          </li>
+        </ul>
+        <p>
+          A body with an unknown field or a wrong type is still a <code>422</code>. The request id
+          is used up by a dry run too, so send a new <code>X-MMATF-Request-Id</code> for the real
+          request.
+        </p>
+      </section>
+
+      <section className="space-y-3">
         <h2 className="text-2xl font-semibold">Fields</h2>
         <p>
           The same fields as the{" "}
