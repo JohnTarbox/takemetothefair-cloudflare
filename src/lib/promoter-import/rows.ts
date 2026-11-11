@@ -346,6 +346,11 @@ export interface ImportRow {
   /** As read, by template field. */
   raw: Partial<Record<ImportField, string>>;
   errors: string[];
+  /**
+   * OPE-1620 — the same errors, each with the template field it is about (null
+   * when it is about the row as a whole). The API answers 422 with these.
+   */
+  fieldErrors: Array<{ field: ImportField | null; message: string }>;
   /** Non-blocking: what the row loses on import (e.g. an unknown category). */
   warnings: string[];
   value: {
@@ -401,40 +406,46 @@ export function parseRows(table: string[][]): {
       if (v) raw[c.key] = v;
     }
     const errors: string[] = [];
+    const fieldErrors: ImportRow["fieldErrors"] = [];
+    const fail = (field: ImportField | null, message: string) => {
+      errors.push(message);
+      fieldErrors.push({ field, message });
+    };
     const get = (k: ImportField) => raw[k] ?? "";
     for (const c of TEMPLATE_COLUMNS)
-      if (c.required && !get(c.key)) errors.push(`${c.header} is required.`);
+      if (c.required && !get(c.key)) fail(c.key, `${c.header} is required.`);
 
     const startDate = get("start_date") ? parseDateCell(get("start_date")) : null;
     if (get("start_date") && !startDate)
-      errors.push(
+      fail(
+        "start_date",
         `Start date "${get("start_date")}" isn't a date we can read (use 2027-10-02 or 10/2/2027).`
       );
     const endDate = get("end_date") ? parseDateCell(get("end_date")) : startDate;
     if (get("end_date") && !endDate)
-      errors.push(`End date "${get("end_date")}" isn't a date we can read.`);
+      fail("end_date", `End date "${get("end_date")}" isn't a date we can read.`);
     if (startDate && endDate && endDate < startDate)
-      errors.push("End date is before the start date.");
+      fail("end_date", "End date is before the start date.");
     if (startDate && endDate && endDate >= startDate) {
       const days = (Date.parse(endDate) - Date.parse(startDate)) / 86_400_000 + 1;
       if (days > MAX_DAYS)
-        errors.push(`The event runs ${days} days; the limit for one row is ${MAX_DAYS}.`);
+        fail("end_date", `The event runs ${days} days; the limit for one row is ${MAX_DAYS}.`);
     }
     const hours = get("daily_hours") ? parseHoursCell(get("daily_hours")) : null;
     if (get("daily_hours") && !hours)
-      errors.push(`Daily hours "${get("daily_hours")}" can't be read (use 9am-4pm).`);
+      fail("daily_hours", `Daily hours "${get("daily_hours")}" can't be read (use 9am-4pm).`);
     const state = get("state") ? parseState(get("state")) : null;
     if (get("state") && !state)
-      errors.push(`State "${get("state")}" isn't one of ME, NH, VT, MA, CT, RI.`);
+      fail("state", `State "${get("state")}" isn't one of ME, NH, VT, MA, CT, RI.`);
     const admission = parseAdmission(get("admission"));
     if (!admission)
-      errors.push(`Admission "${get("admission")}" can't be read (use Free, $5 or $5-$10).`);
+      fail("admission", `Admission "${get("admission")}" can't be read (use Free, $5 or $5-$10).`);
     const feeMin = parseMoney(get("booth_fee_min"));
     const feeMax = parseMoney(get("booth_fee_max"));
     if (Number.isNaN(feeMin))
-      errors.push(`Booth fee min "${get("booth_fee_min")}" isn't an amount.`);
+      fail("booth_fee_min", `Booth fee min "${get("booth_fee_min")}" isn't an amount.`);
     if (Number.isNaN(feeMax))
-      errors.push(`Booth fee max "${get("booth_fee_max")}" isn't an amount.`);
+      fail("booth_fee_max", `Booth fee max "${get("booth_fee_max")}" isn't an amount.`);
     if (
       feeMin !== null &&
       feeMax !== null &&
@@ -442,19 +453,23 @@ export function parseRows(table: string[][]): {
       !Number.isNaN(feeMax) &&
       feeMax < feeMin
     )
-      errors.push("Booth fee max is less than the min.");
+      fail("booth_fee_max", "Booth fee max is less than the min.");
     const deadline = get("application_deadline")
       ? parseDateCell(get("application_deadline"))
       : null;
     if (get("application_deadline") && !deadline)
-      errors.push(`Application deadline "${get("application_deadline")}" isn't a date.`);
+      fail(
+        "application_deadline",
+        `Application deadline "${get("application_deadline")}" isn't a date.`
+      );
     for (const k of ["vendor_application_url", "event_url", "image_url"] as const) {
       if (get(k) && !isHttpUrl(get(k)))
-        errors.push(
+        fail(
+          k,
           `${TEMPLATE_COLUMNS.find((c) => c.key === k)!.header} must start with https:// or http://.`
         );
     }
-    if (get("name").length > 200) errors.push("Event name is longer than 200 characters.");
+    if (get("name").length > 200) fail("name", "Event name is longer than 200 characters.");
     // OPE-1058 — the one shared allow-list (partitionEventCategories). A sheet's
     // "craft fair" is matched to the canonical "Craft Fair"; a value we do not
     // use is dropped with a warning, never stored and never a blocking error.
@@ -471,7 +486,7 @@ export function parseRows(table: string[][]): {
         ]
       : [];
     if (get("description").length > 5000)
-      errors.push("Description is longer than 5,000 characters.");
+      fail("description", "Description is longer than 5,000 characters.");
 
     const value: ImportRow["value"] = errors.length
       ? null
@@ -496,7 +511,7 @@ export function parseRows(table: string[][]): {
           eventUrl: get("event_url") || null,
           imageUrl: get("image_url") || null,
         };
-    return { rowNumber: i + 2, raw, errors, warnings, value };
+    return { rowNumber: i + 2, raw, errors, fieldErrors, warnings, value };
   });
 
   // The same show twice in one file: the later row is the error.
@@ -507,6 +522,7 @@ export function parseRows(table: string[][]): {
     const first = seen.get(k);
     if (first !== undefined) {
       r.errors.push(`Same event and start date as row ${first}.`);
+      r.fieldErrors.push({ field: null, message: `Same event and start date as row ${first}.` });
       r.value = null;
     } else seen.set(k, r.rowNumber);
   }

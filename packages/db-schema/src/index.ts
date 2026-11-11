@@ -2030,20 +2030,93 @@ export const promoterImportRows = sqliteTable(
     fileHash: text("file_hash").notNull(),
     fileName: text("file_name"),
     rowNumber: integer("row_number").notNull(),
-    outcome: text("outcome", { enum: ["created", "update_staged"] }).notNull(),
+    // OPE-1620 — `cancel_staged`: the promoter API asked to cancel; held for review.
+    outcome: text("outcome", { enum: ["created", "update_staged", "cancel_staged"] }).notNull(),
     eventId: text("event_id").references(() => events.id, { onDelete: "set null" }),
     /** JSON: the row's values as read. */
     rowValues: text("row_values").notNull(),
     /** JSON: { field: { current, proposed } } — only for update_staged. */
     proposedChanges: text("proposed_changes"),
     uploadedBy: text("uploaded_by"),
-    /** `portal` (the promoter) or `operator` (admin/MCP on the promoter's behalf). */
-    channel: text("channel", { enum: ["portal", "operator"] }).notNull(),
+    /** `portal` (the promoter), `operator` (admin/MCP on the promoter's behalf) or
+     *  `api` (OPE-1620 — the promoter's signed API; file_hash is `api:<key_id>:<request_id>`). */
+    channel: text("channel", { enum: ["portal", "operator", "api"] }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
     uniqueIndex("uq_promoter_import_rows_file_row").on(t.promoterId, t.fileHash, t.rowNumber),
     index("idx_promoter_import_rows_event").on(t.eventId),
+  ]
+);
+
+/**
+ * OPE-1620 — a promoter's API keys (drizzle/0411). `keyId` is the public half
+ * (`mmk_…`); `secret` is the HMAC-SHA256 key, stored in D1 like
+ * `syndication_subscribers.signing_secret` because the server must hold it to
+ * verify. It is returned once, at creation, and never listed or logged.
+ */
+export const promoterApiKeys = sqliteTable(
+  "promoter_api_keys",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    keyId: text("key_id").notNull(),
+    secret: text("secret").notNull(),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp" }),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_api_keys_key_id").on(t.keyId),
+    index("idx_promoter_api_keys_promoter").on(t.promoterId),
+  ]
+);
+
+/** OPE-1620 — request ids seen per key, for replay rejection. Pruned to a day on write. */
+export const promoterApiRequests = sqliteTable(
+  "promoter_api_requests",
+  {
+    keyId: text("key_id").notNull(),
+    requestId: text("request_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_api_requests_key_request").on(t.keyId, t.requestId),
+    index("idx_promoter_api_requests_created").on(t.createdAt),
+  ]
+);
+
+/**
+ * OPE-1620 — the promoter's own id for one of its events. UNIQUE(promoter,
+ * external_id) makes the API's upsert idempotent. `eventId` is NULL only while
+ * the create that claimed the ref is in flight.
+ */
+export const promoterApiEventRefs = sqliteTable(
+  "promoter_api_event_refs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    eventId: text("event_id").references(() => events.id, { onDelete: "cascade" }),
+    /** The key that created the ref (audit only; not an FK). */
+    keyId: text("key_id"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_api_event_refs_external").on(t.promoterId, t.externalId),
+    index("idx_promoter_api_event_refs_event").on(t.eventId),
+    index("idx_promoter_api_event_refs_updated").on(t.updatedAt),
   ]
 );
 
@@ -2056,6 +2129,8 @@ export const CITATION_PROVENANCE_KINDS = [
   "extraction",
   // OPE-1618 — a claimed promoter's own spreadsheet upload in the portal.
   "promoter_portal",
+  // OPE-1620 — a claimed promoter's signed API call (the key_id is in the citation).
+  "promoter_api",
 ] as const;
 export type CitationProvenanceKind = (typeof CITATION_PROVENANCE_KINDS)[number];
 
