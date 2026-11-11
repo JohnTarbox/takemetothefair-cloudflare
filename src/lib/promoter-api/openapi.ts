@@ -53,6 +53,38 @@ const writeResult = {
   content: { "application/json": { schema: { $ref: "#/components/schemas/WriteResult" } } },
 };
 
+/** OPE-1625 — `?dry_run=true`: decide, report, write nothing. */
+const dryRunParam = {
+  name: "dry_run",
+  in: "query",
+  required: false,
+  schema: { type: "boolean" },
+  description:
+    'Test without saving: the request is signed and checked as usual and nothing is written. Also accepted as "dry_run": true in the body. Answers 200 with a DryRunResult.',
+};
+
+/** A real write's 200, or a dry run's 200. */
+const writeOrDryRun = {
+  description: "The outcome, or (dry_run) the report of what would happen.",
+  content: {
+    "application/json": {
+      schema: {
+        oneOf: [
+          { $ref: "#/components/schemas/WriteResult" },
+          { $ref: "#/components/schemas/DryRunResult" },
+        ],
+      },
+    },
+  },
+};
+
+const dryRunBodyProp = {
+  dry_run: {
+    type: "boolean",
+    description: "Test without saving (same as ?dry_run=true). Nothing is written.",
+  },
+};
+
 export const PROMOTER_API_OPENAPI = {
   openapi: "3.1.0",
   info: {
@@ -83,12 +115,13 @@ export const PROMOTER_API_OPENAPI = {
       },
       post: {
         summary: "Create or update one event by your external_id",
+        parameters: [dryRunParam],
         requestBody: {
           required: true,
           content: { "application/json": { schema: { $ref: "#/components/schemas/EventUpsert" } } },
         },
         responses: {
-          "200": writeResult,
+          "200": writeOrDryRun,
           "201": writeResult,
           "422": errorResponse("Validation failed; error.errors lists each field."),
           ...authErrors,
@@ -98,13 +131,13 @@ export const PROMOTER_API_OPENAPI = {
     "/api/v1/promoter/events/{external_id}": {
       patch: {
         summary: "Stage a partial update",
-        parameters: [externalIdParam],
+        parameters: [externalIdParam, dryRunParam],
         requestBody: {
           required: true,
           content: { "application/json": { schema: { $ref: "#/components/schemas/EventFields" } } },
         },
         responses: {
-          "200": writeResult,
+          "200": writeOrDryRun,
           "404": errorResponse("Unknown external_id for this key's promoter."),
           "422": errorResponse("Validation failed; error.errors lists each field."),
           ...authErrors,
@@ -114,7 +147,7 @@ export const PROMOTER_API_OPENAPI = {
     "/api/v1/promoter/events/{external_id}/cancel": {
       post: {
         summary: "Ask for a cancellation (staged for review)",
-        parameters: [externalIdParam],
+        parameters: [externalIdParam, dryRunParam],
         requestBody: {
           required: false,
           content: {
@@ -122,13 +155,13 @@ export const PROMOTER_API_OPENAPI = {
               schema: {
                 type: "object",
                 additionalProperties: false,
-                properties: { reason: { type: "string", maxLength: 500 } },
+                properties: { reason: { type: "string", maxLength: 500 }, ...dryRunBodyProp },
               },
             },
           },
         },
         responses: {
-          "200": writeResult,
+          "200": writeOrDryRun,
           "404": errorResponse("Unknown external_id for this key's promoter."),
           ...authErrors,
         },
@@ -159,12 +192,105 @@ export const PROMOTER_API_OPENAPI = {
       },
     },
     schemas: {
-      EventFields: { type: "object", additionalProperties: false, properties: fieldProps },
+      EventFields: {
+        type: "object",
+        additionalProperties: false,
+        properties: { ...fieldProps, ...dryRunBodyProp },
+      },
       EventUpsert: {
         type: "object",
         additionalProperties: false,
         required: ["external_id", ...TEMPLATE_COLUMNS.filter((c) => c.required).map((c) => c.key)],
-        properties: { external_id: externalIdParam.schema, ...fieldProps },
+        properties: { external_id: externalIdParam.schema, ...fieldProps, ...dryRunBodyProp },
+      },
+      DryRunResult: {
+        type: "object",
+        description:
+          "A dry run: what the real request would return, and the report. Nothing was written. The request id was used.",
+        required: ["dry_run", "external_id", "would_return", "report"],
+        properties: {
+          dry_run: { type: "boolean", const: true },
+          external_id: { type: "string" },
+          would_return: {
+            type: "object",
+            description:
+              "The real request's status, with its outcome (2xx) or its error (4xx). event_id is null for a would-be create.",
+            properties: {
+              status: { type: "integer" },
+              outcome: {
+                type: "string",
+                enum: ["created", "update_staged", "unchanged", "cancel_staged"],
+              },
+              event_id: { type: ["string", "null"] },
+              error: { $ref: "#/components/schemas/Error/properties/error" },
+            },
+          },
+          report: { $ref: "#/components/schemas/TestReport" },
+        },
+      },
+      TestReport: {
+        type: "object",
+        required: ["title", "read", "outcome", "problems"],
+        properties: {
+          title: { type: "string" },
+          external_id: { type: ["string", "null"] },
+          read: {
+            type: "array",
+            description: "Each field as we read it, with where it came from.",
+            items: {
+              type: "object",
+              properties: {
+                field: { type: "string" },
+                label: { type: "string" },
+                value: { type: ["string", "null"] },
+                source: { type: ["string", "null"] },
+              },
+            },
+          },
+          outcome: {
+            type: "object",
+            required: ["kind", "summary"],
+            properties: {
+              kind: { type: "string", enum: ["new", "match", "skip"] },
+              summary: { type: "string" },
+              reason: { type: "string", description: "For skip: why." },
+              listing: {
+                type: "object",
+                description:
+                  "For match: your listing. url is its public page, null until it is public.",
+                properties: {
+                  url: { type: ["string", "null"] },
+                  name: { type: ["string", "null"] },
+                  public: { type: "boolean" },
+                },
+              },
+              changes: {
+                type: "array",
+                description: "For match: the fields that would change.",
+                items: {
+                  type: "object",
+                  properties: {
+                    field: { type: "string" },
+                    current: { type: ["string", "null"] },
+                    proposed: { type: ["string", "null"] },
+                  },
+                },
+              },
+            },
+          },
+          problems: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                code: { type: "string" },
+                severity: { type: "string", enum: ["error", "warning"] },
+                field: { type: ["string", "null"] },
+                message: { type: "string" },
+              },
+            },
+          },
+        },
       },
       WriteResult: {
         type: "object",

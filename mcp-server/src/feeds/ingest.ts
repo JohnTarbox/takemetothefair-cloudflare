@@ -32,6 +32,10 @@ import { chunkIds, createSlug } from "@takemetothefair/utils";
 import { isPubliclyVisible } from "@takemetothefair/constants";
 import type { Db } from "../db.js";
 import type { FeedEvent } from "./tec.js";
+import {
+  detectSelfContradictions as sharedSelfContradictions,
+  to12h,
+} from "@takemetothefair/utils/feeds";
 import { decideInclusion, parseInclusionRules } from "./inclusion.js";
 import {
   FEED_FIELDS,
@@ -81,13 +85,6 @@ export function parseFeedNotes(notes: string | null): FeedDiscrepancyNotes | nul
   }
 }
 
-const to12h = (hhmm: string): string => {
-  const [h, m] = hhmm.split(":").map(Number);
-  const suffix = h >= 12 ? "PM" : "AM";
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${String(m).padStart(2, "0")} ${suffix}`;
-};
-
 const display = (field: FeedField, v: string | null): string => {
   if (v === null) return "nothing";
   if (field === "start_time" || field === "end_time") return to12h(v);
@@ -116,77 +113,10 @@ interface Finding {
 
 /**
  * Contradictions inside ONE feed item — its own fields against its own text.
- * Each finding names the evidence, so the question can quote it.
+ * Shared with the main app's test-submission engine since OPE-1625.
  */
 export function detectSelfContradictions(ev: FeedEvent): Finding[] {
-  const out: Finding[] = [];
-  const when = `${ev.title}${ev.startDate ? `, ${ev.startDate}` : ""}`;
-  // 1. An early-morning start whose own description states the same clock time PM.
-  if (ev.startTime) {
-    const [h, m] = ev.startTime.split(":").map(Number);
-    if (h >= 0 && h < 7) {
-      const h12 = h === 0 ? 12 : h;
-      const re = new RegExp(`\\b${h12}(?::${String(m).padStart(2, "0")})?\\s*p\\.?\\s*m\\b`, "i");
-      // OPE-1617 — OHTM writes ranges: "runs 4:30-6:30 PM". The PM there belongs
-      // to both ends, so a 04:30 start against that text is the same slip.
-      const range = new RegExp(
-        `\\b${h12}(?::${String(m).padStart(2, "0")})?\\s*(?:-|–|—|to)\\s*\\d{1,2}(?::\\d{2})?\\s*p\\.?\\s*m\\b`,
-        "i"
-      );
-      if (
-        re.test(ev.description) ||
-        range.test(ev.description) ||
-        (m === 0 && new RegExp(`\\b${h12}\\s*p\\.?m\\b`, "i").test(ev.description))
-      ) {
-        const hint = `${String(h + 12).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-        out.push({
-          field: "start_time",
-          kind: "am_pm_slip",
-          ourValue: null,
-          feedValue: ev.startTime,
-          hint,
-          question: `${when}: your feed says ${to12h(ev.startTime)}, the description says ${to12h(hint)}. Which is right?`,
-          feedFixNote: `The calendar entry's start time is set to ${to12h(ev.startTime)} (AM); the description says PM.`,
-        });
-      }
-    }
-  }
-  // 2. A location that is only a state code.
-  const v = ev.venue;
-  if (v && !v.name && !v.address && !v.city && v.state && /^[A-Za-z]{2}$/.test(v.state)) {
-    out.push({
-      field: "venue",
-      kind: "state_only_location",
-      ourValue: null,
-      feedValue: v.state,
-      hint: null,
-      question: `${when}: your feed gives the location only as "${v.state}". Where is it held?`,
-      feedFixNote: `The calendar entry's venue has no name or address, only "${v.state}".`,
-    });
-  } else if (v?.name && /^[A-Za-z]{2}$/.test(v.name) && !v.address && !v.city) {
-    out.push({
-      field: "venue",
-      kind: "state_only_location",
-      ourValue: null,
-      feedValue: v.name,
-      hint: null,
-      question: `${when}: your feed gives the location only as "${v.name}". Where is it held?`,
-      feedFixNote: `The calendar entry's venue is just "${v.name}".`,
-    });
-  }
-  // 3. The text says cancelled; the feed's own status does not.
-  if (!ev.statusCancelled && /\bcancel+ed\b/i.test(`${ev.title}\n${ev.description}`)) {
-    out.push({
-      field: "status",
-      kind: "cancelled_in_text",
-      ourValue: null,
-      feedValue: "scheduled",
-      hint: "cancelled",
-      question: `${when}: the listing's text says it is cancelled, but the calendar still lists it. Is it still happening?`,
-      feedFixNote: `The entry is still published as scheduled although its text says cancelled.`,
-    });
-  }
-  return out;
+  return sharedSelfContradictions(ev);
 }
 
 export interface IngestItemReport {
