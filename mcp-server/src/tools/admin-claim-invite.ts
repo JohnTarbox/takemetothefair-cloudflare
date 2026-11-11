@@ -35,7 +35,10 @@ import {
   adminActions,
   vendorOutreachAttempts,
   events,
+  inboundEmails,
 } from "../schema.js";
+import { replySubject } from "@takemetothefair/utils";
+import { CLAIM_INVITE_SOURCE } from "../support-obligations-close.js";
 import { decodeHtmlEntities, jsonContent, PUBLIC_EVENT_STATUSES } from "../helpers.js";
 import {
   applyCanSpamFooter,
@@ -66,6 +69,32 @@ interface EmailJobMessage {
   text: string;
   from?: string;
   source: string;
+  /** OPE-1627 — threading + the ledger link to the inbound this answers. */
+  inboundEmailId?: string;
+  inReplyTo?: string;
+  references?: string;
+}
+
+/** OPE-1627 — bare lower-cased address from `"Jane <jane@x.com>"` or `jane@x.com`. */
+function bareAddress(a: string | null | undefined): string {
+  const v = (a ?? "").trim().toLowerCase();
+  const m = /<([^>]+)>/.exec(v);
+  return m ? m[1].trim() : v;
+}
+
+/**
+ * OPE-1627 — the RFC 5322 threading headers for a reply to an inbound:
+ * `In-Reply-To` = its Message-ID, `References` = its own References chain (if
+ * any) followed by its Message-ID — the same shape a mail client writes. The
+ * email-jobs consumer turns these fields into real headers.
+ */
+export function threadingFor(inbound: { messageId: string; emailReferences: string | null }): {
+  inReplyTo: string;
+  references: string;
+} {
+  const chain = (inbound.emailReferences ?? "").split(/\s+/).filter(Boolean);
+  if (chain[chain.length - 1] !== inbound.messageId) chain.push(inbound.messageId);
+  return { inReplyTo: inbound.messageId, references: chain.join(" ") };
 }
 
 function toHex(buffer: ArrayBuffer): string {
@@ -373,8 +402,24 @@ export function registerCreateClaimInviteTool(
         .describe(
           "OPE-1507 — render exactly what would be sent (recipient, subject, body_html, body_text) with a placeholder in place of the token, and STOP: mints nothing, sends nothing, writes no ledger, outreach or audit row. Use it to show the operator the email before a live send."
         ),
+      in_reply_to_inbound_email_id: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "OPE-1627 — send the invite as a REPLY to this inbound_emails row, so it lands in the person's own conversation: sets In-Reply-To / References from that email's Message-ID, defaults the subject to 'Re: <their subject>' (no double Re:), links the send ledger row to the inbound, and — after the send is queued, never on dry_run — marks the inbound status='replied', reply_kind='manual'. Refused unless the inbound exists, has a Message-ID, and was sent by the invite recipient. dry_run shows in_reply_to, references and the final subject."
+        ),
     },
-    async ({ entity_type, entity_id, email, resend, personal_note, subject, dry_run }) => {
+    async ({
+      entity_type,
+      entity_id,
+      email,
+      resend,
+      personal_note,
+      subject,
+      dry_run,
+      in_reply_to_inbound_email_id,
+    }) => {
       if (!dry_run && !env?.EMAIL_JOBS) {
         return {
           content: [
@@ -478,6 +523,76 @@ export function registerCreateClaimInviteTool(
         };
       }
 
+      // OPE-1627 — the inbound this invite answers. Checked before the
+      // suppression gate so a bad id is an error, not a quiet no-op.
+      let replyTo: {
+        inboundEmailId: string;
+        inReplyTo: string;
+        references: string;
+        subject: string;
+      } | null = null;
+      if (in_reply_to_inbound_email_id) {
+        const [inbound] = await db
+          .select({
+            id: inboundEmails.id,
+            fromAddress: inboundEmails.fromAddress,
+            subject: inboundEmails.subject,
+            messageId: inboundEmails.messageId,
+            emailReferences: inboundEmails.emailReferences,
+          })
+          .from(inboundEmails)
+          .where(eq(inboundEmails.id, in_reply_to_inbound_email_id))
+          .limit(1);
+        if (!inbound) {
+          return {
+            content: [
+              jsonContent({
+                error: "inbound_not_found",
+                inReplyToInboundEmailId: in_reply_to_inbound_email_id,
+                message: "No inbound email has that id. Nothing was sent or minted.",
+              }),
+            ],
+            isError: true,
+          };
+        }
+        if (bareAddress(inbound.fromAddress) !== targetEmail) {
+          return {
+            content: [
+              jsonContent({
+                error: "inbound_sender_mismatch",
+                inReplyToInboundEmailId: inbound.id,
+                inboundFrom: bareAddress(inbound.fromAddress),
+                recipient: targetEmail,
+                message:
+                  "The inbound was not sent by the invite recipient, so the invite cannot join that thread. Nothing was sent or minted.",
+              }),
+            ],
+            isError: true,
+          };
+        }
+        if (!inbound.messageId) {
+          return {
+            content: [
+              jsonContent({
+                error: "inbound_has_no_message_id",
+                inReplyToInboundEmailId: inbound.id,
+                message:
+                  "The inbound has no Message-ID, so there is no thread to join. Send without in_reply_to_inbound_email_id instead. Nothing was sent or minted.",
+              }),
+            ],
+            isError: true,
+          };
+        }
+        replyTo = {
+          inboundEmailId: inbound.id,
+          ...threadingFor({
+            messageId: inbound.messageId,
+            emailReferences: inbound.emailReferences,
+          }),
+          subject: replySubject(inbound.subject),
+        };
+      }
+
       // 2. Suppression gate — send nothing, mint nothing.
       if (await isEmailSuppressed(db, targetEmail)) {
         return {
@@ -531,7 +646,8 @@ export function registerCreateClaimInviteTool(
         name: entity.name,
         upcomingShows,
         personalNote: personal_note ?? null,
-        subject: subject ?? null,
+        // OPE-1627 — an explicit subject wins; a reply defaults to "Re: <theirs>".
+        subject: subject?.trim() ? subject : (replyTo?.subject ?? null),
       };
       const reasonLine =
         entity_type === "VENDOR"
@@ -568,6 +684,13 @@ export function registerCreateClaimInviteTool(
               bcc: BCC_TO,
               personalNote: Boolean(personal_note?.trim()),
               subject: preview.subject.slice(0, 200),
+              ...(replyTo
+                ? {
+                    in_reply_to_inbound_email_id: replyTo.inboundEmailId,
+                    in_reply_to: replyTo.inReplyTo,
+                    references: replyTo.references,
+                  }
+                : {}),
               body_html: preview.html,
               body_text: preview.text,
             }),
@@ -634,7 +757,15 @@ export function registerCreateClaimInviteTool(
         text: rendered.text,
         html: rendered.html,
         from: FROM,
-        source: "email:claim-invite",
+        source: CLAIM_INVITE_SOURCE,
+        // OPE-1627 — threaded into their conversation, ledgered against it.
+        ...(replyTo
+          ? {
+              inboundEmailId: replyTo.inboundEmailId,
+              inReplyTo: replyTo.inReplyTo,
+              references: replyTo.references,
+            }
+          : {}),
       };
       await env.EMAIL_JOBS.send(primary);
 
@@ -647,8 +778,21 @@ export function registerCreateClaimInviteTool(
         html: `<p>${escapeHtml(bccNote.trim())}</p>${rendered.html}`,
         from: FROM,
         source: "email:claim-invite-bcc",
+        // OPE-1627 — the operator's copy threads too. No inboundEmailId: the
+        // BCC is not an answer to the person, so it must not be ledgered as one.
+        ...(replyTo ? { inReplyTo: replyTo.inReplyTo, references: replyTo.references } : {}),
       };
       await env.EMAIL_JOBS.send(bcc);
+
+      // OPE-1627 — answered, the way reply_to_inbound_email marks it: only now
+      // that both messages are queued. Its support obligation is closed by the
+      // email-jobs consumer once the send is CONFIRMED (shouldCloseOnSend).
+      if (replyTo) {
+        await db
+          .update(inboundEmails)
+          .set({ status: "replied", replyKind: "manual" })
+          .where(eq(inboundEmails.id, replyTo.inboundEmailId));
+      }
 
       // Vendors get an outreach attempt so the claim leaderboard reflects the
       // touch. Promoters have no outreach table — skip.
@@ -687,6 +831,7 @@ export function registerCreateClaimInviteTool(
           // included); these flags make the choice filterable here.
           personalNote: Boolean(personal_note?.trim()),
           subjectOverride: Boolean(subject?.trim()),
+          inReplyToInboundEmailId: replyTo?.inboundEmailId ?? null,
         }),
         createdAt: now,
       });
@@ -700,6 +845,9 @@ export function registerCreateClaimInviteTool(
             entityId: entity_id,
             email: targetEmail,
             expiresAt,
+            ...(replyTo
+              ? { inReplyToInboundEmailId: replyTo.inboundEmailId, inboundMarkedReplied: true }
+              : {}),
           }),
         ],
       };

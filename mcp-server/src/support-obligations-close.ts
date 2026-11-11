@@ -29,6 +29,13 @@ export const MANUAL_REPLY_SOURCE = "reply:manual";
 export const OPERATOR_DRAFT_SOURCE = "operator:outbound";
 
 /**
+ * OPE-1627 — `create_claim_invite`'s primary send. It answers an inbound only
+ * when called with `in_reply_to_inbound_email_id`, which is the only time it
+ * carries an `inboundEmailId`; a cold invite has none and closes nothing.
+ */
+export const CLAIM_INVITE_SOURCE = "email:claim-invite";
+
+/**
  * OPE-1252 — the close happens when the send is CONFIRMED, not when it is
  * queued. It used to run in reply_to_inbound_email right after the enqueue, so
  * both live auto-closes landed 7–8 s before their ledger row: a job that then
@@ -43,7 +50,9 @@ export function shouldCloseOnSend(job: {
 }): boolean {
   return (
     !!job.inboundEmailId &&
-    (job.source === MANUAL_REPLY_SOURCE || job.source === OPERATOR_DRAFT_SOURCE)
+    (job.source === MANUAL_REPLY_SOURCE ||
+      job.source === OPERATOR_DRAFT_SOURCE ||
+      job.source === CLAIM_INVITE_SOURCE)
   );
 }
 
@@ -55,7 +64,9 @@ export function closeNoteForSend(
   const how =
     source === OPERATOR_DRAFT_SOURCE
       ? `an approved draft via review_operator_draft (${OPERATOR_DRAFT_SOURCE})`
-      : `a manual reply via reply_to_inbound_email (${MANUAL_REPLY_SOURCE})`;
+      : source === CLAIM_INVITE_SOURCE
+        ? `a threaded claim invite via create_claim_invite (${CLAIM_INVITE_SOURCE})`
+        : `a manual reply via reply_to_inbound_email (${MANUAL_REPLY_SOURCE})`;
   return (
     `Answered by ${how}; ` +
     `email_send_ledger.message_id=${ledgerMessageId}` +
