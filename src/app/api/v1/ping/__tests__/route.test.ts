@@ -30,17 +30,17 @@ vi.mock("@/lib/cloudflare", () => ({ getCloudflareDb: () => db }));
 
 /** A counting limiter with the DO's semantics: fixed window, `limit` hits allowed. */
 function countingLimiter(): BurstLimiter & {
-  seen: Array<{ key: string; limit?: number; periodSeconds?: number }>;
+  seen: Array<{ key: string; max?: number; periodSeconds?: number }>;
 } {
   const n = new Map<string, number>();
-  const seen: Array<{ key: string; limit?: number; periodSeconds?: number }> = [];
+  const seen: Array<{ key: string; max?: number; periodSeconds?: number }> = [];
   return {
     seen,
     async limit(o) {
       seen.push(o);
       const c = (n.get(o.key) ?? 0) + 1;
       n.set(o.key, c);
-      return { success: c <= (o.limit ?? 5), retryAfterSeconds: 1800 };
+      return { success: c <= (o.max ?? 5), retryAfterSeconds: 1800 };
     },
   };
 }

@@ -62,6 +62,7 @@ import {
   supportObligations,
   promoterOnboardingRequests,
   promoterEventFeeds,
+  promoterApiEventRefs,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
@@ -341,6 +342,18 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     expectedWindowHours: 720,
     lastEvidenceAt: (db) =>
       maxTs(db, adminActions, adminActions.createdAt, eq(adminActions.action, "feed.ingested")),
+  },
+  {
+    // OPE-1620 — a promoter's signed API call created, staged or cancel-staged an
+    // event (every write touches promoter_api_event_refs.updated_at). DORMANT
+    // (enabled_at NULL, drizzle/0411) until promoters use the API; 720h is a
+    // PLACEHOLDER — whoever arms it replaces it with the measured cadence.
+    name: "promoter-api-write",
+    ownerOpe: "OPE-1620",
+    label: "/api/v1/promoter/events → promoter_api_event_refs",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) => maxTs(db, promoterApiEventRefs, promoterApiEventRefs.updatedAt),
   },
   {
     // OPE-328 — gemba@ observations queued for an agent to post to Linear.

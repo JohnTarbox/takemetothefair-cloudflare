@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Calendar, FileSpreadsheet, Plus, Settings } from "lucide-react";
+import { Calendar, FileSpreadsheet, KeyRound, Plus, Settings } from "lucide-react";
 import { auth } from "@/lib/auth";
 
 // OPE-87 — the promoter portal is private (auth-gated below). noindex makes that
@@ -17,6 +17,8 @@ const promoterNav = [
   { name: "Create Event", href: "/promoter/events/new", icon: Plus },
   // OPE-1618 — a season of shows from one spreadsheet.
   { name: "Import Spreadsheet", href: "/promoter/events/import", icon: FileSpreadsheet },
+  // OPE-1620 — keys for the signed events API (/help/promoters/api).
+  { name: "API Keys", href: "/promoter/api-keys", icon: KeyRound },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 

@@ -52,6 +52,12 @@ export const EVENT_REVIEW_FLAG_REASONS = [
    * so the import stages them on `promoter_import_rows.proposed_changes`.
    */
   "promoter_import_update",
+  /**
+   * OPE-1620 — the promoter asked, through its API, to cancel this event. The API
+   * never cancels directly: the request is staged on `promoter_import_rows`
+   * (outcome `cancel_staged`) for an operator.
+   */
+  "promoter_cancel_request",
 ] as const;
 export type EventReviewFlagReason = (typeof EVENT_REVIEW_FLAG_REASONS)[number];
 

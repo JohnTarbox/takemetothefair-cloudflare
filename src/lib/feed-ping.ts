@@ -33,9 +33,9 @@ import type { getCloudflareDb } from "@/lib/cloudflare";
 type Db = ReturnType<typeof getCloudflareDb>;
 
 export const PING_LIMITS = {
-  host: { limit: 30, periodSeconds: 3600 },
-  url: { limit: 10, periodSeconds: 3600 },
-  ip: { limit: 300, periodSeconds: 3600 },
+  host: { max: 30, periodSeconds: 3600 },
+  url: { max: 10, periodSeconds: 3600 },
+  ip: { max: 300, periodSeconds: 3600 },
 } as const;
 
 const MAX_BODY_BYTES = 8 * 1024;

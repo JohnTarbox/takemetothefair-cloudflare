@@ -32,6 +32,7 @@ import {
   events,
   promoterImportRows,
   raiseEventReviewFlag,
+  type CitationProvenanceKind,
 } from "@/lib/db/schema";
 import { findDuplicate } from "@/lib/duplicates/find-duplicate";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
@@ -76,7 +77,11 @@ const centsToStr = (c: number | null | undefined) =>
 const dollarsToStr = (d: number | null) => (d === null ? null : d.toFixed(2));
 
 /** The comparable fields: what the row says vs what the event holds. */
-async function diffAgainstEvent(db: Db, eventId: string, v: NonNullable<ImportRow["value"]>) {
+export async function diffAgainstEvent(
+  db: Db,
+  eventId: string,
+  v: NonNullable<ImportRow["value"]>
+) {
   const [e] = await db
     .select({
       name: events.name,
@@ -231,13 +236,24 @@ export interface CommitContext {
   fileHash: string;
   fileName: string | null;
   uploadedBy: string | null;
-  channel: "portal" | "operator";
+  channel: "portal" | "operator" | "api";
   now: Date;
+  /**
+   * OPE-1620 — who the citations name, when it is not a spreadsheet upload (the
+   * promoter API: its key_id and external_id). Omitted → the upload defaults.
+   */
+  source?: {
+    url: string;
+    name: string;
+    provenanceKind: CitationProvenanceKind;
+    notes: Record<string, unknown>;
+  };
 }
 
 const citationSource = (ctx: CommitContext, row: number) =>
   // Not fetchable on purpose: the evidence is the upload, recorded in notes.
-  `promoter-upload:sha256:${ctx.fileHash}#row=${row}`;
+  ctx.source?.url ?? `promoter-upload:sha256:${ctx.fileHash}#row=${row}`;
+const citationName = (ctx: CommitContext) => ctx.source?.name ?? "Promoter spreadsheet upload";
 
 export async function commitRows(
   db: Db,
@@ -277,7 +293,7 @@ async function recordLedger(
   db: Db,
   ctx: CommitContext,
   r: ImportRow,
-  outcome: "created" | "update_staged",
+  outcome: "created" | "update_staged" | "cancel_staged",
   eventId: string | null,
   proposed: PreviewRow["changes"] | null
 ): Promise<boolean> {
@@ -303,6 +319,61 @@ async function recordLedger(
   return res.length > 0;
 }
 
+/**
+ * OPE-1620 — stage a row against an event the caller already resolved (the
+ * promoter API's own external_id → event ref), skipping dedup: a ref names the
+ * event even when the row renames or re-dates it. Same write as an import match.
+ */
+export async function stageUpdateForEvent(
+  db: Db,
+  ctx: CommitContext,
+  r: ImportRow,
+  eventId: string
+): Promise<CommitResult & { changes: NonNullable<PreviewRow["changes"]> }> {
+  const changes = r.value ? await diffAgainstEvent(db, eventId, r.value) : {};
+  const res = await stageUpdate(db, ctx, r, {
+    row: r.rowNumber,
+    status: "match",
+    name: r.raw.name ?? null,
+    start_date: r.value?.startDate ?? null,
+    errors: [],
+    warnings: r.warnings,
+    event: { id: eventId, slug: "", name: "", status: "" },
+    changes,
+  });
+  return { ...res, changes };
+}
+
+/**
+ * OPE-1620 — a promoter's request to cancel its event. Never a write to the
+ * event: the request is staged (outcome `cancel_staged`, proposed status
+ * CANCELLED + the reason) and the event gets a `promoter_cancel_request` flag.
+ * Returns false when this ledger key was already used.
+ */
+export async function stageCancellation(
+  db: Db,
+  ctx: CommitContext,
+  eventId: string,
+  currentStatus: string,
+  reason: string | null
+): Promise<boolean> {
+  const row: ImportRow = {
+    rowNumber: 1,
+    raw: {},
+    errors: [],
+    fieldErrors: [],
+    warnings: [],
+    value: null,
+  };
+  const proposed = {
+    status: { current: currentStatus, proposed: "CANCELLED" },
+    ...(reason ? { reason: { current: null, proposed: reason } } : {}),
+  };
+  if (!(await recordLedger(db, ctx, row, "cancel_staged", eventId, proposed))) return false;
+  await raiseEventReviewFlag(db, eventId, "promoter_cancel_request", ctx.uploadedBy);
+  return true;
+}
+
 async function stageUpdate(
   db: Db,
   ctx: CommitContext,
@@ -318,7 +389,8 @@ async function stageUpdate(
   return { row: r.rowNumber, outcome: "update_staged", event_id: eventId };
 }
 
-async function createEvent(db: Db, ctx: CommitContext, r: ImportRow): Promise<CommitResult> {
+/** Exported for OPE-1620's API, which resolves "new" itself; callers run previewRows first. */
+export async function createEvent(db: Db, ctx: CommitContext, r: ImportRow): Promise<CommitResult> {
   const v = r.value!;
   const baseSlug = createSlug(v.name);
   if (!baseSlug)
@@ -399,7 +471,7 @@ async function createEvent(db: Db, ctx: CommitContext, r: ImportRow): Promise<Co
   await attachEventToSeries(db, eventId, { name: v.name, venueId, promoterId: ctx.promoterId });
   const source = {
     sourceUrl: citationSource(ctx, r.rowNumber),
-    sourceName: "Promoter spreadsheet upload",
+    sourceName: citationName(ctx),
     sourceType: "user_submitted" as const,
     createdBy: ctx.uploadedBy,
   };
@@ -473,6 +545,7 @@ async function citeRow(
     uploaded_by: ctx.uploadedBy,
     uploaded_at: ctx.now.toISOString(),
     channel: ctx.channel,
+    ...(ctx.source?.notes ?? {}),
     ...(unmatchedVenue ? { venue_unmatched: true } : {}),
   });
   const rows = fields
@@ -484,12 +557,12 @@ async function citeRow(
       value,
       year,
       sourceUrl: citationSource(ctx, r.rowNumber),
-      sourceName: "Promoter spreadsheet upload",
+      sourceName: citationName(ctx),
       sourceType: "user_submitted" as const,
       state: "active" as const,
       notes,
       createdBy: ctx.uploadedBy,
-      provenanceKind: "promoter_portal" as const,
+      provenanceKind: ctx.source?.provenanceKind ?? ("promoter_portal" as const),
       createdAt: ctx.now,
     }));
   for (let i = 0; i < rows.length; i += CITATION_CHUNK) {
