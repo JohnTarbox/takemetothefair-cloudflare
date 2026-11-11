@@ -127,6 +127,20 @@ export const FAULT_FAMILIES: readonly FaultFamily[] = [
     guardRef: "mcp-server/src/inbound/classify-retry.ts",
   },
   {
+    // OPE-1626 — an organizer feed failed 5 consecutive reads and the scheduled
+    // reader switched it off (`enabled = 0`, `disabled_reason`). Written once,
+    // at the disabling failure, by mcp-server/src/feeds/run.ts
+    // (FEED_READ_FAILED_FAULT, source `feeds:read-failed`).
+    key: "FAM-FEED-READ-FAILED",
+    title: "Organizer feed auto-disabled after repeated read failures",
+    matchers: ["feed-read-failed:"],
+    rootCauseClass: "feed-read-failed",
+    fixPattern:
+      "check the feed URL / organizer site; fix or re-register, then set_promoter_feed(enabled: true)",
+    guardStatus: "present",
+    guardRef: "mcp-server/src/feeds/run.ts",
+  },
+  {
     // Render throws off an empty/undefined collection (map/reduce/spread/access).
     key: "FAM-EMPTY-COLLECTION",
     title: "Empty-collection render throw",

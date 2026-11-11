@@ -147,7 +147,17 @@ export const CAPABILITY_FLAGS: CapabilityFlag[] = [
     darkMeans:
       "Registered organizer feeds (iCal, Google/Outlook calendars, schema.org pages) are read " +
       "only when an operator runs ingest_promoter_feed; nothing polls them on a schedule, so a " +
-      "changed or cancelled event is caught only on a manual read. Off until John approves (OPE-1617).",
+      "changed or cancelled event is caught only on a manual read. On since OPE-1626 (John " +
+      "approved review-only reading of OHTM's calendar as a pilot).",
+    offIsDeliberate: false,
+  },
+  {
+    name: "WEBSUB_ENABLED",
+    worker: "mcp",
+    darkMeans:
+      "A feed that advertises a WebSub hub is never subscribed to, so its changes reach us " +
+      "only on the next scheduled read or a change ping. Subscribing POSTs to a third-party " +
+      "hub; off until John approves (OPE-1626). Needs FEED_POLLING_ENABLED as well.",
     offIsDeliberate: true,
   },
   {

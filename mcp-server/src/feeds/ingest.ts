@@ -6,7 +6,8 @@
  *  2. link it to an MMATF event (prior link → source_url → same promoter + same
  *     start date + name containment). Unlinked + included → `awaiting_review`.
  *     NOT created as an event in this slice — creation goes through review;
- *  3. for a linked event we PUBLISH (status APPROVED), per tracked field:
+ *  3. for a linked event we PUBLISH (the public reader's gate: APPROVED or
+ *     TENTATIVE with a public lifecycle — OPE-1626), per tracked field:
  *     - a live pin → evaluate it (same wrong value / fixed / third value);
  *     - else a self-contradiction inside the feed item (an AM time whose own
  *       description says PM, a location that is only a state code, a
@@ -28,6 +29,7 @@ import {
   promoterFeedItems,
 } from "../schema.js";
 import { chunkIds, createSlug } from "@takemetothefair/utils";
+import { isPubliclyVisible } from "@takemetothefair/constants";
 import type { Db } from "../db.js";
 import type { FeedEvent } from "./tec.js";
 import { decideInclusion, parseInclusionRules } from "./inclusion.js";
@@ -223,6 +225,21 @@ export interface IngestReport {
     action: "opened" | "refreshed" | "replaced" | "noted" | "pinned_kept";
   }>;
   items: IngestItemReport[];
+}
+
+/**
+ * OPE-1626 — "an event we publish" is the PUBLIC READER's gate, not
+ * `status === "APPROVED"`: editorial APPROVED or TENTATIVE, and a public
+ * lifecycle (`isPubliclyVisible`, the in-memory twin of `publicEventWhere`). A
+ * TENTATIVE event is on the site, so a feed contradicting it is worth asking.
+ */
+async function isPublishedEvent(db: Db, eventId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ status: events.status, lifecycle: events.lifecycleStatus })
+    .from(events)
+    .where(eq(events.id, eventId))
+    .limit(1);
+  return !!row && isPubliclyVisible(row.status, row.lifecycle ?? "SCHEDULED");
 }
 
 /** A comparison key, not a stored slug: createSlug (#120) with the hyphens dropped. */
@@ -474,14 +491,7 @@ export async function ingestFeedItems(
       }
     }
 
-    if (link.eventId) {
-      const [row] = await db
-        .select({ status: events.status })
-        .from(events)
-        .where(eq(events.id, link.eventId))
-        .limit(1);
-      item.published = row?.status === "APPROVED";
-    }
+    if (link.eventId) item.published = await isPublishedEvent(db, link.eventId);
 
     // Discrepancies only for events we publish (the ruling).
     if (item.published && link.eventId) {
@@ -652,12 +662,7 @@ async function detectDropped(
     if (seen.has(c.externalId)) continue;
     let action: IngestReport["dropped"][number]["action"] = "noted";
     if (c.eventId) {
-      const [row] = await db
-        .select({ status: events.status })
-        .from(events)
-        .where(eq(events.id, c.eventId))
-        .limit(1);
-      if (row?.status === "APPROVED") {
+      if (await isPublishedEvent(db, c.eventId)) {
         const ours = await readEventFieldValues(db, c.eventId);
         const pin = await getActivePin(db, c.eventId, "status");
         if (pin) {

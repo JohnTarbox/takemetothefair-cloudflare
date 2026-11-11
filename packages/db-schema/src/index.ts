@@ -6722,6 +6722,14 @@ export const promoterEventFeeds = sqliteTable(
     pingRequestedAt: integer("ping_requested_at", { mode: "timestamp" }),
     lastPingedAt: integer("last_pinged_at", { mode: "timestamp" }),
     pingCount: integer("ping_count").notNull().default(0),
+    // OPE-1626 (drizzle/0413) — the scheduled reader.
+    /** While set, a read may open discrepancies but no question batch / operator draft is composed. */
+    questionsHold: integer("questions_hold", { mode: "boolean" }).notNull().default(false),
+    /** Why the feed was switched off (auto-disable after FEED_AUTO_DISABLE_AFTER failures, or an operator). */
+    disabledReason: text("disabled_reason"),
+    disabledAt: integer("disabled_at", { mode: "timestamp" }),
+    /** The last read that succeeded (ingested or 304) — the feed-reader probe's staleness clock. */
+    lastOkAt: integer("last_ok_at", { mode: "timestamp" }),
     createdBy: text("created_by"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
@@ -6790,6 +6798,36 @@ export const feedPingCounts = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.day, t.channel, t.outcome] })]
+);
+
+/**
+ * OPE-1626 (drizzle/0413) — one row per real (non-dry) read of a feed: what
+ * triggered it, how it ended, and the ingest counts. Kept to the newest
+ * FEED_READ_LOG_KEEP rows per feed, pruned by the writer.
+ */
+export const promoterFeedReads = sqliteTable(
+  "promoter_feed_reads",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    feedId: text("feed_id")
+      .notNull()
+      .references(() => promoterEventFeeds.id, { onDelete: "cascade" }),
+    startedAt: integer("started_at", { mode: "timestamp" }).notNull(),
+    finishedAt: integer("finished_at", { mode: "timestamp" }),
+    triggeredBy: text("triggered_by", { enum: ["schedule", "ping", "manual"] }).notNull(),
+    outcome: text("outcome", { enum: ["ok", "not_modified", "error", "skipped"] }).notNull(),
+    httpStatus: integer("http_status"),
+    itemsRead: integer("items_read").notNull().default(0),
+    included: integer("included").notNull().default(0),
+    linked: integer("linked").notNull().default(0),
+    awaitingReview: integer("awaiting_review").notNull().default(0),
+    discrepancies: integer("discrepancies").notNull().default(0),
+    thirdValues: integer("third_values").notNull().default(0),
+    error: text("error"),
+  },
+  (t) => [index("idx_promoter_feed_reads_feed").on(t.feedId, t.startedAt)]
 );
 
 export const promoterFeedItems = sqliteTable(

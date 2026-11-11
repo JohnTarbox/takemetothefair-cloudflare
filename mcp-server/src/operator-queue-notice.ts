@@ -47,6 +47,8 @@ import {
   emailSendLedger,
   operatorOutboundDrafts,
   inboundEmails,
+  promoterEventFeeds,
+  promoterFeedItems,
   supportObligations,
   users,
   tunableThresholds,
@@ -223,6 +225,13 @@ export interface OperatorQueueCounts {
    */
   approvedUnsentDrafts: number;
   /**
+   * OPE-1626 — organizer-feed items a read marked `awaiting_review`: a new
+   * event on a promoter's own calendar that matched none of ours. The scheduled
+   * reader finds them unattended, so this line is how they reach John. Counted
+   * for enabled feeds, items still on the feed, starting today or later.
+   */
+  feedItemsAwaitingReview: number;
+  /**
    * OPE-1510 — open contact obligations past their one-business-day target.
    * Each is a known contact John owes a reply to, already late.
    */
@@ -258,6 +267,7 @@ export function decideOperatorQueueNotice(
     | "unpinnedVenueImminent"
     | "contactObligationsPastTarget"
     | "approvedUnsentDrafts"
+    | "feedItemsAwaitingReview"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -291,6 +301,7 @@ export function totalWaiting(
     | "unpinnedVenueImminent"
     | "contactObligationsPastTarget"
     | "approvedUnsentDrafts"
+    | "feedItemsAwaitingReview"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -325,7 +336,9 @@ export function totalWaiting(
     // OPE-1510 — `?? 0` for the same reason.
     (counts.contactObligationsPastTarget ?? 0) +
     // OPE-1605 — `?? 0` for the same reason.
-    (counts.approvedUnsentDrafts ?? 0)
+    (counts.approvedUnsentDrafts ?? 0) +
+    // OPE-1626 — `?? 0` for the same reason.
+    (counts.feedItemsAwaitingReview ?? 0)
   );
 }
 
@@ -532,6 +545,39 @@ export async function readOperatorQueues(
     }
   } catch {
     // Same reason as the pending count above: never take the notice down.
+  }
+
+  // OPE-1626 — new events on an organizer's own feed, waiting for review.
+  // Standing depth (a work queue, like the drafts above); the OPE-1585 change
+  // gate keeps an unchanged count from repeating. Future items only, so a
+  // past event nobody reviewed drops off instead of sitting here forever.
+  let feedItemsAwaitingReview = 0;
+  try {
+    const today = now.toISOString().slice(0, 10);
+    const rows = await db
+      .select({ feedId: promoterFeedItems.feedId, n: sql<number>`count(*)` })
+      .from(promoterFeedItems)
+      .innerJoin(promoterEventFeeds, eq(promoterEventFeeds.id, promoterFeedItems.feedId))
+      .where(
+        and(
+          eq(promoterFeedItems.reviewState, "awaiting_review"),
+          isNull(promoterFeedItems.missingSince),
+          eq(promoterEventFeeds.enabled, true),
+          gte(promoterFeedItems.startLocal, today)
+        )
+      )
+      .groupBy(promoterFeedItems.feedId);
+    feedItemsAwaitingReview = rows.reduce((a, r) => a + Number(r.n ?? 0), 0);
+    if (feedItemsAwaitingReview > 0) {
+      lines.push(
+        `${feedItemsAwaitingReview} new organizer-feed event(s) awaiting review across ` +
+          `${rows.length} feed(s) — on a promoter's own calendar, matching none of ours; ` +
+          `nothing is created until reviewed (promoter_feed_items, review_state ` +
+          `awaiting_review) (OPE-1626).`
+      );
+    }
+  } catch {
+    // Observability must not take the notice down with it.
   }
 
   // OPE-761 — inbound mail hibernating on the workflow's `admin-decision`
@@ -910,6 +956,7 @@ export async function readOperatorQueues(
     unpinnedVenueImminent,
     contactObligationsPastTarget,
     approvedUnsentDrafts,
+    feedItemsAwaitingReview,
     unpinnedVenueExamined,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
@@ -985,6 +1032,7 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
       unpinnedVenueImminent: counts.unpinnedVenueImminent,
       contactObligationsPastTarget: counts.contactObligationsPastTarget,
       approvedUnsentDrafts: counts.approvedUnsentDrafts,
+      feedItemsAwaitingReview: counts.feedItemsAwaitingReview,
     },
     severity: ageBucket(counts.oldestDays),
   };

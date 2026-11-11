@@ -177,8 +177,10 @@ type Env = WorkerEnv &
      * to admin; only the outbound question is withheld.
      */
     UNROUTED_ASK_ENABLED?: string;
-    /** OPE-1617 — scheduled organizer-feed polling. Ships "false". */
+    /** OPE-1617 — scheduled organizer-feed polling. On since OPE-1626 (the OHTM pilot). */
     FEED_POLLING_ENABLED?: string;
+    /** OPE-1626 — WebSub subscribe/renew; needs FEED_POLLING_ENABLED too. Ships "false". */
+    WEBSUB_ENABLED?: string;
     INDEXNOW_PINGS?: Queue;
     // GW1.1 (2026-06-03) — ingest_addverify discrepancy capture. Producer
     // here is used by the /api/admin/internal/enqueue-discrepancy proxy

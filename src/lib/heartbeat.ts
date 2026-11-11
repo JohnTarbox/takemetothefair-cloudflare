@@ -111,6 +111,30 @@ export function demandConditionalEvidence(
   return demand;
 }
 
+/** OPE-1626 — the feed-reader probe's own window: a deadline offset, not a cadence. */
+export const FEED_READER_WINDOW_HOURS = 1;
+
+/**
+ * OPE-1626 — the feed-reader probe's evidence. Each enabled feed is due a
+ * successful read by `(last_ok_at ?? created_at) + 2 × poll_interval_hours`.
+ * Returns the earliest such deadline minus FEED_READER_WINDOW_HOURS, so the
+ * generic silence check (now − evidence > window) is red exactly when some
+ * feed is past its deadline. No enabled feed → `now` (healthy).
+ */
+export function feedReaderEvidence(
+  feeds: Array<{ lastOkAt: Date | null; createdAt: Date; pollIntervalHours: number }>,
+  now: Date
+): Date {
+  let earliest = Infinity;
+  for (const f of feeds) {
+    const from = (f.lastOkAt ?? f.createdAt).getTime();
+    const deadline = from + 2 * Math.max(1, f.pollIntervalHours) * MS_PER_HOUR;
+    earliest = Math.min(earliest, deadline);
+  }
+  if (!Number.isFinite(earliest)) return now;
+  return new Date(Math.min(now.getTime(), earliest - FEED_READER_WINDOW_HOURS * MS_PER_HOUR));
+}
+
 async function maxTs(
   db: Db,
   table: SQLiteTable,
@@ -332,9 +356,10 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
-    // OPE-1613 — an operator read a promoter's own event feed (ingest_promoter_feed,
-    // non-dry-run). DORMANT (enabled_at NULL, drizzle/0406): feeds are read by hand
-    // until a schedule exists; arm it with a measured window when one ships.
+    // OPE-1613 — a promoter's own event feed was read and ingested (manual
+    // ingest_promoter_feed or, since OPE-1626, the scheduler; a 304 writes no row).
+    // Armed 2026-11-11 by drizzle/0413 when polling went on. 720h is still a
+    // PLACEHOLDER: re-measure the feed.ingested gap once weeks of reads exist.
     name: "organizer-feed-ingest",
     ownerOpe: "OPE-1613",
     label: "ingest_promoter_feed → feed.ingested",
@@ -2568,9 +2593,8 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // outstanding ping reads healthy now; an outstanding one starts the clock
     // at the OLDEST ping still waiting. 1h = six passes missed.
     //
-    // Seeded DORMANT (drizzle/0412, enabled_at NULL): with FEED_POLLING_ENABLED
-    // "false" pings are recorded and never read, so every ping would sit
-    // outstanding. Set enabled_at the day the flag flips.
+    // Seeded DORMANT (drizzle/0412, enabled_at NULL) while FEED_POLLING_ENABLED
+    // was "false"; armed 2026-11-11 by drizzle/0413 when the flag flipped.
     name: "feed-change-ping",
     ownerOpe: "OPE-1621",
     label: "a pinged organizer feed is re-read within the hour",
@@ -2583,6 +2607,32 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         .where(eq(promoterEventFeeds.enabled, true));
       const oldest = r?.oldest != null ? new Date(Number(r.oldest) * 1000) : null;
       return demandConditionalEvidence(oldest, null, new Date());
+    },
+  },
+  {
+    // OPE-1626 — per-feed staleness: every ENABLED feed has had a successful
+    // read (ingested or 304, `last_ok_at`) within 2× its own poll interval.
+    // Job liveness is organizer-feed-poll's (3h), so this does not repeat it.
+    // Intervals differ per feed (1–168h), so the evidence is synthetic: the
+    // earliest feed deadline minus this probe's 1h window — red exactly when a
+    // deadline has passed (feedReaderEvidence). No enabled feed reads healthy.
+    // A feed never read starts its clock at registration. An auto-disabled
+    // feed leaves the probe (it is not enabled); its fault row reports it.
+    name: "feed-reader",
+    ownerOpe: "OPE-1626",
+    label: "every enabled organizer feed read successfully within 2× its poll interval",
+    priority: "P1",
+    expectedWindowHours: FEED_READER_WINDOW_HOURS,
+    lastEvidenceAt: async (db) => {
+      const rows = await db
+        .select({
+          lastOkAt: promoterEventFeeds.lastOkAt,
+          createdAt: promoterEventFeeds.createdAt,
+          pollIntervalHours: promoterEventFeeds.pollIntervalHours,
+        })
+        .from(promoterEventFeeds)
+        .where(eq(promoterEventFeeds.enabled, true));
+      return feedReaderEvidence(rows, new Date());
     },
   },
   {

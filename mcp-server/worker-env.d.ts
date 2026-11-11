@@ -28,6 +28,7 @@ interface __BaseEnv_WorkerEnv {
   PHOTO_AUTOWRITE_ENABLED: string;
   REPLAY_COMMIT_ENABLED: string;
   FEED_POLLING_ENABLED: string;
+  WEBSUB_ENABLED: string;
   SUBMIT_ADMIN_FORWARD: string;
   MCP_OBJECT: DurableObjectNamespace<import("./src/index").MeetMeAtTheFairMCP>;
   BURST_COUNTER: DurableObjectNamespace<import("./src/index").BurstCounter>;
