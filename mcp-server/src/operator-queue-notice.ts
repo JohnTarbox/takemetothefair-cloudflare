@@ -52,7 +52,10 @@ import {
   supportObligations,
   users,
   tunableThresholds,
+  loadFeedLaneMetrics,
+  feedLaneDigestLine,
 } from "@takemetothefair/db-schema";
+import { publicEventWhere } from "./helpers.js";
 import type { Env } from "./index.js";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
@@ -576,6 +579,22 @@ export async function readOperatorQueues(
           `awaiting_review) (OPE-1626).`
       );
     }
+  } catch {
+    // Observability must not take the notice down with it.
+  }
+
+  // OPE-1632 — one summary line for the feed lane (health, backlog age, new to
+  // us), from the same numbers get_feed_lane_metrics and the /admin tile show.
+  // Body text only: the OPE-1585 change gate compares per-queue COUNTS, so the
+  // age in this line changing daily does not, by itself, make the digest send.
+  // Only written when a feed is registered, so a lane with no feeds says nothing.
+  try {
+    const metrics = await loadFeedLaneMetrics(db, {
+      now,
+      publicWhere: publicEventWhere(),
+      windowDays: 30,
+    });
+    if (metrics.feeds.registered > 0) lines.push(feedLaneDigestLine(metrics));
   } catch {
     // Observability must not take the notice down with it.
   }

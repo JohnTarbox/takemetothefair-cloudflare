@@ -7867,6 +7867,8 @@ export * from "./promoter-contacts";
 export * from "./org-domains";
 // OPE-1621 — change pings (main-app /api/v1/ping + MCP WebSub callback).
 export * from "./feed-ping";
+// OPE-1632 — feed-lane funnel metrics (MCP tool, /admin tile, digest line).
+export * from "./feed-lane-metrics";
 export * from "./gallery-photos";
 // OPE-759 — the hours-review rule, shared because event_days has five writers.
 export * from "./hours-review-flag";
