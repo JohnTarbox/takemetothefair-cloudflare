@@ -2,7 +2,7 @@
  * OPE-1621 — `POST /api/v1/ping`: an organizer's site says a page or feed
  * changed, and we re-read it soon. Public and unauthenticated; the response is
  * always `202 {"ok":true}` (or 400 / 429). See src/lib/feed-ping.ts and
- * /help/promoter-change-ping.
+ * /help/promoter-change-ping once FEED_POLLING_ENABLED is on (draft: docs/promoter-change-ping.md).
  */
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareDb } from "@/lib/cloudflare";
