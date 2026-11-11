@@ -83,7 +83,8 @@ import { runScheduledFullDuplicateSweep } from "./full-duplicate-sweep-cron.js";
 import { runScheduledCiTriggerWatchdog } from "./ci-trigger-watchdog.js";
 import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledPendingContactAttach } from "./inbound/pending-promoter-contact-attach.js";
-import { runScheduledFeedPoll } from "./feeds/schedule.js";
+import { runScheduledFeedPoll, runScheduledPingedFeedPass } from "./feeds/schedule.js";
+import { WEBSUB_CALLBACK_PATH, handleWebSubCallback } from "./feeds/websub.js";
 import { runScheduledPromoterOnboarding } from "./inbound/promoter-onboarding.js";
 import { runScheduledRepliedLedgerCheck } from "./inbound/replied-without-ledger.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
@@ -1808,6 +1809,9 @@ export default {
           ["promoter-onboarding", () => runScheduledPromoterOnboarding(env)],
           // OPE-1239 — main's HEAD must have a push CI run (else it never deployed).
           ["ci-trigger-watchdog", () => runScheduledCiTriggerWatchdog(env)],
+          // OPE-1621 — re-read feeds a change ping marked due; reads nothing
+          // unless FEED_POLLING_ENABLED = "true" (pings stay recorded).
+          ["pinged-feed-pass", () => runScheduledPingedFeedPass(env)],
         ]).then(() => undefined)
       );
       return;
@@ -2230,6 +2234,13 @@ export default {
         }),
         { headers: { "Content-Type": "application/json" } }
       );
+    }
+
+    // OPE-1621 — WebSub callback for organizer-feed hubs. Public by design: the
+    // GET only confirms a subscription we have pending, and a POST only marks a
+    // feed due after its HMAC signature checks out (the body is never parsed).
+    if (url.pathname.startsWith(WEBSUB_CALLBACK_PATH)) {
+      return handleWebSubCallback(request, getDb(env.DB));
     }
 
     // Legacy mmatf_ tokens bypass OAuth and use the stateless handler

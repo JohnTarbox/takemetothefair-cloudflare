@@ -157,6 +157,8 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   // OPE-1205 — daily sync-staleness sweep; one admin_actions row per run.
   "cron:runScheduledPendingContactAttach": { probes: ["pending-contact-attach"] },
   "cron:runScheduledFeedPoll": { probes: ["organizer-feed-poll"] },
+  // OPE-1621 — */10 pass over feeds a change ping (or WebSub notification) marked due.
+  "cron:runScheduledPingedFeedPass": { probes: ["feed-change-ping"] },
   "cron:runScheduledPromoterOnboarding": { probes: ["promoter-onboarding"] },
   "cron:runScheduledRepliedLedgerCheck": { probes: ["replied-ledger-check"] },
   "cron:runScheduledSyncStaleSweep": { probes: ["sync-stale-sweep"] },

@@ -385,6 +385,10 @@ Because we aggregate events from public sources, occasional drift happens — a 
 
 const PROMOTER_SYNDICATION = `Yes — and that's good for you. Meet Me at the Fair offers a syndication system that lets approved partner sites mirror event data with live, signed updates, so listings stay correct wherever they appear. If you (or your web developer) want your own site to stay in sync with your Meet Me at the Fair listings, see the [Event Data Syndication developer guide](/help/event-data-syndication-developer-guide).`;
 
+// OPE-1621 — the change ping. Code samples are 4-space indented (see the
+// header note); the PHP has no `${`, so it is safe inside this template literal.
+
+
 // --- For Venues (placeholder — no seed content yet) ------------------------
 
 const VENUE_COMING_SOON = `We're building help guides for venue owners and managers — how your venue pages work, what shows there, and how to keep your listing accurate.

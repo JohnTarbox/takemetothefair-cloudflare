@@ -218,6 +218,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "pending-contact-attach": 3,
       // OPE-1617 — hourly poll, one info row per run even with the flag off.
       "organizer-feed-poll": 3,
+      // OPE-1621 — oldest outstanding change ping; the pass runs every 10 min.
+      "feed-change-ping": 1,
       "promoter-onboarding": 3,
       "replied-ledger-check": 3,
       // OPE-1239 — */10 cron, run row at most hourly; three missed before it pages.
