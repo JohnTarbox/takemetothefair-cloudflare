@@ -6,6 +6,8 @@ import {
   RULE_PAGE_SIZE,
   RULE_PREVIEW_LIMIT,
   ruleRowWindow,
+  RULE_ROW_COLLATOR,
+  sortRuleRowsByLabel,
 } from "../rule-row-window";
 
 describe("ruleRowWindow (OPE-1574)", () => {
@@ -103,8 +105,12 @@ describe("Recommendations tab renders a window, not every item (OPE-1574)", () =
     expect(tab).toContain("<RecommendationActions itemId={item.itemId} />");
   });
 
-  it("every `[...group.items]` row list is sliced by the window before .map", () => {
-    const lists = [...tab.matchAll(/\[\.\.\.group\.items\]([\s\S]*?)\.map\(\(item\)/g)];
+  it("every per-rule row list is sliced by the window before .map", () => {
+    const lists = [
+      ...tab.matchAll(
+        /(?:\[\.\.\.group\.items\]|sortRuleRowsByLabel\(group\.items)([\s\S]*?)\.map\(\(item\)/g
+      ),
+    ];
     // Landmark: the per-rule row list exists, so a zero here is a broken matcher.
     expect(lists.length).toBeGreaterThanOrEqual(1);
     for (const m of lists) {
@@ -114,5 +120,54 @@ describe("Recommendations tab renders a window, not every item (OPE-1574)", () =
 
   it("does not map group.items directly to rows anywhere in the tab", () => {
     expect(tab).not.toMatch(/group\.items\s*\.map\(/);
+  });
+
+  // Server-time half: a localeCompare with an options bag builds a collator per
+  // call; over the 24K-row vendor rule that sort alone cost seconds of CPU.
+  it("sorts rule rows with the shared collator, not localeCompare(options)", () => {
+    // Landmark: the shared helper is what the row list uses.
+    expect(tab).toContain("sortRuleRowsByLabel(group.items, targetLabel)");
+    expect(tab).not.toMatch(/localeCompare\([^)]*,\s*undefined\s*,\s*\{/);
+  });
+});
+
+describe("sortRuleRowsByLabel (OPE-1574 server-time half)", () => {
+  const rows = ["item 10", "Item 9", "apple", "Äpple", "item 2", "banana"].map((label, i) => ({
+    label,
+    i,
+  }));
+
+  it("orders exactly as the old per-call localeCompare comparator did", () => {
+    const old = [...rows].sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true })
+    );
+    const got = sortRuleRowsByLabel(rows, (r) => r.label);
+    expect(got.map((r) => r.label)).toEqual(old.map((r) => r.label));
+    // Positive landmark: numeric collation is actually on (2 < 9 < 10).
+    expect(got.map((r) => r.label).filter((l) => /^item/i.test(l))).toEqual([
+      "item 2",
+      "Item 9",
+      "item 10",
+    ]);
+  });
+
+  it("keeps input order for labels the collator calls equal, and does not mutate", () => {
+    const tied = [
+      { label: "apple", id: "first" },
+      { label: "APPLE", id: "second" },
+    ];
+    expect(RULE_ROW_COLLATOR.compare("apple", "APPLE")).toBe(0);
+    expect(sortRuleRowsByLabel(tied, (r) => r.label).map((r) => r.id)).toEqual(["first", "second"]);
+    expect(tied[0].id).toBe("first");
+  });
+
+  it("computes each label once per row, not per comparison", () => {
+    let calls = 0;
+    const many = Array.from({ length: 500 }, (_, i) => ({ label: `v${(i * 7919) % 500}` }));
+    sortRuleRowsByLabel(many, (r) => {
+      calls++;
+      return r.label;
+    });
+    expect(calls).toBe(500);
   });
 });
