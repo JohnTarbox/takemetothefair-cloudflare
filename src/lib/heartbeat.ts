@@ -2636,6 +2636,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     },
   },
   {
+    // OPE-1633 — proof the hourly feed poll still EVALUATES feed health. The
+    // flags table is rightly empty while every feed is healthy, so the evidence
+    // is the one info row each hourly run writes under `feeds:health-eval`
+    // after the freshness pass (mcp-server/src/feeds/schedule.ts). 3h = three
+    // missed hourly runs. Polling is on (OPE-1626), so it is live from ship.
+    name: "feed-health-eval",
+    ownerOpe: "OPE-1633",
+    label: "the hourly feed poll evaluated every enabled feed's health",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: async (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "feeds:health-eval"), eq(errorLogs.level, "info"))
+      ),
+  },
+  {
     // OPE-1610 — proof the hourly pending-contact attach job still RUNS. Most
     // runs attach nothing, so it writes one info row per run. 3h = three runs
     // missed. Literal source: the job lives in the MCP Worker.
