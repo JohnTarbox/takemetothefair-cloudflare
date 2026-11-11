@@ -233,19 +233,45 @@ function formatAge(hoursInRed: number): string {
  * `n === 1` is left as its own title on purpose: "Render fault: /events/x" is
  * more useful than "<error class> — 1 route".
  */
+/**
+ * OPE-1628 — platform incidents whose error class varies by QUERY SHAPE.
+ *
+ * OPE-81's normalisation keeps the SQL skeleton in `error_class`, so one D1
+ * "overloaded" episode mints a class per query: on 2026-11-11 the ledger held
+ * 1,645 overload rows across 1,011 classes, and grouping by class still printed
+ * ~1,000 lines — a 327,577-byte digest the queue refused (limit 128,000), so no
+ * stale-red mail went out for five days. A class matching one of these is
+ * grouped under the FAMILY instead: one line per platform incident.
+ */
+export const DIGEST_INCIDENT_FAMILIES: ReadonlyArray<{ pattern: RegExp; label: string }> = [
+  {
+    pattern: /d1 db is overloaded|too many resources consumed/i,
+    label: "D1 overloaded (platform incident)",
+  },
+];
+
+/** The digest collapse key for a red: its incident family, else its error class. */
+export function digestGroupKey(r: Pick<StaleRed, "groupKey">): string | undefined {
+  if (!r.groupKey) return undefined;
+  const family = DIGEST_INCIDENT_FAMILIES.find((f) => f.pattern.test(r.groupKey!));
+  return family ? family.label : r.groupKey;
+}
+
 export function groupForDigest(reds: StaleRed[]): StaleRed[] {
   const out: StaleRed[] = [];
-  const seen = new Map<string, number>(); // groupKey → index in `out`
+  const seen = new Map<string, number>(); // collapse key → index in `out`
 
   for (const r of reds) {
-    if (!r.groupKey) {
+    const key = digestGroupKey(r);
+    if (!key) {
       out.push(r);
       continue;
     }
-    const at = seen.get(r.groupKey);
+    const at = seen.get(key);
     if (at === undefined) {
-      seen.set(r.groupKey, out.length);
-      out.push({ ...r });
+      seen.set(key, out.length);
+      // A family line names the family even when only one class is in it.
+      out.push(key === r.groupKey ? { ...r } : { ...r, groupKey: key, title: `${key} — 1 route` });
       continue;
     }
     const head = out[at];
@@ -258,7 +284,7 @@ export function groupForDigest(reds: StaleRed[]): StaleRed[] {
       // failure this ticket is about.
       priority: head.priority === "P0" || r.priority === "P0" ? "P0" : "P1",
       hoursInRed: Math.max(head.hoursInRed, r.hoursInRed),
-      title: `${r.groupKey} — ${count} routes`,
+      title: `${key} — ${count} routes`,
     };
   }
   return out;
@@ -270,6 +296,28 @@ export function groupForDigest(reds: StaleRed[]): StaleRed[] {
  * (`${baseUrl}${href}`). `ActionQueueEntry` doesn't carry the current-value or
  * target strings, so title + priority + age + link is the full available shape.
  */
+/**
+ * OPE-1628 — the digest is ONE Cloudflare Queues message, and Queues rejects a
+ * message over 128,000 bytes. The budget leaves room for the envelope
+ * (recipient, source, JSON quoting) around subject + html + text.
+ */
+export const DIGEST_MAX_BYTES = 100_000;
+/** Fault-class lines printed before "…and K more". Non-fault reds are never capped. */
+export const DIGEST_MAX_FAULT_LINES = 40;
+
+const utf8Bytes = (s: string) => new TextEncoder().encode(s).length;
+
+/** subject + html + text, in UTF-8 bytes — what the queue message carries. */
+export function digestBytes(d: { subject: string; text: string; html: string }): number {
+  return utf8Bytes(d.subject) + utf8Bytes(d.html) + utf8Bytes(d.text);
+}
+
+/**
+ * OPE-1628 — bounded. Every non-fault red (KPI, queue freeze, heartbeat — no
+ * `groupKey`) is always printed; fault-class lines are capped at
+ * `DIGEST_MAX_FAULT_LINES`, then halved until the message fits
+ * `DIGEST_MAX_BYTES`, with a "…and K more" line pointing at the faults tile.
+ */
 export function formatStaleRedDigest(
   reds: StaleRed[],
   baseUrl: string
@@ -278,6 +326,31 @@ export function formatStaleRedDigest(
   // preserved from `reds` (already sorted longest-red first), so a group takes
   // the position of its oldest member.
   const grouped = groupForDigest(reds);
+  let faultCap = DIGEST_MAX_FAULT_LINES;
+  for (;;) {
+    const d = renderDigest(reds, grouped, baseUrl, faultCap);
+    if (digestBytes(d) <= DIGEST_MAX_BYTES || faultCap === 0) return d;
+    faultCap = Math.floor(faultCap / 2);
+  }
+}
+
+function renderDigest(
+  reds: StaleRed[],
+  grouped: StaleRed[],
+  baseUrl: string,
+  faultCap: number
+): { subject: string; text: string; html: string } {
+  // Non-fault reds first and always; P0 fault lines before P1, longest red first.
+  const nonFault = grouped.filter((r) => !r.groupKey);
+  const faults = grouped
+    .filter((r) => r.groupKey)
+    .sort((a, b) =>
+      a.priority === b.priority ? b.hoursInRed - a.hoursInRed : a.priority === "P0" ? -1 : 1
+    );
+  const shownFaults = faults.slice(0, faultCap);
+  const hidden = faults.slice(faultCap);
+  const hiddenSignals = hidden.reduce((n, r) => n + (r.groupCount ?? 1), 0);
+  const shown = [...nonFault, ...shownFaults];
 
   // OPE-1096 — the subject counts LINES, not signals, because the subject is a
   // promise about the body. It read "239 dashboard signals stuck red" over a
@@ -308,13 +381,24 @@ export function formatStaleRedDigest(
     "is still standing. Render faults are listed here but do not trigger a send on " +
     "their own, because their signatures rotate.";
 
-  const textLines = grouped.map(
+  const moreHref = resolveDigestHref(base, "/admin/analytics#render-fault-health");
+  const more = hidden.length
+    ? `…and ${hidden.length} more render-fault line${hidden.length === 1 ? "" : "s"} (${hiddenSignals} signal${hiddenSignals === 1 ? "" : "s"}), not listed to keep this message under the queue's size limit.`
+    : null;
+  const textLines = shown.map(
     (r) =>
       `• [${r.priority}] ${r.title} — red ${formatAge(r.hoursInRed)}\n  ${resolveDigestHref(base, r.href)}`
   );
-  const text = [intro, "", ...textLines, "", outro].join("\n");
+  const text = [
+    intro,
+    "",
+    ...textLines,
+    ...(more ? [`• ${more}\n  ${moreHref}`] : []),
+    "",
+    outro,
+  ].join("\n");
 
-  const htmlItems = grouped
+  const htmlItems = shown
     .map(
       (r) =>
         // OPE-1392 (TPL-3) — `title` is derived from request paths and error
@@ -323,7 +407,10 @@ export function formatStaleRedDigest(
         `(<a href="${escapeHtml(resolveDigestHref(base, r.href))}">open</a>)</li>`
     )
     .join("");
-  const html = `<p>${intro}</p><ul>${htmlItems}</ul><p>${outro}</p>`;
+  const moreItem = more
+    ? `<li>${escapeHtml(more)} (<a href="${escapeHtml(moreHref)}">open</a>)</li>`
+    : "";
+  const html = `<p>${intro}</p><ul>${htmlItems}${moreItem}</ul><p>${outro}</p>`;
 
   return { subject, text, html };
 }
