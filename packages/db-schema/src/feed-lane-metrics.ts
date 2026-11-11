@@ -22,12 +22,13 @@
  * item with an event, and `matched_outside_filter` names the excluded ones;
  * "dropped" is excluded AND unmatched (review_state = 'dropped').
  */
-import { and, eq, gte, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, isNull, sql, type SQL } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "./index";
 import {
   eventDiscrepancies,
   events,
+  feedHealthFlags,
   promoterEventFeeds,
   promoterFeedItems,
   promoters,
@@ -100,8 +101,18 @@ export interface CoverageRow {
   feedLinked: boolean;
 }
 
+/** OPE-1633 — one OPEN feed health flag (feed_health_flags, cleared_at IS NULL). */
+export interface FeedHealthFlagRow {
+  feedId: string;
+  check: string;
+  detail: string | null;
+  firstSeenAt: Date;
+}
+
 export interface FeedLaneInput {
   now: Date;
+  /** OPE-1633 — open health flags; omitted = none. */
+  flags?: FeedHealthFlagRow[];
   windowDays: number;
   targetDays?: number;
   feeds: FeedRow[];
@@ -157,6 +168,14 @@ export interface FeedLaneMetrics {
     enabled: number;
     healthy: number;
     healthy_rule: string;
+    /** OPE-1633 — open health flags on ENABLED feeds, oldest first. */
+    open_health_flags: Array<{
+      feed_id: string;
+      promoter: string | null;
+      check: string;
+      detail: string | null;
+      first_seen_at: string;
+    }>;
   };
   total: FeedLaneSection;
   coverage: {
@@ -397,6 +416,7 @@ export function buildFeedLaneMetrics(input: FeedLaneInput): FeedLaneMetrics {
   const healthyFeeds = input.feeds.filter((f) => isFeedHealthy(f, now));
   const healthyPromoters = new Set(healthyFeeds.map((f) => f.promoterId));
   const feedPromoter = new Map(input.feeds.map((f) => [f.id, f.promoterId]));
+  const feedName = new Map(input.feeds.map((f) => [f.id, f.promoterName]));
 
   const total = buildSection(input.items, enabledIds, input.changes, now, since, targetDays);
 
@@ -430,6 +450,16 @@ export function buildFeedLaneMetrics(input: FeedLaneInput): FeedLaneMetrics {
       enabled: enabledIds.size,
       healthy: healthyFeeds.length,
       healthy_rule: `enabled, and last_ok_at within max(${HEALTHY_MIN_HOURS}h, ${HEALTHY_POLL_MULTIPLE} × poll_interval_hours)`,
+      open_health_flags: (input.flags ?? [])
+        .filter((fl) => enabledIds.has(fl.feedId))
+        .sort((a, b) => a.firstSeenAt.getTime() - b.firstSeenAt.getTime())
+        .map((fl) => ({
+          feed_id: fl.feedId,
+          promoter: feedName.get(fl.feedId) ?? null,
+          check: fl.check,
+          detail: fl.detail,
+          first_seen_at: fl.firstSeenAt.toISOString(),
+        })),
     },
     total,
     coverage: {
@@ -477,13 +507,27 @@ export function buildFeedLaneMetrics(input: FeedLaneInput): FeedLaneMetrics {
   };
 }
 
+/** "1 health flag open (Gurley Antique Shows: volume_drop)" — OPE-1633. Pure. */
+export function feedHealthFlagsText(m: FeedLaneMetrics, maxNamed = 3): string | null {
+  const flags = m.feeds.open_health_flags ?? [];
+  if (flags.length === 0) return null;
+  const named = flags
+    .slice(0, maxNamed)
+    .map((f) => `${f.promoter ?? f.feed_id}: ${f.check}`)
+    .join("; ");
+  const more = flags.length > maxNamed ? `; +${flags.length - maxNamed} more` : "";
+  return `${flags.length} health flag${flags.length === 1 ? "" : "s"} open (${named}${more})`;
+}
+
 /** The digest's one feeds line. Pure. */
 export function feedLaneDigestLine(m: FeedLaneMetrics): string {
   const b = m.total.backlog;
   const oldest = b.oldest_age_days.value;
   const oldestTxt = oldest == null ? "" : ` (oldest ${oldest < 1 ? "<1" : Math.floor(oldest)}d)`;
+  const flags = feedHealthFlagsText(m);
   return (
     `Feeds: ${m.feeds.healthy} of ${m.feeds.enabled} healthy, ` +
+    (flags ? `${flags}, ` : "") +
     `${b.awaiting_review.value ?? 0} awaiting review${oldestTxt}, ` +
     `${m.coverage.new_to_us_7d.value ?? 0} new to us this week (get_feed_lane_metrics, OPE-1632).`
   );
@@ -616,9 +660,29 @@ export async function loadFeedLaneMetrics(
     feedLinked: linkedIds.has(c.id),
   }));
 
+  // OPE-1633 — open health flags for the feeds in scope (tiny table).
+  const flagRows = feedIds.length
+    ? await db
+        .select({
+          feedId: feedHealthFlags.feedId,
+          check: feedHealthFlags.checkName,
+          detail: feedHealthFlags.detail,
+          firstSeenAt: feedHealthFlags.firstSeenAt,
+        })
+        .from(feedHealthFlags)
+        .innerJoin(f, eq(f.id, feedHealthFlags.feedId))
+        .where(
+          and(
+            isNull(feedHealthFlags.clearedAt),
+            opts.promoterId ? eq(f.promoterId, opts.promoterId) : undefined
+          )
+        )
+    : [];
+
   return buildFeedLaneMetrics({
     now,
     windowDays,
+    flags: flagRows,
     targetDays: opts.targetDays,
     feeds: feeds.map((x) => ({ ...x, enabled: !!x.enabled })),
     items,
