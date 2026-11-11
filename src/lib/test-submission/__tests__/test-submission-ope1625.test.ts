@@ -46,8 +46,9 @@ vi.mock("@/lib/burst-limiter", () => ({
 import { DEFAULT_INCLUSION_RULES, parseTecPage } from "@takemetothefair/utils/feeds";
 import { assessFeedItem, assessFormFields } from "../engine";
 import { DryRunWriteError, assertReadOnly, readOnlyDb } from "../read-only-db";
-import { CHECK_CALENDAR_RATE, checkCalendar } from "../check-calendar";
+import { CHECK_CALENDAR_RATE, PREVIEW_EVENT_RATE, checkCalendar } from "../check-calendar";
 import { POST as checkPost } from "@/app/api/v1/check-calendar/route";
+import { POST as previewPost } from "@/app/api/v1/preview-event/route";
 import { signRequest } from "@/lib/promoter-api/auth";
 import { PROMOTER_API_OPENAPI } from "@/lib/promoter-api/openapi";
 import { POST as eventsPost } from "@/app/api/v1/promoter/events/route";
@@ -142,6 +143,15 @@ function installFetch() {
 const checkReq = (body: unknown, ip = "203.0.113.7") =>
   checkPost(
     new Request(`${BASE}/api/v1/check-calendar`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": ip },
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    })
+  );
+
+const previewReq = (body: unknown, ip = "203.0.113.7") =>
+  previewPost(
+    new Request(`${BASE}/api/v1/preview-event`, {
       method: "POST",
       headers: { "content-type": "application/json", "cf-connecting-ip": ip },
       body: typeof body === "string" ? body : JSON.stringify(body),
@@ -523,6 +533,102 @@ describe("POST /api/v1/check-calendar", () => {
       "check-calendar:203.0.113.7",
       "check-calendar:198.51.100.99",
     ]);
+  });
+});
+
+// ------------------------------------------------------------------ the preview-event route (phase 2)
+
+describe("POST /api/v1/preview-event", () => {
+  const fair = {
+    name: "Harvest Craft Fair",
+    start_date: "2027-09-18",
+    end_date: "2027-09-19",
+    daily_hours: "10:00-16:00",
+    venue_name: "Town Common",
+    city: "Rockland",
+    state: "ME",
+    admission: "Free",
+  };
+
+  it("a new event: `new`, what we read with its source, and nothing written", async () => {
+    const before = snapshot();
+    const res = await previewReq({ fields: fair });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    const { dry_run, item } = (await res.json()) as { dry_run: boolean; item: ItemReport };
+    expect(dry_run).toBe(true);
+    expect(item.outcome.kind).toBe("new");
+    expect(item.read.find((x) => x.field === "name")).toMatchObject({
+      value: "Harvest Craft Fair",
+      source: "from the form",
+    });
+    expect(snapshot()).toEqual(before);
+  });
+
+  it("flags the AM/PM slip and a missing city, and blank fields count as not filled in", async () => {
+    const res = await previewReq({
+      fields: {
+        ...fair,
+        city: "   ",
+        daily_hours: "4:30-6:30",
+        description: "Supper is served at 4:30 PM.",
+      },
+    });
+    const { item } = (await res.json()) as { item: ItemReport };
+    const codes = item.problems.map((p) => `${p.code}:${p.field}`);
+    expect(codes).toEqual(
+      expect.arrayContaining(["am_pm_slip:daily_hours", "incomplete_location:city"])
+    );
+  });
+
+  it("a match shows only the public listing — no contact, note or private column", async () => {
+    seedLiveListingWithPrivateData();
+    const before = snapshot();
+    const res = await previewReq({
+      fields: {
+        name: "Antique Tractor Day",
+        start_date: "2027-05-15",
+        venue_name: "Museum Field",
+        city: "Owls Head",
+        state: "ME",
+        event_url: "https://museum.example/event/antique-tractor-day/",
+      },
+    });
+    const body = await res.text();
+    const { item } = JSON.parse(body) as { item: ItemReport };
+    expect(item.outcome).toMatchObject({
+      kind: "match",
+      listing: { url: "https://meetmeatthefair.com/events/antique-tractor-day", public: true },
+    });
+    for (const secret of [
+      "private.person",
+      "Private Person",
+      "INTERNAL-NOTE",
+      "c-private",
+      "e-live",
+    ])
+      expect(body).not.toContain(secret);
+    expect(snapshot()).toEqual(before);
+  });
+
+  it("refuses unknown fields, over-long fields, bad JSON and an oversized body", async () => {
+    expect((await previewReq({ fields: { ...fair, contact_email: "x@y.z" } })).status).toBe(422);
+    expect((await previewReq({ fields: { name: "x".repeat(501) } })).status).toBe(422);
+    expect((await previewReq({ name: "no fields wrapper" })).status).toBe(422);
+    expect((await previewReq("not json")).status).toBe(400);
+    expect((await previewReq("x".repeat(20_000))).status).toBe(413);
+  });
+
+  it(`rate-limits per IP on its own key: request ${PREVIEW_EVENT_RATE.max + 1} is 429`, async () => {
+    limiterMax = PREVIEW_EVENT_RATE.max;
+    for (let i = 0; i < PREVIEW_EVENT_RATE.max; i++)
+      expect((await previewReq("not json")).status).toBe(400);
+    const limited = await previewReq("not json");
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("Retry-After")).toBe("1800");
+    expect([...limiterHits.keys()]).toEqual(["preview-event:203.0.113.7"]);
+    // check-calendar's allowance is untouched by preview use.
+    expect((await checkReq("not json")).status).toBe(400);
   });
 });
 
