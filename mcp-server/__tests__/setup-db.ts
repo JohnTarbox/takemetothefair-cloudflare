@@ -1983,6 +1983,14 @@ const FEED_READER_SQL = (() => {
   return sql.slice(0, end);
 })();
 
+// OPE-1630 — review columns on promoter_feed_items, loaded from the migration itself.
+const FEED_REVIEW_SQL = (() => {
+  const sql = readFileSync(join(__dirname, "../../drizzle/0414_ope1630_feed_review.sql"), "utf8");
+  if (!sql.includes("ADD COLUMN reviewed_by"))
+    throw new Error("0414 shape changed — the loader is reading the wrong file");
+  return sql;
+})();
+
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
   const raw = new Database(":memory:");
   raw.pragma("foreign_keys = ON");
@@ -1998,6 +2006,7 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   raw["exec"](PROMOTER_IMPORT_SQL);
   raw["exec"](CHANGE_PING_SQL);
   raw["exec"](FEED_READER_SQL);
+  raw["exec"](FEED_REVIEW_SQL);
   const db = drizzle(raw, { schema });
   // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.
   // Shim it so code paths that batch — e.g. SYN1's outbox-row + version-bump

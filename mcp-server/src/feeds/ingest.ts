@@ -126,7 +126,8 @@ export interface IngestItemReport {
   inclusion_reason: string;
   event_id: string | null;
   link_basis: "prior" | "source_url" | "promoter_date_name" | null;
-  review_state: "awaiting_review" | "linked" | "dropped";
+  /** OPE-1630 — `rejected`: a reviewer said no; kept across reads, never re-queued. */
+  review_state: "awaiting_review" | "linked" | "dropped" | "rejected";
   published: boolean;
   findings: Array<{ field: FeedField; kind: string; action: "opened" | "refreshed" | "replaced" }>;
   pins: Array<{ field: FeedField; verdict: string; action: string }>;
@@ -356,22 +357,31 @@ export async function ingestFeedItems(
         id: promoterFeedItems.id,
         eventId: promoterFeedItems.eventId,
         contentHash: promoterFeedItems.contentHash,
+        reviewState: promoterFeedItems.reviewState,
       })
       .from(promoterFeedItems)
       .where(
         and(eq(promoterFeedItems.feedId, feedId), eq(promoterFeedItems.externalId, ev.externalId))
       )
       .limit(1);
+    // OPE-1630 — a reviewer's rejection is remembered by external_id: the item
+    // is never linked, never re-queued and never asked about. Its snapshot still
+    // refreshes, so the record shows what the feed last said.
+    const rejected = prior?.reviewState === "rejected";
     // Link EVERY item, filtered or not: the inclusion filter decides which NEW
     // items go to review. An item already matching an event we publish stays
     // watched even if the filter would not have picked it — otherwise a live
     // page silently stops being checked because a rule was tuned.
-    const link = await linkItem(db, feed, ev, prior?.eventId ?? null);
-    const reviewState: IngestItemReport["review_state"] = link.eventId
-      ? "linked"
-      : verdict.included
-        ? "awaiting_review"
-        : "dropped";
+    const link = rejected
+      ? { eventId: null, basis: null }
+      : await linkItem(db, feed, ev, prior?.eventId ?? null);
+    const reviewState: IngestItemReport["review_state"] = rejected
+      ? "rejected"
+      : link.eventId
+        ? "linked"
+        : verdict.included
+          ? "awaiting_review"
+          : "dropped";
 
     const item: IngestItemReport = {
       external_id: ev.externalId,

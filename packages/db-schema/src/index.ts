@@ -6847,10 +6847,15 @@ export const promoterFeedItems = sqliteTable(
     included: integer("included", { mode: "boolean" }).notNull().default(false),
     exclusionReason: text("exclusion_reason"),
     reviewState: text("review_state", {
-      enum: ["none", "awaiting_review", "linked", "dropped"],
+      // OPE-1630 — `rejected`: a reviewer's no, remembered across reads.
+      enum: ["none", "awaiting_review", "linked", "dropped", "rejected"],
     })
       .notNull()
       .default("none"),
+    /** OPE-1630 — the reviewer's note; for a rejection, the reason. */
+    reviewNote: text("review_note"),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
+    reviewedBy: text("reviewed_by"),
     contentHash: text("content_hash"),
     snapshot: text("snapshot"),
     firstSeenAt: integer("first_seen_at", { mode: "timestamp" }).notNull(),
