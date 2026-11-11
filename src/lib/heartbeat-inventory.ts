@@ -115,6 +115,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   // ── scheduled() jobs ────────────────────────────────────────────────────
   "cron:runAgentSilenceWatchdog": { probes: ["agent-silence-watchdog"] },
   "cron:runErrorLogRetention": { probes: ["error-log-retention"] },
+  "cron:runHostSilenceWatch": { probes: ["host-silence-watch"] },
   "cron:runInboundExceptionNotice": U,
   "cron:runIndexNowSubmissionRetention": { probes: ["indexnow-submission-retention"] },
   "cron:main-app:/api/admin/venues/geocode-venues": { probes: ["venue-geocode-sweep"] },
