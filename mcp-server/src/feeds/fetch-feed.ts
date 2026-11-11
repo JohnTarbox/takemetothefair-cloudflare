@@ -23,6 +23,8 @@ export type ConditionalResult =
       lastModified: string | null;
       contentType: string | null;
       finalUrl: string;
+      /** OPE-1621 — the raw `Link` header, for WebSub hub discovery. */
+      linkHeader: string | null;
     };
 
 export async function fetchConditional(
@@ -67,6 +69,7 @@ export async function fetchConditional(
     lastModified,
     contentType: res.headers.get("content-type"),
     finalUrl: res.url || url,
+    linkHeader: res.headers.get("link"),
   };
 }
 

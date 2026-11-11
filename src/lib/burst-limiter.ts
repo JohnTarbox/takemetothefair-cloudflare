@@ -6,7 +6,16 @@ export const BURST_LIMIT = 5;
 export const BURST_WINDOW_SECONDS = 60;
 
 export interface BurstLimiter {
-  limit(options: { key: string }): Promise<{ success: boolean; retryAfterSeconds?: number }>;
+  /**
+   * Count one hit. `limit` / `periodSeconds` default to the burst policy
+   * (BURST_LIMIT per BURST_WINDOW_SECONDS); OPE-1621's change ping passes its
+   * own hourly budget (the Durable Object caps the period at 3600 s).
+   */
+  limit(options: {
+    key: string;
+    limit?: number;
+    periodSeconds?: number;
+  }): Promise<{ success: boolean; retryAfterSeconds?: number }>;
 }
 
 /** What `BurstCounter.hit()` returns over RPC (mcp-server/src/burst-counter.ts). */
@@ -59,12 +68,12 @@ export function getBurstLimiter(): BurstLimiter | null {
   if (!ns) return null;
   const namespace = ns;
   return {
-    async limit({ key }) {
+    async limit({ key, limit = BURST_LIMIT, periodSeconds = BURST_WINDOW_SECONDS }) {
       // The one cast here: a cross-script Durable Object namespace is typed
       // without its class (wrangler types cannot see into the MCP Worker), so
       // the RPC method is declared locally above, matching BurstCounter.hit.
       const stub = namespace.get(namespace.idFromName(key) as never) as BurstCounterStub;
-      const r = await stub.hit(BURST_LIMIT, BURST_WINDOW_SECONDS);
+      const r = await stub.hit(limit, periodSeconds);
       return { success: r.success, retryAfterSeconds: r.retryAfterSeconds };
     },
   };

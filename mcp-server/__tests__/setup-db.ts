@@ -1962,6 +1962,16 @@ const PROMOTER_IMPORT_SQL = (() => {
   return sql;
 })();
 
+// OPE-1621 — change-ping columns, WebSub subscriptions and ping counters,
+// loaded from the migration itself (DDL only: the heartbeat_probes seed is cut).
+const CHANGE_PING_SQL = (() => {
+  const sql = readFileSync(join(__dirname, "../../drizzle/0412_ope1621_change_ping.sql"), "utf8");
+  const end = sql.indexOf("INSERT INTO heartbeat_probes");
+  if (end < 0 || !sql.includes("CREATE TABLE feed_websub_subscriptions"))
+    throw new Error("0412 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
   const raw = new Database(":memory:");
   raw.pragma("foreign_keys = ON");
@@ -1975,6 +1985,7 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   raw["exec"](FEED_PROVENANCE_SQL);
   raw["exec"](CALENDAR_READER_SQL);
   raw["exec"](PROMOTER_IMPORT_SQL);
+  raw["exec"](CHANGE_PING_SQL);
   const db = drizzle(raw, { schema });
   // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.
   // Shim it so code paths that batch — e.g. SYN1's outbox-row + version-bump

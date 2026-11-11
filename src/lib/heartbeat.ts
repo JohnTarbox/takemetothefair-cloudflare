@@ -61,6 +61,7 @@ import {
   venues,
   supportObligations,
   promoterOnboardingRequests,
+  promoterEventFeeds,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
@@ -2546,6 +2547,30 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         errorLogs.timestamp,
         and(eq(errorLogs.source, "feeds:scheduled-poll"), eq(errorLogs.level, "info"))
       ),
+  },
+  {
+    // OPE-1621 — proof a change ping (POST /api/v1/ping, or a verified WebSub
+    // notification) is actually SERVED: the 10-minute pinged-feed pass reads
+    // the feed and clears `ping_requested_at`. Demand-conditional: no
+    // outstanding ping reads healthy now; an outstanding one starts the clock
+    // at the OLDEST ping still waiting. 1h = six passes missed.
+    //
+    // Seeded DORMANT (drizzle/0412, enabled_at NULL): with FEED_POLLING_ENABLED
+    // "false" pings are recorded and never read, so every ping would sit
+    // outstanding. Set enabled_at the day the flag flips.
+    name: "feed-change-ping",
+    ownerOpe: "OPE-1621",
+    label: "a pinged organizer feed is re-read within the hour",
+    priority: "P1",
+    expectedWindowHours: 1,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ oldest: sql<number | null>`min(${promoterEventFeeds.pingRequestedAt})` })
+        .from(promoterEventFeeds)
+        .where(eq(promoterEventFeeds.enabled, true));
+      const oldest = r?.oldest != null ? new Date(Number(r.oldest) * 1000) : null;
+      return demandConditionalEvidence(oldest, null, new Date());
+    },
   },
   {
     // OPE-1610 — proof the hourly pending-contact attach job still RUNS. Most

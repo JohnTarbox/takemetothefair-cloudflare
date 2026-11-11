@@ -18,6 +18,7 @@ import { normalizeCalendarUrl, parseIcsFeed } from "./ical.js";
 import { readJsonLdSource } from "./jsonld.js";
 import { fetchConditional, fetchText, nextReadDelayMs } from "./fetch-feed.js";
 import { ingestFeedItems, type IngestReport } from "./ingest.js";
+import { discoverHub, type HubLinks } from "./websub.js";
 
 const DAY_MS = 86_400_000;
 const DEFAULT_TZ = "America/New_York";
@@ -40,6 +41,8 @@ export interface FeedRunResult {
   };
   next_read_at: string | null;
   report: IngestReport | null;
+  /** OPE-1621 — a WebSub hub this read advertised (header or body); the scheduler subscribes. */
+  websub?: HubLinks | null;
 }
 
 type FeedRow = typeof promoterEventFeeds.$inferSelect;
@@ -56,6 +59,7 @@ async function readItems(
       etag: string | null;
       lastModified: string | null;
       meta: FeedRunResult["read"];
+      websub: HubLinks | null;
     }
 > {
   if (feed.kind === "tec_rest") {
@@ -72,6 +76,7 @@ async function readItems(
       etag: null,
       lastModified: null,
       meta: { complete: r.pages < 10, pages: r.pages, unmappable_items: r.skipped },
+      websub: null,
     };
   }
   // A dry run never sends the stored validators: an operator previewing a feed
@@ -82,6 +87,11 @@ async function readItems(
     fetchImpl: opts.fetchImpl,
   });
   if (cond.status === "not_modified") return cond;
+  const websub = discoverHub({
+    body: cond.body,
+    linkHeader: cond.linkHeader,
+    feedUrl: normalizeCalendarUrl(feed.feedUrl),
+  });
   if (feed.kind === "ical") {
     if (!/BEGIN:VCALENDAR/i.test(cond.body.slice(0, 2000)))
       throw new Error(
@@ -105,6 +115,7 @@ async function readItems(
         calendar_name: r.calendarName,
         calendar_tz: r.calendarTz,
       },
+      websub,
     };
   }
   // jsonld
@@ -132,6 +143,7 @@ async function readItems(
         ...(r.pagesSkipped ? [`${r.pagesSkipped} event pages not read (page cap)`] : []),
       ],
     },
+    websub,
   };
 }
 
@@ -245,5 +257,6 @@ export async function runFeedRead(
     read: read.meta,
     next_read_at: args.dryRun ? null : next.toISOString(),
     report,
+    websub: read.websub,
   };
 }

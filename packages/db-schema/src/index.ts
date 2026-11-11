@@ -6641,6 +6641,12 @@ export const promoterEventFeeds = sqliteTable(
     ownershipInboundEmailId: text("ownership_inbound_email_id").references(() => inboundEmails.id, {
       onDelete: "set null",
     }),
+    // OPE-1621 (drizzle/0412) — change pings. A ping only TRIGGERS a read:
+    // the oldest outstanding ping (cleared by the read that serves it), the
+    // newest one, and a lifetime count. See feed-ping.ts.
+    pingRequestedAt: integer("ping_requested_at", { mode: "timestamp" }),
+    lastPingedAt: integer("last_pinged_at", { mode: "timestamp" }),
+    pingCount: integer("ping_count").notNull().default(0),
     createdBy: text("created_by"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
@@ -6648,7 +6654,67 @@ export const promoterEventFeeds = sqliteTable(
   (t) => [
     uniqueIndex("uq_promoter_event_feeds_url").on(t.promoterId, t.feedUrl),
     index("idx_promoter_event_feeds_due").on(t.enabled, t.nextReadAt),
+    index("idx_promoter_event_feeds_ping").on(t.pingRequestedAt),
   ]
+);
+
+/**
+ * OPE-1621 (drizzle/0412) — a WebSub subscription for one feed, made when a
+ * read saw a `rel="hub"` link. A verified notification is treated as a ping
+ * (mark the feed due); its body is never read as content.
+ *
+ * `pendingMode` is set when we POST a subscribe request and cleared when the
+ * hub's intent check arrives: the callback echoes `hub.challenge` ONLY while
+ * it matches, so nobody else can confirm a subscription we did not ask for.
+ */
+export const feedWebsubSubscriptions = sqliteTable(
+  "feed_websub_subscriptions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    feedId: text("feed_id")
+      .notNull()
+      .references(() => promoterEventFeeds.id, { onDelete: "cascade" }),
+    hubUrl: text("hub_url").notNull(),
+    topicUrl: text("topic_url").notNull(),
+    /** HMAC key for X-Hub-Signature; sent to the hub as hub.secret. */
+    secret: text("secret").notNull(),
+    state: text("state", { enum: ["pending", "active", "denied"] })
+      .notNull()
+      .default("pending"),
+    pendingMode: text("pending_mode", { enum: ["subscribe"] }),
+    leaseSeconds: integer("lease_seconds"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp" }),
+    requestedAt: integer("requested_at", { mode: "timestamp" }),
+    verifiedAt: integer("verified_at", { mode: "timestamp" }),
+    lastNotifiedAt: integer("last_notified_at", { mode: "timestamp" }),
+    notifyCount: integer("notify_count").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_feed_websub_feed_hub_topic").on(t.feedId, t.hubUrl, t.topicUrl),
+    index("idx_feed_websub_lease").on(t.state, t.leaseExpiresAt),
+  ]
+);
+
+/**
+ * OPE-1621 (drizzle/0412) — what change pings and WebSub notifications did,
+ * counted per UTC day. The ignored ones are counted here and nowhere else; the
+ * URL is never stored, so this table cannot become a list of probed hosts.
+ */
+export const feedPingCounts = sqliteTable(
+  "feed_ping_counts",
+  {
+    day: text("day").notNull(),
+    channel: text("channel", { enum: ["ping", "websub"] }).notNull(),
+    outcome: text("outcome").notNull(),
+    count: integer("count").notNull().default(0),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.day, t.channel, t.outcome] })]
 );
 
 export const promoterFeedItems = sqliteTable(
@@ -7686,6 +7752,8 @@ export * from "./promoter-appliable-gap";
 // OPE-1330 — promoter contacts: domain verification + the one write rule.
 export * from "./promoter-contacts";
 export * from "./org-domains";
+// OPE-1621 — change pings (main-app /api/v1/ping + MCP WebSub callback).
+export * from "./feed-ping";
 export * from "./gallery-photos";
 // OPE-759 — the hours-review rule, shared because event_days has five writers.
 export * from "./hours-review-flag";
