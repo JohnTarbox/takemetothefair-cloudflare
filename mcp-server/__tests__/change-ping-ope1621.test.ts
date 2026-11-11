@@ -76,6 +76,9 @@ function fakeFetch(
   return { impl, calls };
 }
 
+// OPE-1626 — WebSub needs both flags.
+const WEBSUB_ON = { FEED_POLLING_ENABLED: "true", WEBSUB_ENABLED: "true" };
+
 // A far-future next read, so only a ping makes the feed due.
 const LATER = new Date(T0.getTime() + 6 * 3_600_000);
 const url = (s: string) => {
@@ -327,6 +330,7 @@ describe("WebSub subscribe, intent check, notifications", () => {
         links: { hub: HUB, topic: FEED_URL },
         now: T0,
         fetchImpl: web.impl,
+        flags: WEBSUB_ON,
       })
     ).toBe("subscribed");
     expect(web.calls).toHaveLength(1);
@@ -460,7 +464,7 @@ describe("WebSub subscribe, intent check, notifications", () => {
     expect(await verifyHubSignature("k", null, body)).toBe(false);
   });
 
-  it("a feed read that advertises a hub subscribes — only while polling is on — and renews before the lease ends", async () => {
+  it("a feed read that advertises a hub subscribes — only while polling AND WebSub are on — and renews before the lease ends", async () => {
     raw.prepare("UPDATE promoter_event_feeds SET next_read_at = ? WHERE id = 'f1'").run(secs(T0));
     const web = fakeFetch((u) =>
       u === HUB
@@ -471,7 +475,12 @@ describe("WebSub subscribe, intent check, notifications", () => {
     expect(web.calls).toHaveLength(0);
     expect(subs()).toHaveLength(0);
 
-    await pollDueFeeds(db as never, { now: T0, enabled: true, fetchImpl: web.impl });
+    await pollDueFeeds(db as never, {
+      now: T0,
+      enabled: true,
+      fetchImpl: web.impl,
+      websubFlags: WEBSUB_ON,
+    });
     expect(web.calls.map((c) => c.url)).toEqual([FEED_URL, HUB]);
     expect(subs()).toHaveLength(1);
     const [row] = subs();
@@ -483,12 +492,16 @@ describe("WebSub subscribe, intent check, notifications", () => {
     });
 
     // Not near expiry: nothing to renew. Within a day of it: renewed.
-    expect(await renewWebSubLeases(db as never, { now: T0, fetchImpl: web.impl })).toEqual({
+    expect(
+      await renewWebSubLeases(db as never, { now: T0, fetchImpl: web.impl, flags: WEBSUB_ON })
+    ).toEqual({
       renewed: 0,
       errors: 0,
     });
     const late = new Date(T0.getTime() + 2.5 * 86_400_000);
-    expect(await renewWebSubLeases(db as never, { now: late, fetchImpl: web.impl })).toEqual({
+    expect(
+      await renewWebSubLeases(db as never, { now: late, fetchImpl: web.impl, flags: WEBSUB_ON })
+    ).toEqual({
       renewed: 1,
       errors: 0,
     });

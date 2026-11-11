@@ -156,7 +156,8 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   // OPE-1164 — weekly (Monday-gated) vendor-category new-value watch.
   // OPE-1205 — daily sync-staleness sweep; one admin_actions row per run.
   "cron:runScheduledPendingContactAttach": { probes: ["pending-contact-attach"] },
-  "cron:runScheduledFeedPoll": { probes: ["organizer-feed-poll"] },
+  // OPE-1626 — job liveness (organizer-feed-poll) + per-feed staleness (feed-reader).
+  "cron:runScheduledFeedPoll": { probes: ["organizer-feed-poll", "feed-reader"] },
   // OPE-1621 — */10 pass over feeds a change ping (or WebSub notification) marked due.
   "cron:runScheduledPingedFeedPass": { probes: ["feed-change-ping"] },
   "cron:runScheduledPromoterOnboarding": { probes: ["promoter-onboarding"] },

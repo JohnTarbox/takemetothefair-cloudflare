@@ -12,6 +12,14 @@
  *
  * A pinned field whose feed still shows the wrong value gets ONE "your feed
  * still says X" line in a later batch, at most once (`still_wrong_notes_sent`).
+ *
+ * OPE-1626 — `questions_hold`. While ANY of the promoter's feeds has it set,
+ * nothing is composed, dry run included: no draft, no batch row, no
+ * still-wrong note spent. Reads keep opening discrepancies; they wait, unasked,
+ * and the first batch after the hold is cleared asks them. This function is
+ * the ONLY writer of `feed_discrepancy_batches` and of a feed-question
+ * operator draft, so the gate here covers every path (the reader composes
+ * nothing; `compose_feed_discrepancy_batch` is the one caller).
  */
 import { and, desc, eq, inArray } from "drizzle-orm";
 import {
@@ -61,10 +69,21 @@ export async function composeFeedDiscrepancyBatch(
   if (!promoter) return { composed: false, reason: "promoter not found" };
 
   const feeds = await db
-    .select({ interval: promoterEventFeeds.batchMinIntervalDays, id: promoterEventFeeds.id })
+    .select({
+      interval: promoterEventFeeds.batchMinIntervalDays,
+      id: promoterEventFeeds.id,
+      questionsHold: promoterEventFeeds.questionsHold,
+    })
     .from(promoterEventFeeds)
     .where(eq(promoterEventFeeds.promoterId, promoterId));
   if (!feeds.length) return { composed: false, reason: "promoter has no registered feed" };
+  const held = feeds.filter((f) => f.questionsHold).map((f) => f.id);
+  if (held.length) {
+    return {
+      composed: false,
+      reason: `questions_hold is set on feed ${held.join(", ")}: discrepancies stay open and unasked; clear it with set_promoter_feed(questions_hold: false)`,
+    };
+  }
   // The strictest configured interval wins when a promoter has several feeds.
   const intervalDays = Math.max(...feeds.map((f) => f.interval));
 

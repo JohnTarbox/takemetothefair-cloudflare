@@ -14,10 +14,13 @@
  * feed-poll cron, and the stored secret never has to leave this Worker. The
  * main app has nothing to add but a second copy of the secret handling.
  *
- * GATED: subscribing and renewing happen only inside the scheduled poll, which
- * does nothing unless FEED_POLLING_ENABLED = "true". The callback answers
- * regardless (it only ever confirms a subscription we asked for, and a
- * notification only marks a feed due — the read is gated too).
+ * GATED (OPE-1626): subscribing and renewing POST to a third-party hub, so
+ * they need BOTH `FEED_POLLING_ENABLED` and `WEBSUB_ENABLED` = "true". The two
+ * functions that send (`ensureWebSubSubscription`, `renewWebSubLeases`) check
+ * the flags themselves, not only their caller, so a new call site cannot
+ * subscribe by forgetting the gate. The callback answers regardless (it only
+ * ever confirms a subscription we asked for, and a notification only marks a
+ * feed due — the read is gated by FEED_POLLING_ENABLED).
  */
 import { and, eq, isNotNull, lte, or } from "drizzle-orm";
 import {
@@ -40,6 +43,17 @@ const RETRY_PENDING_AFTER_MS = 86_400_000;
 /** Notifications larger than this are ignored unhashed. */
 const MAX_NOTIFY_BYTES = 1024 * 1024;
 const BODY_SCAN_CHARS = 200_000;
+
+/** The two flags WebSub needs. */
+export interface WebSubFlags {
+  FEED_POLLING_ENABLED?: string;
+  WEBSUB_ENABLED?: string;
+}
+
+/** OPE-1626 — subscribing/renewing is allowed only with polling AND WebSub on. */
+export function isWebSubEnabled(env: WebSubFlags | undefined | null): boolean {
+  return env?.FEED_POLLING_ENABLED === "true" && env?.WEBSUB_ENABLED === "true";
+}
 
 export interface HubLinks {
   hub: string;
@@ -199,8 +213,16 @@ async function sendSubscribe(
  */
 export async function ensureWebSubSubscription(
   db: Db,
-  args: { feedId: string; links: HubLinks; now: Date; fetchImpl?: typeof fetch }
-): Promise<"subscribed" | "current" | "error"> {
+  args: {
+    feedId: string;
+    links: HubLinks;
+    now: Date;
+    fetchImpl?: typeof fetch;
+    /** OPE-1626 — both flags; anything else writes and sends nothing. */
+    flags: WebSubFlags;
+  }
+): Promise<"subscribed" | "current" | "error" | "disabled"> {
+  if (!isWebSubEnabled(args.flags)) return "disabled";
   const t = args.now.getTime();
   let [sub] = await db
     .select()
@@ -243,8 +265,15 @@ export async function ensureWebSubSubscription(
 /** Renew leases ending within a day, and retry unconfirmed requests older than a day. */
 export async function renewWebSubLeases(
   db: Db,
-  args: { now: Date; limit?: number; fetchImpl?: typeof fetch }
+  args: {
+    now: Date;
+    limit?: number;
+    fetchImpl?: typeof fetch;
+    /** OPE-1626 — both flags; anything else renews nothing. */
+    flags: WebSubFlags;
+  }
 ): Promise<{ renewed: number; errors: number }> {
+  if (!isWebSubEnabled(args.flags)) return { renewed: 0, errors: 0 };
   const t = args.now.getTime();
   const rows = await db
     .select({ sub: feedWebsubSubscriptions })

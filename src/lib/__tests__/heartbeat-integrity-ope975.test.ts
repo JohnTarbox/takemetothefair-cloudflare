@@ -220,6 +220,9 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "organizer-feed-poll": 3,
       // OPE-1621 — oldest outstanding change ping; the pass runs every 10 min.
       "feed-change-ping": 1,
+      // OPE-1626 — a deadline offset: evidence is (earliest feed deadline − 1h),
+      // the deadline being 2× that feed's own interval after its last good read.
+      "feed-reader": 1,
       "promoter-onboarding": 3,
       "replied-ledger-check": 3,
       // OPE-1239 — */10 cron, run row at most hourly; three missed before it pages.
@@ -282,7 +285,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "self-announced-exhibitor": 720,
       "gemba-observation": 720,
       "event-document-post": 2160,
-      // OPE-1613 — dormant placeholder until feeds are read on a schedule.
+      // OPE-1613 — armed by OPE-1626 (0413); still a placeholder window.
       "organizer-feed-ingest": 720,
       // OPE-1620 — dormant placeholder until promoters use the signed API.
       "promoter-api-write": 720,

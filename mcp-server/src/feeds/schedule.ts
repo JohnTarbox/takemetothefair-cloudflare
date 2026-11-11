@@ -8,10 +8,11 @@
  * after errors.
  *
  * GATED: does nothing unless `FEED_POLLING_ENABLED = "true"` on the MCP Worker.
- * It ships "false". A scheduled read WRITES (feed items, organizer_feed
- * discrepancies, pin releases) though it sends nothing — every question still
- * goes out only as an operator draft John approves. Turning it on is John's
- * call, and it is pointless before a feed is registered.
+ * OPE-1626 switched it on (John approved automatic, review-only reading of
+ * OHTM's calendar as a pilot). A scheduled read WRITES (feed items,
+ * organizer_feed discrepancies, pin releases) though it sends nothing — no
+ * reader path composes a question; a batch is composed only by the operator's
+ * `compose_feed_discrepancy_batch`, which a feed's `questions_hold` refuses.
  *
  * Evidence: each real read writes `feed.ingested` to admin_actions, which the
  * dormant `organizer-feed-ingest` heartbeat probe (0406) reads. Each run also
@@ -24,16 +25,25 @@
  * (`runScheduledPingedFeedPass`) reads only pinged, due feeds, so a ping is
  * served within about ten minutes. Same gate, same `runFeedRead`. After any
  * read of a pinged feed — good, 304 or error — the ping is settled, unless
- * another ping arrived during the read. A read that advertised a WebSub hub
- * subscribes (only here, so only while the flag is on), and the hourly run
- * renews leases.
+ * another ping arrived during the read.
+ *
+ * WebSub (OPE-1626): subscribing POSTs to a third-party hub, which was not
+ * approved with polling. A read that advertised a hub subscribes, and the
+ * hourly run renews leases, only when BOTH `FEED_POLLING_ENABLED` and
+ * `WEBSUB_ENABLED` are "true" (`isWebSubEnabled`). Pings — including a
+ * notification on a subscription made earlier — stay gated by polling alone.
  */
 import { and, asc, eq, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { PING_COALESCE_MS, promoterEventFeeds } from "../schema.js";
 import { getDb, type Db } from "../db.js";
 import { logError } from "../logger.js";
 import { runFeedRead } from "./run.js";
-import { ensureWebSubSubscription, renewWebSubLeases } from "./websub.js";
+import {
+  ensureWebSubSubscription,
+  isWebSubEnabled,
+  renewWebSubLeases,
+  type WebSubFlags,
+} from "./websub.js";
 
 export const FEED_POLL_SOURCE = "feeds:scheduled-poll";
 export const FEED_PING_PASS_SOURCE = "feeds:pinged-pass";
@@ -45,6 +55,8 @@ export interface FeedPollSummary {
   ingested: number;
   not_modified: number;
   errors: number;
+  /** OPE-1626 — a feed disabled between selection and read. */
+  skipped: number;
   feed_ids: string[];
 }
 
@@ -75,6 +87,11 @@ export async function pollDueFeeds(
     fetchImpl?: typeof fetch;
     /** OPE-1621 — read only the feeds a ping marked due (the 10-minute pass). */
     onlyPinged?: boolean;
+    /**
+     * OPE-1626 — the flags WebSub needs (FEED_POLLING_ENABLED and
+     * WEBSUB_ENABLED). Omitted = no subscription, whatever a feed advertises.
+     */
+    websubFlags?: WebSubFlags;
   }
 ): Promise<FeedPollSummary> {
   const summary: FeedPollSummary = {
@@ -83,11 +100,12 @@ export async function pollDueFeeds(
     ingested: 0,
     not_modified: 0,
     errors: 0,
+    skipped: 0,
     feed_ids: [],
   };
   if (!args.enabled) return summary;
   const due = await db
-    .select({ id: promoterEventFeeds.id })
+    .select({ id: promoterEventFeeds.id, pinged: promoterEventFeeds.pingRequestedAt })
     .from(promoterEventFeeds)
     .where(
       and(
@@ -109,17 +127,20 @@ export async function pollDueFeeds(
         dryRun: false,
         actor: "system:feed-poll",
         fetchImpl: args.fetchImpl,
+        trigger: f.pinged ? "ping" : "schedule",
       });
       if (r.outcome === "ingested") summary.ingested++;
       else if (r.outcome === "not_modified") summary.not_modified++;
+      else if (r.outcome === "skipped") summary.skipped++;
       else summary.errors++;
-      if (r.websub) {
+      if (r.websub && isWebSubEnabled(args.websubFlags)) {
         // A hub that will not take our subscription never fails the read.
         await ensureWebSubSubscription(db, {
           feedId: f.id,
           links: r.websub,
           now: args.now,
           fetchImpl: args.fetchImpl,
+          flags: args.websubFlags ?? {},
         }).catch(() => "error");
       }
     } catch {
@@ -135,18 +156,26 @@ export async function pollDueFeeds(
 export async function runScheduledFeedPoll(env: {
   DB: D1Database;
   FEED_POLLING_ENABLED?: string;
+  WEBSUB_ENABLED?: string;
 }): Promise<void> {
   const db = getDb(env.DB);
   const now = new Date();
   const enabled = env.FEED_POLLING_ENABLED === "true";
-  const s = await pollDueFeeds(db, { now, enabled });
-  // OPE-1621 — WebSub leases are renewed only while polling is on.
-  const leases = enabled ? await renewWebSubLeases(db, { now }) : null;
+  const flags = {
+    FEED_POLLING_ENABLED: env.FEED_POLLING_ENABLED,
+    WEBSUB_ENABLED: env.WEBSUB_ENABLED,
+  };
+  const s = await pollDueFeeds(db, { now, enabled, websubFlags: flags });
+  // OPE-1621 / OPE-1626 — WebSub leases are renewed only while BOTH flags are on.
+  const leases = isWebSubEnabled(flags) ? await renewWebSubLeases(db, { now, flags }) : null;
   await logError(env.DB, {
     level: "info",
     source: FEED_POLL_SOURCE,
     message: s.enabled
-      ? `feed poll: due ${s.due}, ingested ${s.ingested}, not modified ${s.not_modified}, errors ${s.errors}; websub renewed ${leases?.renewed ?? 0}, errors ${leases?.errors ?? 0}`
+      ? `feed poll: due ${s.due}, ingested ${s.ingested}, not modified ${s.not_modified}, errors ${s.errors}, skipped ${s.skipped}; ` +
+        (leases
+          ? `websub renewed ${leases.renewed}, errors ${leases.errors}`
+          : "websub off (WEBSUB_ENABLED is not true)")
       : "feed poll: FEED_POLLING_ENABLED is not true; read nothing",
   });
 }
@@ -161,11 +190,16 @@ export async function runScheduledFeedPoll(env: {
 export async function runScheduledPingedFeedPass(env: {
   DB: D1Database;
   FEED_POLLING_ENABLED?: string;
+  WEBSUB_ENABLED?: string;
 }): Promise<FeedPollSummary> {
   const s = await pollDueFeeds(getDb(env.DB), {
     now: new Date(),
     enabled: env.FEED_POLLING_ENABLED === "true",
     onlyPinged: true,
+    websubFlags: {
+      FEED_POLLING_ENABLED: env.FEED_POLLING_ENABLED,
+      WEBSUB_ENABLED: env.WEBSUB_ENABLED,
+    },
   });
   if (s.due > 0) {
     await logError(env.DB, {

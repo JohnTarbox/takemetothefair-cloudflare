@@ -233,9 +233,14 @@ REPLAY_COMMIT_ENABLED = "false"
 # OPE-1617 — scheduled organizer-feed polling (hourly cron; each feed's own
 # interval, default 6h). A scheduled read WRITES feed items and organizer_feed
 # discrepancies but SENDS nothing (questions go out only as operator drafts John
-# approves). Ships "false": flip only on John's word, after a feed is registered.
+# approves). OPE-1626: ON — John approved automatic, review-only reading of
+# OHTM's calendar as a pilot (its feed has questions_hold = 1).
 # Edit THIS line — a dashboard edit is reverted by the next deploy.
-FEED_POLLING_ENABLED = "false"
+FEED_POLLING_ENABLED = "true"
+# OPE-1626 — WebSub subscribe + lease renewal. Subscribing POSTs to a
+# third-party hub and was NOT approved with polling, so it is a separate flag
+# and needs FEED_POLLING_ENABLED as well. Change pings are unaffected.
+WEBSUB_ENABLED = "false"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 # Inbound-email failures (parse / extract / submit) get forwarded here.
 # Must be a verified destination address in Cloudflare Email Routing —
