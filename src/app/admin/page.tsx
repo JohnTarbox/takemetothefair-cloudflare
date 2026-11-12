@@ -2,13 +2,15 @@ import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { eventSchemaOrg, events, venues, promoters } from "@/lib/db/schema";
+import { eventSchemaOrg, events } from "@/lib/db/schema";
 import { count, eq, isNotNull } from "drizzle-orm";
-import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { SchemaOrgSyncButton } from "@/components/admin/SchemaOrgSyncButton";
 import { logError } from "@/lib/logger";
 import { formatQueueAge, loadQueueHealth, type QueueTile } from "@/lib/admin/queue-health";
 import { formatFeedAge, loadFeedLaneTile, type FeedLaneTile } from "@/lib/admin/feed-lane-tile";
+import { loadRecentSubmissions, startsSoon } from "@/lib/admin/recent-submissions";
+import { daysSince } from "@/lib/pending-buckets";
+import { formatDateRange } from "@/lib/utils";
 
 async function getSchemaOrgSummary(): Promise<{ synced: number; ticketed: number } | null> {
   const db = getCloudflareDb();
@@ -28,43 +30,17 @@ async function getSchemaOrgSummary(): Promise<{ synced: number; ticketed: number
   }
 }
 
-async function getRecentSubmissions() {
+async function getRecentSubmissions(now: Date) {
   const db = getCloudflareDb();
-
   try {
-    // Narrow projection — D1 caps result rows at 100 columns and the
-    // unfiltered events+venues+promoters join is 104. See
-    // src/lib/db/event-join-projection.ts for the audit + maintenance
-    // contract. Deferred from PR #327 (1 err/day signal); now picked
-    // up because the page-error canary (PR #329) would otherwise
-    // dispatch on it every admin visit.
-    const results = await db
-      .select(eventJoinProjection)
-      .from(events)
-      .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      .where(eq(events.status, "PENDING"))
-      .orderBy(events.createdAt)
-      .limit(5);
-
-    // Cast lite projection back to schema row types — only fields read
-    // downstream are `promoter.companyName` and `venue.name`, both in
-    // the projection. Same pattern as #325/#327/#328.
-    type FullVenue = typeof venues.$inferSelect;
-    type FullPromoter = typeof promoters.$inferSelect;
-    type EventRow = (typeof results)[number];
-    return results.map((r: EventRow) => ({
-      ...r.events,
-      promoter: r.promoter as FullPromoter,
-      venue: r.venue as FullVenue,
-    }));
+    return await loadRecentSubmissions(db, now);
   } catch (e) {
     await logError(db, {
       message: "Error fetching submissions",
       error: e,
       source: "app/admin/page.tsx:getRecentSubmissions",
     });
-    return [];
+    return { rows: [], endedCount: 0 };
   }
 }
 
@@ -144,11 +120,12 @@ function FeedLaneCard({ tile }: { tile: FeedLaneTile | null }) {
 
 export default async function AdminDashboard() {
   await requireAdmin();
+  const now = new Date();
   const [queues, recentSubmissions, schemaOrg, feedLane] = await Promise.all([
     loadQueueHealth(getCloudflareDb()),
-    getRecentSubmissions(),
+    getRecentSubmissions(now),
     getSchemaOrgSummary(),
-    loadFeedLaneTile(getCloudflareDb(), new Date()),
+    loadFeedLaneTile(getCloudflareDb(), now),
   ]);
 
   return (
@@ -184,27 +161,52 @@ export default async function AdminDashboard() {
             <h2 className="text-lg font-semibold text-foreground">Recent Submissions</h2>
           </CardHeader>
           <CardContent>
-            {recentSubmissions.length === 0 ? (
-              <p className="text-muted-foreground py-4">No pending submissions</p>
+            {recentSubmissions.rows.length === 0 ? (
+              <p className="text-muted-foreground py-4">No upcoming pending submissions</p>
             ) : (
               <div className="divide-y divide-gray-100">
-                {recentSubmissions.map((event) => (
-                  <div key={event.id} className="py-4 flex items-center justify-between">
-                    <div>
-                      <p className="font-medium text-foreground">{event.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        by {event.promoter.companyName} at {event.venue?.name || "TBD"}
-                      </p>
-                    </div>
-                    <Link
-                      href={`/admin/submissions?id=${event.id}`}
-                      className="text-sm text-royal hover:text-navy font-medium"
+                {recentSubmissions.rows.map((event) => {
+                  const dated = event.startDate || event.endDate;
+                  const soon = startsSoon(event, now);
+                  const ago = event.createdAt ? daysSince(event.createdAt, now) : null;
+                  return (
+                    <div
+                      key={event.id}
+                      className={`py-4 flex items-center justify-between ${soon ? "bg-amber-50 -mx-2 px-2 rounded" : ""}`}
                     >
-                      Review
-                    </Link>
-                  </div>
-                ))}
+                      <div>
+                        <p className="font-medium text-foreground">{event.name}</p>
+                        <p className="text-sm text-foreground">
+                          {dated ? formatDateRange(event.startDate, event.endDate) : "No date"}
+                          {dated && !event.datesConfirmed && (
+                            <span className="text-muted-foreground"> · dates TBC</span>
+                          )}
+                          {soon && <span className="text-amber-700 font-medium"> · soon</span>}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          by {event.promoterName ?? "unknown promoter"} at{" "}
+                          {event.venueName || "TBD"}
+                          {ago !== null && ` · submitted ${ago === 0 ? "today" : `${ago}d ago`}`}
+                        </p>
+                      </div>
+                      <Link
+                        href={`/admin/submissions?id=${event.id}`}
+                        className="text-sm text-royal hover:text-navy font-medium"
+                      >
+                        Review
+                      </Link>
+                    </div>
+                  );
+                })}
               </div>
+            )}
+            {recentSubmissions.endedCount > 0 && (
+              <Link
+                href="/admin/submissions?bucket=ended"
+                className="block pt-3 text-sm text-royal hover:text-navy font-medium"
+              >
+                +{recentSubmissions.endedCount.toLocaleString("en-US")} ended submissions →
+              </Link>
             )}
           </CardContent>
         </Card>
