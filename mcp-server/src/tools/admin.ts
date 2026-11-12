@@ -205,6 +205,7 @@ import { registerPromoterContactTools } from "./admin-promoter-contacts.js";
 import { registerOrgDomainTools } from "./admin-org-domains.js";
 import { registerOrganizerFeedTools } from "./admin-organizer-feeds.js";
 import { registerPromoterImportTool } from "./admin-promoter-import.js";
+import { registerFeedReviewTools } from "./admin-feed-review.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
 import { registerRequestImageUploadSlotTool } from "./request-image-upload-slot.js";
@@ -509,6 +510,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   // OPE-1618 — a promoter's emailed season spreadsheet, imported through the portal's own path.
   registerPromoterImportTool(server, auth, env);
+  registerFeedReviewTools(server, auth, env);
 
   // Read-only recommendations feed — same data as /admin/analytics ▸
   // Recommendations. Adds get_recommendations, get_recommendation_rule.

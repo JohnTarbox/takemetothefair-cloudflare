@@ -248,6 +248,12 @@ export interface CommitContext {
     provenanceKind: CitationProvenanceKind;
     notes: Record<string, unknown>;
   };
+  /**
+   * OPE-1630 — attach the new event to THIS series instead of resolving one by
+   * name (the feed review's `approve_as_occurrence`: an organizer that alternates
+   * an event's name must not get a second hub). The caller checks it exists.
+   */
+  seriesId?: string;
 }
 
 const citationSource = (ctx: CommitContext, row: number) =>
@@ -468,7 +474,11 @@ export async function createEvent(db: Db, ctx: CommitContext, r: ImportRow): Pro
       )
     );
   if (formerVenue.kind === "flag") await raiseEventReviewFlag(db, eventId, "former_venue");
-  await attachEventToSeries(db, eventId, { name: v.name, venueId, promoterId: ctx.promoterId });
+  if (ctx.seriesId) {
+    await db.update(events).set({ seriesId: ctx.seriesId }).where(eq(events.id, eventId));
+  } else {
+    await attachEventToSeries(db, eventId, { name: v.name, venueId, promoterId: ctx.promoterId });
+  }
   const source = {
     sourceUrl: citationSource(ctx, r.rowNumber),
     sourceName: citationName(ctx),
