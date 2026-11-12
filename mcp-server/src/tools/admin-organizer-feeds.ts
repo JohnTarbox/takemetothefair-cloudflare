@@ -13,7 +13,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { adminActions, promoterEventFeeds, promoterFeedReads, promoters } from "../schema.js";
-import { jsonContent } from "../helpers.js";
+import { jsonContent, publicEventWhere } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { runFeedRead } from "../feeds/run.js";
@@ -24,6 +24,7 @@ import { parseInclusionRules } from "../feeds/inclusion.js";
 import { getEventFieldProvenance } from "../feeds/provenance.js";
 import { recordContactAnswer } from "../feeds/contact-answer.js";
 import { composeFeedDiscrepancyBatch, feedDiscrepancyMetrics } from "../feeds/batch.js";
+import { loadFeedLaneMetrics } from "@takemetothefair/db-schema";
 
 const err = (text: string) => ({ content: [{ type: "text" as const, text }], isError: true });
 const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
@@ -228,6 +229,29 @@ export function registerOrganizerFeedTools(
     { promoter_id: z.string().optional() },
     async (p) => ({
       content: [jsonContent(await feedDiscrepancyMetrics(db, { promoterId: p.promoter_id }))],
+    })
+  );
+
+  server.tool(
+    "get_feed_lane_metrics",
+    "OPE-1632 — the organizer-feed funnel, per feed and in total, over window_days (default 30): items read → included / dropped (by rule) → matched to an existing event (incl. matched_outside_filter: excluded items still linked and watched) / new (no match, awaiting review) → reviewed / approved / rejected (null, 'not yet measured', until the review step OPE-1630 ships) → published (linked event passes the public gate). Also: review backlog (count, oldest and median age, count past target_days, default 3), lead time (median days from first sighting to the event, share under 14 days), coverage (share of upcoming public events whose promoter has a healthy feed, share linked from a feed, mix by ingestion_method, 'new to us' events first seen on a feed with no listing), and change capture (feed-detected changes and cancellations, how many before the event). Every number carries its formula; an undefined one is null with a reason, never 0. Optional promoter_id. Read-only — changes nothing.",
+    {
+      window_days: z.number().int().min(1).max(365).default(30),
+      target_days: z.number().int().min(1).max(60).default(3),
+      promoter_id: z.string().min(1).optional(),
+    },
+    async (p) => ({
+      content: [
+        jsonContent(
+          await loadFeedLaneMetrics(db, {
+            now: now(),
+            publicWhere: publicEventWhere(),
+            windowDays: p.window_days,
+            targetDays: p.target_days,
+            promoterId: p.promoter_id,
+          })
+        ),
+      ],
     })
   );
 

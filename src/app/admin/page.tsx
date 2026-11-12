@@ -8,6 +8,7 @@ import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { SchemaOrgSyncButton } from "@/components/admin/SchemaOrgSyncButton";
 import { logError } from "@/lib/logger";
 import { formatQueueAge, loadQueueHealth, type QueueTile } from "@/lib/admin/queue-health";
+import { formatFeedAge, loadFeedLaneTile, type FeedLaneTile } from "@/lib/admin/feed-lane-tile";
 
 async function getSchemaOrgSummary(): Promise<{ synced: number; ticketed: number } | null> {
   const db = getCloudflareDb();
@@ -92,12 +93,62 @@ function QueueTileCard({ tile }: { tile: QueueTile }) {
   );
 }
 
+/** OPE-1632 — "Organizer feeds": funnel bar, backlog age (red past target), coverage, new to us. */
+function FeedLaneCard({ tile }: { tile: FeedLaneTile | null }) {
+  const pct = (n: number) => (tile && tile.read > 0 ? `${(n / tile.read) * 100}%` : "0%");
+  return (
+    <Card className="h-full">
+      <CardContent className="p-5">
+        <p className="text-sm text-muted-foreground">Organizer feeds</p>
+        <p className="text-3xl font-bold text-foreground mt-1 tabular-nums">
+          {tile ? fmtCount(tile.awaitingReview) : "—"}
+          <span className="text-sm font-normal text-muted-foreground"> awaiting review</span>
+        </p>
+        {tile ? (
+          <>
+            <p
+              className={`text-xs mt-1 tabular-nums ${tile.pastTarget ? "text-red-600 font-semibold" : "text-muted-foreground"}`}
+              data-testid="feed-backlog-age"
+            >
+              Oldest {formatFeedAge(tile.oldestAgeDays)}
+              {tile.pastTarget ? ` · past the ${tile.targetDays}d target` : ""}
+            </p>
+            <div
+              className="flex h-2 w-full overflow-hidden rounded bg-muted mt-3"
+              role="img"
+              aria-label={`Last ${tile.windowDays} days: ${tile.read} items read, ${tile.matched} matched, ${tile.fresh} new, ${tile.dropped} dropped`}
+            >
+              <div className="bg-green-600" style={{ width: pct(tile.matched) }} />
+              <div className="bg-amber-500" style={{ width: pct(tile.fresh) }} />
+              <div className="bg-gray-400" style={{ width: pct(tile.dropped) }} />
+            </div>
+            <p className="text-xs text-muted-foreground mt-2 tabular-nums">
+              {tile.windowDays}d: {fmtCount(tile.read)} read · {fmtCount(tile.matched)} matched ·{" "}
+              {fmtCount(tile.fresh)} new · {fmtCount(tile.dropped)} dropped
+            </p>
+            <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+              {tile.feedsHealthy} of {tile.feedsEnabled} feeds healthy · coverage{" "}
+              {tile.coverageHealthyShare == null
+                ? "—"
+                : `${Math.round(tile.coverageHealthyShare * 100)}%`}{" "}
+              · {fmtCount(tile.newToUs7d)} new to us this week
+            </p>
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground mt-2">Read failed</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default async function AdminDashboard() {
   await requireAdmin();
-  const [queues, recentSubmissions, schemaOrg] = await Promise.all([
+  const [queues, recentSubmissions, schemaOrg, feedLane] = await Promise.all([
     loadQueueHealth(getCloudflareDb()),
     getRecentSubmissions(),
     getSchemaOrgSummary(),
+    loadFeedLaneTile(getCloudflareDb(), new Date()),
   ]);
 
   return (
@@ -123,6 +174,7 @@ export default async function AdminDashboard() {
         {queues.map((tile) => (
           <QueueTileCard key={tile.key} tile={tile} />
         ))}
+        <FeedLaneCard tile={feedLane} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
