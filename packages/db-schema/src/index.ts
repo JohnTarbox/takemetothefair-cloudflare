@@ -1262,6 +1262,12 @@ export const vendors = sqliteTable(
       t.deletedAt,
       t.businessName
     ),
+    // OPE-1573 (drizzle/0415) — the Overview tab's Enhanced Profile count by
+    // start window was a full vendor scan (~13.9K rows a call).
+    vendorsEnhancedProfileStartedIdx: index("idx_vendors_enhanced_profile_started").on(
+      t.enhancedProfile,
+      t.enhancedProfileStartedAt
+    ),
   })
 );
 
@@ -3107,6 +3113,8 @@ export const healthIssues = sqliteTable(
     index("idx_health_issues_resolution_reason").on(table.resolutionReason, table.resolvedAt),
     // OPE-382 — serves the re-verify pick: open rows, oldest attempt first.
     index("idx_health_issues_reverify").on(table.resolvedAt, table.lastReverifiedAt),
+    // OPE-1573 (drizzle/0415) — Overview tab `count(*) WHERE first_detected_at >= ?`.
+    index("idx_health_issues_first_detected").on(table.firstDetectedAt),
   ]
 );
 
@@ -4984,6 +4992,8 @@ export const vendorEnrichmentCandidates = sqliteTable(
     index("idx_vec_vendor").on(t.vendorId),
     index("idx_vec_decision").on(t.decision),
     index("idx_vec_job_run").on(t.jobRunId),
+    // OPE-1573 (drizzle/0415) — Overview tab `max(created_at)` was a full scan.
+    index("idx_vec_created_at").on(t.createdAt),
     // Partial unique: at most one OPEN proposal per (vendor, field).
     uniqueIndex("idx_vec_pending_field")
       .on(t.vendorId, t.proposedField)
