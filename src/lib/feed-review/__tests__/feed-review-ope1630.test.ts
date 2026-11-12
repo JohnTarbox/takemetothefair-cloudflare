@@ -272,6 +272,102 @@ describe("approve", () => {
   });
 });
 
+describe("reviewer answers to a refusal (venue_id, not_duplicate_of)", () => {
+  it("venue_id completes an item whose feed names a venue but no town, and uses exactly that venue", async () => {
+    seedItem(
+      "i-notown",
+      feedEvent({
+        externalId: "201",
+        title: "North Pole Express",
+        venue: { name: "Bath Middle Sch.", address: null, city: null, state: null, zip: null },
+      })
+    );
+    // Without an answer: the row has no town, so it cannot become a listing.
+    expect(await review({ feedItemId: "i-notown", action: "approve" })).toMatchObject({
+      ok: false,
+      code: "invalid_item",
+    });
+    // A second, same-named venue in the same town: re-resolving the name would be
+    // ambiguous, so the picked id must be used as-is.
+    raw
+      .prepare(
+        "INSERT INTO venues (id, name, slug, city, state) VALUES ('v-bath2','Bath Middle School','bath-middle-school-2','Bath','ME')"
+      )
+      .run();
+    const r = await review({ feedItemId: "i-notown", action: "approve", venueId: "v-bath2" });
+    expect(r).toMatchObject({ ok: true, review_state: "linked" });
+    if (!r.ok) throw new Error("unreachable");
+    expect(one("SELECT venue_id, status FROM events WHERE id=?", r.event!.id)).toEqual({
+      venue_id: "v-bath2",
+      status: "APPROVED",
+    });
+    const a = one<{ payload_json: string }>(
+      "SELECT payload_json FROM admin_actions WHERE action='feed_item.approve' AND target_id='i-notown'"
+    );
+    expect(JSON.parse(a.payload_json)).toMatchObject({ venue_id: "v-bath2", venue_picked: true });
+  });
+
+  it("an unknown venue_id is refused and creates nothing", async () => {
+    const before = n("SELECT COUNT(*) n FROM events");
+    expect(
+      await review({ feedItemId: "i-novenue", action: "approve", venueId: "v-nope" })
+    ).toMatchObject({ ok: false, code: "venue_not_found" });
+    expect(n("SELECT COUNT(*) n FROM events")).toBe(before);
+  });
+
+  it("not_duplicate_of overrides only the match the reviewer named", async () => {
+    // Another organizer's DIFFERENT show at the same venue a day earlier: dedup's
+    // venue ±7-day stage calls it the same event.
+    raw
+      .prepare(
+        "INSERT INTO promoters (id, company_name, slug) VALUES ('p-x','Bath Chamber','bath-chamber')"
+      )
+      .run();
+    raw
+      .prepare(
+        "INSERT INTO events (id, name, slug, promoter_id, venue_id, start_date, end_date, status) VALUES ('e-xmas','Bath Spirit of Christmas Fair','bath-spirit-of-christmas-2026','p-x','v-bath',?,?,'APPROVED')"
+      )
+      .run(Date.UTC(2026, 11, 12, 12) / 1000, Date.UTC(2026, 11, 12, 12) / 1000);
+    const xmas = one("SELECT * FROM events WHERE id='e-xmas'");
+
+    expect(await review({ feedItemId: "i-bath1", action: "approve" })).toMatchObject({
+      ok: false,
+      code: "listed_by_another_organizer",
+      suggest: { event_id: "e-xmas" },
+    });
+    // Naming a different event does not wave this match through.
+    expect(
+      await review({ feedItemId: "i-bath1", action: "approve", notDuplicateOf: "e-tsg" })
+    ).toMatchObject({ ok: false, code: "listed_by_another_organizer" });
+    expect(n("SELECT COUNT(*) n FROM events WHERE name='The Bath Antique Sale'")).toBe(0);
+
+    const r = await review({ feedItemId: "i-bath1", action: "approve", notDuplicateOf: "e-xmas" });
+    expect(r).toMatchObject({ ok: true, review_state: "linked" });
+    if (!r.ok) throw new Error("unreachable");
+    expect(r.event!.id).not.toBe("e-xmas");
+    expect(one("SELECT promoter_id, venue_id FROM events WHERE id=?", r.event!.id)).toEqual({
+      promoter_id: "p-g",
+      venue_id: "v-bath",
+    });
+    // The other organizer's listing is untouched.
+    expect(one("SELECT * FROM events WHERE id='e-xmas'")).toEqual(xmas);
+    const a = one<{ payload_json: string }>(
+      "SELECT payload_json FROM admin_actions WHERE action='feed_item.approve' AND target_id='i-bath1'"
+    );
+    expect(JSON.parse(a.payload_json)).toMatchObject({ not_duplicate_of: "e-xmas" });
+  });
+
+  it("not_duplicate_of also answers a same-organizer duplicate refusal, for that event only", async () => {
+    expect(
+      await review({ feedItemId: "i-tsg", action: "approve", notDuplicateOf: "e-other" })
+    ).toMatchObject({ ok: false, code: "duplicate" });
+    const r = await review({ feedItemId: "i-tsg", action: "approve", notDuplicateOf: "e-tsg" });
+    expect(r).toMatchObject({ ok: true });
+    if (!r.ok) throw new Error("unreachable");
+    expect(r.event!.id).not.toBe("e-tsg");
+  });
+});
+
 describe("reject", () => {
   it("needs a reason, records it, and a rejected item cannot be approved by accident", async () => {
     expect(await review({ feedItemId: "i-wedding", action: "reject" })).toMatchObject({
