@@ -4,7 +4,6 @@ import {
   feedLaneDigestLine,
   isFeedHealthy,
   median,
-  REVIEW_NOT_MEASURED_REASON,
   type FeedItemRow,
   type FeedLaneInput,
   type FeedRow,
@@ -139,16 +138,49 @@ describe("buildFeedLaneMetrics — the 2026-11-11 acceptance counts (OPE-1632)",
 });
 
 describe("null, never 0", () => {
-  it("reviewed / approved / rejected are null with a reason until OPE-1630 ships", () => {
-    const m = buildFeedLaneMetrics(nov11());
-    for (const name of ["reviewed", "approved", "rejected"]) {
-      const s = step(m.total, name);
-      expect(s.count).toBeNull();
-      expect(s.rate).toBeNull();
-      expect(s.reason).toBe(REVIEW_NOT_MEASURED_REASON);
+  it("reviewed / approved / rejected count the review step; their rates are null on a 0 base", () => {
+    const none = buildFeedLaneMetrics(nov11());
+    expect(step(none.total, "reviewed")).toMatchObject({ count: 0, rate: 0 });
+    for (const name of ["approved", "rejected"]) {
+      expect(step(none.total, name)).toMatchObject({ count: 0, rate: null, rate_base: "reviewed" });
     }
+
+    const at = new Date(READ.getTime() + H);
+    const base = nov11();
+    const reviewed = buildFeedLaneMetrics({
+      ...base,
+      items: [
+        ...base.items,
+        item("gurley", {
+          reviewState: "linked",
+          eventId: "e-a",
+          reviewedAt: at,
+          reviewAction: "feed_item.approve",
+        }),
+        item("gurley", {
+          reviewState: "linked",
+          eventId: "e-b",
+          reviewedAt: at,
+          reviewAction: "feed_item.approve_as_occurrence",
+        }),
+        item("gurley", {
+          reviewState: "linked",
+          eventId: "e-c",
+          reviewedAt: at,
+          reviewAction: "feed_item.link",
+        }),
+        item("gurley", {
+          reviewState: "rejected",
+          reviewedAt: at,
+          reviewAction: "feed_item.reject",
+        }),
+      ],
+    });
+    expect(step(reviewed.total, "reviewed").count).toBe(4);
+    expect(step(reviewed.total, "approved")).toMatchObject({ count: 2, rate: 0.5 });
+    expect(step(reviewed.total, "rejected")).toMatchObject({ count: 1, rate: 0.25 });
     // landmark: a measured step on the same output is a real number
-    expect(step(m.total, "read").count).toBe(37);
+    expect(step(none.total, "read").count).toBe(37);
   });
 
   it("an empty lane reports zero counts, but null ages / rates / lead time with reasons", () => {
