@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   return withPromoterApi(request, ROUTE, async ({ db, caller, body }) => {
     const json = parseJson(body, false);
     if (!json.ok) return json.response;
-    const dry = readDryRun(request, json.value);
+    const dry = readDryRun(request, json.value, caller);
     if (!dry.ok) return dry.response;
     const parsed = upsertBodySchema.safeParse(dry.value);
     if (!parsed.success)

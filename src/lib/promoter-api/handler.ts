@@ -14,6 +14,7 @@ import { getBurstLimiter } from "@/lib/burst-limiter";
 import { isDeployedEnvironment } from "@/lib/runtime-env";
 import { logError } from "@/lib/logger";
 import { PROMOTER_API_RATE, authenticate } from "./auth";
+import { readOnlyDb } from "@/lib/test-submission/read-only-db";
 import { consumeRequestId, lookupApiKey, touchApiKey } from "./store";
 import type { Caller, ServiceResult } from "./service";
 import type { FieldError } from "./fields";
@@ -140,7 +141,11 @@ export async function withPromoterApi(
     keyId = auth.key.keyId;
     await touchApiKey(db, auth.key.keyId, now);
     const res = await run({
-      db,
+      // OPE-1625 — a test key's route gets a database that throws on any write,
+      // so a route that forgets to honour `testKey` fails loudly instead of
+      // publishing. The replay ledger and last-used stamp above are the only
+      // writes a test key makes, exactly as for a dry run.
+      db: auth.key.isTest ? readOnlyDb(db) : db,
       body,
       caller: {
         keyId: auth.key.keyId,
@@ -148,6 +153,7 @@ export async function withPromoterApi(
         promoterUserId: auth.key.promoterUserId,
         requestId: auth.requestId,
         now,
+        ...(auth.key.isTest ? { testKey: true } : {}),
       },
     });
     if (res.status >= 400) {

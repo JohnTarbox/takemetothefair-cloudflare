@@ -50,6 +50,8 @@ export interface Caller {
   now: Date;
   /** OPE-1625 — decide only; write nothing. */
   dryRun?: boolean;
+  /** OPE-1625 — the request was signed with a TEST key: every write is a dry run. */
+  testKey?: boolean;
 }
 
 export type Outcome = "created" | "update_staged" | "unchanged" | "cancel_staged";
