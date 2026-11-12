@@ -803,8 +803,36 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     label: "Agent-silence watchdog (Cloudflare cron)",
     priority: "P1",
     expectedWindowHours: 48,
+    //
+    // OPE-1637 — keyed on the watchdog's OWN code. This read `kind='watchdog'`,
+    // which every cron stamp shares (`watchdog:occurred-sweep` daily,
+    // `watchdog:host-silence` hourly), so any of them kept this probe green
+    // while the agent-silence watchdog itself was dead.
     lastEvidenceAt: (db) =>
-      maxTs(db, agentHeartbeats, agentHeartbeats.lastSeenAt, eq(agentHeartbeats.kind, "watchdog")),
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:agent-silence")
+      ),
+  },
+  {
+    // OPE-1637 — proof the hourly host-silence watch is itself running. It
+    // stamps `watchdog:host-silence` on every run, including dormant ones (no
+    // host stamp yet), so a dead hourly cron goes red here even before the
+    // wrapper's token exists. 3h = two missed hourly runs plus slack.
+    name: "host-silence-watch",
+    ownerOpe: "OPE-1637",
+    label: "Hourly Battleship host-silence watch (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:host-silence")
+      ),
   },
   {
     // OPE-532 — proof the held-submission queue is still being MEASURED.

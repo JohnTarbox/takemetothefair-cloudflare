@@ -92,6 +92,7 @@ import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balan
 import { runScheduledBurstCapSelfTest } from "./burst-cap-selftest-canary.js";
 import { runScheduledOperatorQueueNotice } from "./operator-queue-notice.js";
 import { runAgentSilenceWatchdog } from "./agent-silence-watchdog.js";
+import { isWatchedLane, recordHostHeartbeat, runHostSilenceWatch } from "./host-silence-watch.js";
 import { runScheduledCpiScanWatchdog } from "./cpi-scan-watchdog.js";
 import {
   runScheduledHeroProposals,
@@ -256,6 +257,11 @@ type Env = WorkerEnv &
     // outbound MCP email. Independent of the Slack webhook — set either,
     // both, or neither.
     ALERT_EMAIL_TECHNICAL?: string;
+    // OPE-1637 — the ONE credential Battleship's queue-cron.sh holds. It can only
+    // upsert a `host:<watched lane>` heartbeat row (kind='host') via
+    // POST /host-heartbeat. Set with `wrangler secret put HOST_HEARTBEAT_TOKEN`;
+    // revoke with `wrangler secret delete HOST_HEARTBEAT_TOKEN`. Unset → 503.
+    HOST_HEARTBEAT_TOKEN?: string;
     // OPE-366 — recipient for the unterminated-crossing E2 alarm (committed
     // [vars]; John's 2026-09-30 ruling named john@pimboat.com).
     UNTERMINATED_CROSSING_ALERT_EMAIL?: string;
@@ -1070,6 +1076,36 @@ export { BurstCounter } from "./burst-counter.js";
 // instead. Auth: X-Internal-Key, same pattern used by cron sweeps + email
 // handler. Returns null if the path doesn't match — caller falls through
 // to the OAuth provider.
+/**
+ * OPE-1637 — `POST /host-heartbeat`, called by `~/open-engine/queue-cron.sh` on
+ * every cron fire. Body: `{ "agentCode": "developer-claude-code", "note"?: str }`.
+ * Auth: `Authorization: Bearer <HOST_HEARTBEAT_TOKEN>`, compared in constant time.
+ */
+async function handleHostHeartbeat(request: Request, env: Env): Promise<Response> {
+  const json = (body: unknown, status: number) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+  if (!env.HOST_HEARTBEAT_TOKEN) return json({ ok: false, error: "not_configured" }, 503);
+  const presented = (request.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!presented || !(await timingSafeEqualString(presented, env.HOST_HEARTBEAT_TOKEN))) {
+    return json({ ok: false, error: "unauthorized" }, 401);
+  }
+  let body: { agentCode?: unknown; note?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return json({ ok: false, error: "invalid_json" }, 400);
+  }
+  if (!isWatchedLane(body.agentCode)) return json({ ok: false, error: "lane_not_watched" }, 400);
+  const note = typeof body.note === "string" ? body.note.slice(0, 200) : null;
+  const now = new Date();
+  await recordHostHeartbeat(env.DB, body.agentCode, note, now);
+  return json({ ok: true, agentCode: body.agentCode, lastSeenAt: now.toISOString() }, 200);
+}
+
 async function handleWorkflowEndpoints(
   request: Request,
   env: Env,
@@ -1834,6 +1870,8 @@ export default {
           ["replied-ledger-check", () => runScheduledRepliedLedgerCheck(env)],
           // OPE-1617 — organizer feed polling; reads nothing unless FEED_POLLING_ENABLED = "true".
           ["organizer-feed-poll", () => runScheduledFeedPoll(env)],
+          // OPE-1637 — Battleship host silence (75 min). Mails once on silent, once on clear.
+          ["host-silence-watch", () => runHostSilenceWatch(env)],
         ]).then(() => undefined)
       );
       return;
@@ -2243,6 +2281,13 @@ export default {
     // feed due after its HMAC signature checks out (the body is never parsed).
     if (url.pathname.startsWith(WEBSUB_CALLBACK_PATH)) {
       return handleWebSubCallback(request, getDb(env.DB));
+    }
+
+    // OPE-1637 — host heartbeat from Battleship's cron wrapper. Its own narrow
+    // token (HOST_HEARTBEAT_TOKEN), never INTERNAL_API_KEY or an mmatf_ token:
+    // the only write it allows is the host row the hourly silence watch reads.
+    if (url.pathname === "/host-heartbeat") {
+      return handleHostHeartbeat(request, env);
     }
 
     // Legacy mmatf_ tokens bypass OAuth and use the stateless handler
