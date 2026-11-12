@@ -16,6 +16,10 @@ type Db = ReturnType<typeof getCloudflareDb>;
 
 /** Each check fetches someone else's server, so the cap is per hour, per IP. */
 export const CHECK_CALENDAR_RATE = { max: 20, periodSeconds: 3600 } as const;
+/** OPE-1625 phase 2 — /api/v1/preview-event fetches nothing outside our own
+ *  database, so its cap is looser than check-calendar's. Here, not in the route
+ *  file: Next.js refuses a non-handler export from route.ts. */
+export const PREVIEW_EVENT_RATE = { max: 60, periodSeconds: 3600 } as const;
 /** Items listed in one report; the counts still cover everything read. */
 export const CHECK_MAX_ITEMS = 200;
 
@@ -66,34 +70,48 @@ export function clientIp(request: Request): string {
  * fetcher is the abuse this limit exists for. No binding in a deployed Worker,
  * or a limiter that throws → refused (503). No binding locally / in unit tests → allowed.
  */
-export async function checkCalendarRateLimit(
+export async function checkCalendarRateLimit(ip: string): Promise<RateVerdict> {
+  return publicRateLimit("check-calendar", CHECK_CALENDAR_RATE, ip);
+}
+
+export type RateVerdict =
+  { allowed: true } | { allowed: false; status: 429 | 503; retryAfterSeconds: number };
+
+/**
+ * OPE-1625 — the fail-closed per-IP cap shared by the public test-submission
+ * routes (check-calendar, preview-event). `scope` keys the BurstCounter, so
+ * one route's use never spends another's allowance.
+ */
+export async function publicRateLimit(
+  scope: string,
+  rate: { max: number; periodSeconds: number },
   ip: string
-): Promise<{ allowed: true } | { allowed: false; status: 429 | 503; retryAfterSeconds: number }> {
+): Promise<RateVerdict> {
   const limiter = getBurstLimiter();
   if (!limiter) {
     if (isDeployedEnvironment()) {
-      console.error("[check-calendar] BURST_COUNTER binding missing in production — refusing");
+      console.error(`[${scope}] BURST_COUNTER binding missing in production — refusing`);
       return { allowed: false, status: 503, retryAfterSeconds: 60 };
     }
     return { allowed: true };
   }
   try {
     const v = await limiter.limit({
-      key: `check-calendar:${ip}`,
-      max: CHECK_CALENDAR_RATE.max,
-      periodSeconds: CHECK_CALENDAR_RATE.periodSeconds,
+      key: `${scope}:${ip}`,
+      max: rate.max,
+      periodSeconds: rate.periodSeconds,
     });
     if (v.success) return { allowed: true };
     return {
       allowed: false,
       status: 429,
       retryAfterSeconds: Math.min(
-        CHECK_CALENDAR_RATE.periodSeconds,
-        Math.max(1, v.retryAfterSeconds ?? CHECK_CALENDAR_RATE.periodSeconds)
+        rate.periodSeconds,
+        Math.max(1, v.retryAfterSeconds ?? rate.periodSeconds)
       ),
     };
   } catch (error) {
-    console.error("[check-calendar] burst limiter threw; refusing", error);
+    console.error(`[${scope}] burst limiter threw; refusing`, error);
     return { allowed: false, status: 503, retryAfterSeconds: 60 };
   }
 }
