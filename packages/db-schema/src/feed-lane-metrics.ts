@@ -49,11 +49,14 @@ const HEALTHY_POLL_MULTIPLE = 2;
 const HEALTHY_MIN_HOURS = 24;
 
 /**
- * Until OPE-1630 (feed review step) ships there is no record of a review, so
- * reviewed / approved / rejected are NOT MEASURED — never 0.
+ * reviewed / approved / rejected come from the feed review step (OPE-1630,
+ * live 2026-11-12): `promoter_feed_items.reviewed_at` says an item was reviewed,
+ * and its latest `admin_actions` row (`feed_item.<action>`) says which way —
+ * because `approve` and `link` both leave the item `linked`. Before that step
+ * shipped these read null "not yet measured"; a review count of 0 is now a real 0.
  */
-export const REVIEW_NOT_MEASURED_REASON =
-  "not yet measured: the feed review step (OPE-1630) has not shipped, so no review is recorded";
+export const FEED_REVIEW_ACTION_PREFIX = "feed_item." as const;
+const APPROVE_ACTIONS = new Set(["feed_item.approve", "feed_item.approve_as_occurrence"]);
 
 // ── Inputs (plain rows) ──────────────────────────────────────────────────────
 
@@ -81,6 +84,10 @@ export interface FeedItemRow {
   missingSince: Date | null;
   /** Whether the linked event passes the public-visibility gate; null when unlinked. */
   eventPublic: boolean | null;
+  /** OPE-1630 — when a reviewer acted on the item; null/absent if never reviewed. */
+  reviewedAt?: Date | null;
+  /** OPE-1630 — the latest review action (`feed_item.approve` / `…approve_as_occurrence` / `…link` / `…reject`). */
+  reviewAction?: string | null;
 }
 
 export interface FeedChangeRow {
@@ -241,14 +248,11 @@ function buildSection(
     byRule.set(rule, (byRule.get(rule) ?? 0) + 1);
   }
 
-  const notMeasured = (step: string, base: string): FunnelStep => ({
-    step,
-    count: null,
-    rate: null,
-    rate_base: base,
-    formula: `${step}: review actions recorded on items in the window`,
-    reason: REVIEW_NOT_MEASURED_REASON,
-  });
+  const reviewedRows = inWindow.filter((i) => i.reviewedAt != null);
+  const approvedCount = reviewedRows.filter(
+    (i) => i.reviewAction != null && APPROVE_ACTIONS.has(i.reviewAction)
+  ).length;
+  const rejectedCount = reviewedRows.filter((i) => i.reviewState === "rejected").length;
 
   const steps: FunnelStep[] = [
     {
@@ -287,9 +291,29 @@ function buildSection(
       rate_base: "included",
       formula: "included items matching no event (review_state = 'awaiting_review')",
     },
-    notMeasured("reviewed", "new"),
-    notMeasured("approved", "reviewed"),
-    notMeasured("rejected", "reviewed"),
+    {
+      step: "reviewed",
+      count: reviewedRows.length,
+      rate: rate(reviewedRows.length, included),
+      rate_base: "included",
+      formula:
+        "read items a reviewer acted on (reviewed_at set: approve, approve_as_occurrence, link or reject — OPE-1630)",
+    },
+    {
+      step: "approved",
+      count: approvedCount,
+      rate: rate(approvedCount, reviewedRows.length),
+      rate_base: "reviewed",
+      formula:
+        "reviewed items whose latest review action created the listing (admin_actions feed_item.approve / feed_item.approve_as_occurrence); a `link` to an existing listing is reviewed but not approved",
+    },
+    {
+      step: "rejected",
+      count: rejectedCount,
+      rate: rate(rejectedCount, reviewedRows.length),
+      rate_base: "reviewed",
+      formula: "reviewed items a reviewer rejected (review_state = 'rejected')",
+    },
     {
       step: "published",
       count: published,
@@ -546,6 +570,13 @@ export async function loadFeedLaneMetrics(
           lastSeenAt: i.lastSeenAt,
           startLocal: i.startLocal,
           missingSince: i.missingSince,
+          reviewedAt: i.reviewedAt,
+          // The latest review action, only for reviewed rows (indexed on
+          // admin_actions(target_type, target_id)).
+          reviewAction: sql<string | null>`CASE WHEN ${i.reviewedAt} IS NULL THEN NULL ELSE
+            (SELECT a.action FROM admin_actions a WHERE a.target_type = 'promoter_feed_item'
+              AND a.target_id = ${i.id} AND a.action LIKE 'feed_item.%'
+              ORDER BY a.created_at DESC LIMIT 1) END`,
           eventPublic: sql<number | null>`CASE WHEN ${i.eventId} IS NULL THEN NULL
             WHEN EXISTS (SELECT 1 FROM ${events} WHERE ${events.id} = ${i.eventId} AND ${publicWhere}) THEN 1 ELSE 0 END`,
         })
