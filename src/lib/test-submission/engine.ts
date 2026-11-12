@@ -273,7 +273,8 @@ const skip = (reason: SkipReason, summary: string): Outcome => ({ kind: "skip", 
 function skipForVerdict(reason: string): Outcome {
   if (reason.startsWith("title matches closure"))
     return skip("closure", `Skipped: this reads as a closure notice, not an event (${reason}).`);
-  if (reason.startsWith("program matches"))
+  // "program title matches …" / "program description matches … and …" (OPE-1629).
+  if (reason.startsWith("program "))
     return skip(
       "childrens_program",
       `Skipped: this reads as a children's or school program (${reason}). We list fairs, festivals, markets and shows.`
