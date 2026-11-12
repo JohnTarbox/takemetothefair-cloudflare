@@ -11,8 +11,14 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, asc, eq, sql } from "drizzle-orm";
-import { adminActions, promoterEventFeeds, promoterFeedReads, promoters } from "../schema.js";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import {
+  adminActions,
+  feedHealthFlags,
+  promoterEventFeeds,
+  promoterFeedReads,
+  promoters,
+} from "../schema.js";
 import { jsonContent, publicEventWhere } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -257,7 +263,7 @@ export function registerOrganizerFeedTools(
 
   server.tool(
     "list_promoter_feeds",
-    "OPE-1626 — every registered organizer feed and its scheduled-reader state: id, promoter, url, kind, enabled, disabled_reason / disabled_at (a feed is switched off after 5 consecutive failed reads), questions_hold (while true no question batch is composed for the promoter's contact), poll interval, last_read_at / last_read_status, last_ok_at, next_read_at, consecutive_errors, and the last run's counts from the run log (outcome, trigger, http status, items read / included / linked / awaiting review, discrepancies, third values, error). Optional promoter_id. Read-only.",
+    "OPE-1626 — every registered organizer feed and its scheduled-reader state: id, promoter, url, kind, enabled, disabled_reason / disabled_at (a feed is switched off after 5 consecutive failed reads), questions_hold (while true no question batch is composed for the promoter's contact), poll interval, last_read_at / last_read_status, last_ok_at, next_read_at, consecutive_errors, and the last run's counts from the run log (outcome, trigger, http status, items read / included / linked / awaiting review, discrepancies, third values, error). OPE-1633: open_flags — the feed's open health flags (check: freshness | volume_drop | format_drift | inclusion_swing, observed, baseline, detail, first/last seen); each clears itself when a later read is back within bounds. Optional promoter_id. Read-only.",
     { promoter_id: z.string().min(1).optional() },
     async (p) => {
       const f = promoterEventFeeds;
@@ -294,6 +300,26 @@ export function registerOrganizerFeedTools(
         );
       const byFeed = new Map(lastRuns.map((x) => [x.feedId, x]));
       const iso = (d: Date | null) => d?.toISOString() ?? null;
+      // OPE-1633 — every open health flag, in one query.
+      const h = feedHealthFlags;
+      const openFlags = await db
+        .select()
+        .from(h)
+        .where(isNull(h.clearedAt))
+        .orderBy(asc(h.firstSeenAt));
+      const flagsByFeed = new Map<string, Array<Record<string, unknown>>>();
+      for (const fl of openFlags) {
+        const list = flagsByFeed.get(fl.feedId) ?? [];
+        list.push({
+          check: fl.checkName,
+          observed: fl.observed,
+          baseline: fl.baseline,
+          detail: fl.detail,
+          first_seen_at: iso(fl.firstSeenAt),
+          last_seen_at: iso(fl.lastSeenAt),
+        });
+        flagsByFeed.set(fl.feedId, list);
+      }
       return {
         content: [
           jsonContent({
@@ -316,6 +342,7 @@ export function registerOrganizerFeedTools(
                 next_read_at: iso(x.nextReadAt),
                 consecutive_errors: x.consecutiveErrors,
                 ping_outstanding_since: iso(x.pingRequestedAt),
+                open_flags: flagsByFeed.get(x.id) ?? [],
                 last_run: run
                   ? {
                       started_at: iso(run.startedAt),

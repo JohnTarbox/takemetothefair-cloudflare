@@ -29,6 +29,13 @@ import { readJsonLdSource } from "./jsonld.js";
 import { fetchConditional, fetchText, nextReadDelayMs } from "./fetch-feed.js";
 import { ingestFeedItems, type IngestReport } from "./ingest.js";
 import { discoverHub, type HubLinks } from "./websub.js";
+import {
+  applyHealthResults,
+  evaluateReadHealth,
+  fillCounts,
+  loadHealthBaseline,
+  type ReadSample,
+} from "./health.js";
 
 const DAY_MS = 86_400_000;
 const DEFAULT_TZ = "America/New_York";
@@ -68,6 +75,8 @@ export interface FeedRunResult {
   report: IngestReport | null;
   /** OPE-1621 — a WebSub hub this read advertised (header or body); the scheduler subscribes. */
   websub?: HubLinks | null;
+  /** OPE-1633 — health flags this read opened or cleared (real reads only). */
+  health?: { opened: string[]; cleared: string[] };
 }
 
 type FeedRow = typeof promoterEventFeeds.$inferSelect;
@@ -179,6 +188,33 @@ function httpStatusOf(message: string): number | null {
 }
 
 /**
+ * OPE-1633 — evaluate the read-time health checks for one real read and write
+ * the flags. Observability: a failure here never fails the read.
+ */
+async function recordFeedHealth(
+  db: Db,
+  feedId: string,
+  now: Date,
+  current: ReadSample,
+  /** The run-log row of THIS read, kept out of its own baseline. */
+  readId?: string
+): Promise<FeedRunResult["health"]> {
+  try {
+    const baseline = current.outcome === "ok" ? await loadHealthBaseline(db, feedId, readId) : [];
+    const c = await applyHealthResults(db, feedId, now, evaluateReadHealth(current, baseline));
+    return { opened: c.opened, cleared: c.cleared };
+  } catch (error) {
+    await logError(db, {
+      level: "warn",
+      source: "feeds:health",
+      message: `feed health evaluation failed for ${feedId}`,
+      error,
+    });
+    return undefined;
+  }
+}
+
+/**
  * OPE-1626 — one run-log row, then prune the feed's log to the newest
  * FEED_READ_LOG_KEEP. Observability: a failure here never fails the read.
  */
@@ -271,6 +307,7 @@ export async function runFeedRead(
     const message = (e as Error).message;
     let next: Date | null = null;
     let disabled = false;
+    let health: FeedRunResult["health"];
     if (!args.dryRun) {
       const errors = feed.consecutiveErrors + 1;
       disabled = errors >= FEED_AUTO_DISABLE_AFTER;
@@ -298,6 +335,18 @@ export async function runFeedRead(
         httpStatus: httpStatusOf(message),
         error: message.slice(0, 500),
       });
+      // OPE-1633 — a body that did not parse is format drift (a).
+      health = await recordFeedHealth(db, feed.id, t, {
+        outcome: "error",
+        itemsRead: 0,
+        included: 0,
+        titleFilled: null,
+        startFilled: null,
+        venueFilled: null,
+        unmappable: null,
+        httpStatus: httpStatusOf(message),
+        error: message,
+      });
       if (disabled) {
         await logError(db, {
           level: "error",
@@ -319,6 +368,7 @@ export async function runFeedRead(
       read: { complete: false },
       next_read_at: next?.toISOString() ?? null,
       report: null,
+      ...(health ? { health } : {}),
     };
   }
 
@@ -365,6 +415,7 @@ export async function runFeedRead(
     actor: args.actor,
     dropScope: read.complete ? { fromDate: start, toDate: end } : undefined,
   });
+  let health: FeedRunResult["health"];
   if (!args.dryRun) {
     // ingestFeedItems already stamped last_read_at / status; add the polling state.
     await db
@@ -378,13 +429,19 @@ export async function runFeedRead(
         updatedAt: t,
       })
       .where(eq(promoterEventFeeds.id, feed.id));
+    // OPE-1633 — fill counts and unmappable go on the row: tomorrow's baseline.
+    const fills = fillCounts(read.items);
+    const unmappable = read.meta.unmappable_items ?? null;
+    const readId = crypto.randomUUID();
     await recordFeedRead(db, {
-      id: crypto.randomUUID(),
+      id: readId,
       feedId: feed.id,
       startedAt: t,
       finishedAt: finished(),
       triggeredBy,
       outcome: "ok",
+      ...fills,
+      unmappable,
       httpStatus: 200,
       itemsRead: report.items_read,
       included: report.included,
@@ -394,6 +451,22 @@ export async function runFeedRead(
       discrepancies: report.discrepancies_opened,
       thirdValues: report.third_values,
     });
+    // OPE-1633 — baseline = the good reads before this one (its own row excluded).
+    health = await recordFeedHealth(
+      db,
+      feed.id,
+      t,
+      {
+        outcome: "ok",
+        itemsRead: report.items_read,
+        included: report.included,
+        ...fills,
+        unmappable,
+        httpStatus: 200,
+        error: null,
+      },
+      readId
+    );
   }
   return {
     ...base,
@@ -402,5 +475,6 @@ export async function runFeedRead(
     next_read_at: args.dryRun ? null : next.toISOString(),
     report,
     websub: read.websub,
+    ...(health ? { health } : {}),
   };
 }

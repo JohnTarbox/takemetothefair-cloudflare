@@ -223,6 +223,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // OPE-1626 — a deadline offset: evidence is (earliest feed deadline − 1h),
       // the deadline being 2× that feed's own interval after its last good read.
       "feed-reader": 1,
+      // OPE-1633 — one evidence row per hourly poll; three missed runs before it pages.
+      "feed-health-eval": 3,
       "promoter-onboarding": 3,
       "replied-ledger-check": 3,
       // OPE-1239 — */10 cron, run row at most hourly; three missed before it pages.
