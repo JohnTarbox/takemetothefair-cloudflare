@@ -31,6 +31,7 @@ import { assessPhotoIntakeStorage } from "@/lib/photo-intake-reconcile";
 import { assessAllUncitedConfirmedDates } from "@/lib/uncited-confirmed-dates";
 import { assessAllProjectedDateAttestation } from "@/lib/events/projected-date-attestation";
 import {
+  digestBytes,
   formatStaleRedDigest,
   selectStaleFaultReds,
   selectStaleReds,
@@ -454,13 +455,15 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
             });
           }
         } catch (err) {
-          // Best-effort: a send failure must not fail the scan.
+          // A send failure must not fail the scan — but it is the ALERT itself
+          // going missing, so it logs at `error`, not `warn` (OPE-1628: a
+          // too-big digest was refused for five days as a quiet warn).
           await logError(db, {
-            level: "warn",
+            level: "error",
             source: "cpi:stale-red-scan",
             message: "stale-red digest enqueue failed; scan still ok",
             error: err,
-            context: { count: allReds.length },
+            context: { count: allReds.length, bytes: digestBytes(digest) },
           });
         }
       }
