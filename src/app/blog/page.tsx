@@ -1,10 +1,17 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { FileText } from "lucide-react";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { kvReadThrough } from "@/lib/kv-read-through";
+import {
+  BLOG_INDEX_CACHE_KEY,
+  BLOG_INDEX_CACHE_TTL_SECONDS,
+  selectBlogIndexPage,
+  type CachedBlogIndexPost,
+} from "@/lib/blog/index-cache";
 import { blogPosts, users } from "@/lib/db/schema";
 import { containsCI } from "@/lib/db/contains-ci";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { Badge } from "@/components/ui/badge";
@@ -57,51 +64,87 @@ interface SearchParams {
 
 const POSTS_PER_PAGE = 12;
 
-export const dynamic = "force-dynamic";
+type ParsedBlogIndexPost = Omit<CachedBlogIndexPost, "tags" | "categories"> & {
+  tags: string[];
+  categories: string[];
+};
 
-export default async function BlogPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  const params = await searchParams;
-  const session = await auth();
-  const isAdmin = session?.user?.role === "ADMIN";
+function parseCachedPost(p: CachedBlogIndexPost): ParsedBlogIndexPost {
+  return {
+    ...p,
+    authorName: formatAuthorName(p.authorName),
+    tags: JSON.parse(p.tags || "[]") as string[],
+    categories: JSON.parse(p.categories || "[]") as string[],
+  };
+}
+
+const indexColumns = {
+  id: blogPosts.id,
+  title: blogPosts.title,
+  slug: blogPosts.slug,
+  body: blogPosts.body,
+  excerpt: blogPosts.excerpt,
+  authorName: users.name,
+  tags: blogPosts.tags,
+  categories: blogPosts.categories,
+  featuredImageUrl: blogPosts.featuredImageUrl,
+  status: blogPosts.status,
+  publishDate: blogPosts.publishDate,
+};
+
+type IndexRow = {
+  id: string;
+  title: string;
+  slug: string;
+  body: string | null;
+  excerpt: string | null;
+  authorName: string | null;
+  tags: string | null;
+  categories: string | null;
+  featuredImageUrl: string | null;
+  status: string;
+  publishDate: Date | null;
+};
+
+/** Drop `body` once it has supplied the first-image fallback. */
+function toCachedPost(r: IndexRow): CachedBlogIndexPost {
+  return {
+    id: r.id,
+    title: r.title,
+    slug: r.slug,
+    excerpt: r.excerpt,
+    authorName: r.authorName,
+    tags: r.tags,
+    categories: r.categories,
+    featuredImageUrl: r.featuredImageUrl || extractFirstImage(r.body),
+    status: r.status,
+    publishDate: r.publishDate ? new Date(r.publishDate).toISOString() : null,
+  };
+}
+
+/** Cache loader: every PUBLISHED post, newest first — the order the page shows. */
+async function loadPublishedBlogIndex(): Promise<CachedBlogIndexPost[]> {
   const db = getCloudflareDb();
+  const rows = await db
+    .select(indexColumns)
+    .from(blogPosts)
+    .leftJoin(users, eq(blogPosts.authorId, users.id))
+    .where(eq(blogPosts.status, "PUBLISHED"))
+    .orderBy(desc(blogPosts.publishDate));
+  return (rows as IndexRow[]).map(toCachedPost);
+}
 
-  const page = Math.max(1, parseInt(params.page || "1", 10));
+/** Admin path: live, all statuses — unchanged from before OPE-1573. */
+async function loadAdminBlogIndex(tag: string | undefined, page: number) {
+  const db = getCloudflareDb();
   const offset = (page - 1) * POSTS_PER_PAGE;
-
-  const conditions = [];
-  if (!isAdmin) {
-    conditions.push(eq(blogPosts.status, "PUBLISHED"));
-  }
-
-  if (params.tag) {
-    // OPE-1030 → this call site: the LIKE form threw
-    // `D1_ERROR: LIKE or GLOB pattern too complex` on any ?tag= over ~48
-    // chars — 225 rows across 78 URLs on 2026-09-12, every one of them a
-    // 500. Stripping quotes and wildcards (the old `safeTag`) does not help:
-    // the cap is on pattern LENGTH, not on metacharacters. `containsCI` uses
-    // instr(), which has no pattern ceiling. 4th call site of the
-    // OPE-548/565/630 family; see the guard note there.
-    const safeTag = params.tag.replace(/["\\]/g, "");
-    conditions.push(containsCI(blogPosts.tags, `"${safeTag}"`));
-  }
-
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
-
-  const [posts, countResult] = await Promise.all([
+  // OPE-1030 → this call site: the LIKE form threw
+  // `D1_ERROR: LIKE or GLOB pattern too complex` on any ?tag= over ~48
+  // chars. `containsCI` uses instr(), which has no pattern ceiling.
+  const where = tag ? containsCI(blogPosts.tags, `"${tag.replace(/["\\]/g, "")}"`) : undefined;
+  const [posts, countResult, allTagsResult] = await Promise.all([
     db
-      .select({
-        id: blogPosts.id,
-        title: blogPosts.title,
-        slug: blogPosts.slug,
-        body: blogPosts.body,
-        excerpt: blogPosts.excerpt,
-        authorName: users.name,
-        tags: blogPosts.tags,
-        categories: blogPosts.categories,
-        featuredImageUrl: blogPosts.featuredImageUrl,
-        status: blogPosts.status,
-        publishDate: blogPosts.publishDate,
-      })
+      .select(indexColumns)
       .from(blogPosts)
       .leftJoin(users, eq(blogPosts.authorId, users.id))
       .where(where)
@@ -112,26 +155,47 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
       .select({ count: sql<number>`count(*)` })
       .from(blogPosts)
       .where(where),
+    db.select({ tags: blogPosts.tags }).from(blogPosts),
   ]);
+  return {
+    parsedPosts: (posts as IndexRow[]).map((r) => parseCachedPost(toCachedPost(r))),
+    total: countResult[0].count,
+    allTagsResult,
+  };
+}
 
-  const total = countResult[0].count;
+export const dynamic = "force-dynamic";
+
+export default async function BlogPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  const params = await searchParams;
+  const session = await auth();
+  const isAdmin = session?.user?.role === "ADMIN";
+
+  const page = Math.max(1, parseInt(params.page || "1", 10));
+
+  let parsedPosts: ParsedBlogIndexPost[];
+  let total: number;
+  let allTagsResult: Array<{ tags: string | null }>;
+
+  if (isAdmin) {
+    // Admin view includes drafts, so it stays a live read.
+    ({ parsedPosts, total, allTagsResult } = await loadAdminBlogIndex(params.tag, page));
+  } else {
+    // OPE-1573 — public renders are served from ONE cached copy of the
+    // published set (src/lib/blog/index-cache.ts); a `?tag=` crawl no longer
+    // reaches D1 at all. The filter keeps the SQL's containsCI semantics.
+    const all = await kvReadThrough(
+      getCloudflareRateLimitKv(),
+      BLOG_INDEX_CACHE_KEY,
+      BLOG_INDEX_CACHE_TTL_SECONDS,
+      loadPublishedBlogIndex
+    );
+    const sel = selectBlogIndexPage(all, { tag: params.tag, page, perPage: POSTS_PER_PAGE });
+    parsedPosts = sel.posts.map(parseCachedPost);
+    total = sel.total;
+    allTagsResult = all;
+  }
   const totalPages = Math.ceil(total / POSTS_PER_PAGE);
-
-  const parsedPosts = posts.map((p) => ({
-    ...p,
-    authorName: formatAuthorName(p.authorName),
-    tags: JSON.parse(p.tags || "[]") as string[],
-    categories: JSON.parse(p.categories || "[]") as string[],
-    featuredImageUrl: p.featuredImageUrl || extractFirstImage(p.body),
-  }));
-
-  // Collect all unique tags for the filter sidebar
-  const allTagsResult = isAdmin
-    ? await db.select({ tags: blogPosts.tags }).from(blogPosts)
-    : await db
-        .select({ tags: blogPosts.tags })
-        .from(blogPosts)
-        .where(eq(blogPosts.status, "PUBLISHED"));
 
   // A6 (2026-06-04) — rank tags by frequency. Previously we rendered every
   // unique tag inline (~300+ post-content-batches), which made the sidebar
