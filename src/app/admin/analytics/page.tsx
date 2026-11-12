@@ -111,6 +111,7 @@ import {
   parseRulePage,
   ruleRowWindow,
   RULE_PAGE_SIZE,
+  sortRuleRowsByLabel,
 } from "@/lib/recommendations/rule-row-window";
 import {
   AEO_BUCKET_LABELS,
@@ -2855,13 +2856,10 @@ async function RecommendationsTab({
                         </div>
                       </summary>
                       <div className="border-t border-border divide-y divide-gray-100">
-                        {[...group.items]
-                          .sort((a, b) =>
-                            targetLabel(a).localeCompare(targetLabel(b), undefined, {
-                              sensitivity: "base",
-                              numeric: true,
-                            })
-                          )
+                        {/* OPE-1574 — one shared collator, label computed once
+                            per row: the per-call localeCompare(options) sort
+                            of the 24K-row vendor rule cost seconds of CPU. */}
+                        {sortRuleRowsByLabel(group.items, targetLabel)
                           .slice(win.start, win.end)
                           .map((item) => {
                             const link = targetLink(item);
