@@ -91,7 +91,7 @@ export const PROMOTER_API_OPENAPI = {
     title: "Meet Me at the Fair — Promoter Events API",
     version: "1.0.0",
     description:
-      "Submit and update your own events from your own system. New events are reviewed before they appear. Changes to a listed event are staged for review and never written directly. Listing is free.",
+      "Submit and update your own events from your own system. A new event from a claimed organization's own key goes live (APPROVED, or TENTATIVE without a known venue); other new events are reviewed first. Changes to a listed event are staged for review and never written directly. Listing is free.",
   },
   servers: [{ url: SITE_URL }],
   security: [{ MmatfKey: [], MmatfTimestamp: [], MmatfRequestId: [], MmatfSignature: [] }],
@@ -222,6 +222,11 @@ export const PROMOTER_API_OPENAPI = {
                 enum: ["created", "update_staged", "unchanged", "cancel_staged"],
               },
               event_id: { type: ["string", "null"] },
+              listing_status: {
+                type: "string",
+                description:
+                  "The listing status the real call would leave (PENDING = our review queue; APPROVED / TENTATIVE = live, for a claimed promoter's own key).",
+              },
               error: { $ref: "#/components/schemas/Error/properties/error" },
             },
           },

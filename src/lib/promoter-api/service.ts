@@ -2,7 +2,7 @@
  * OPE-1620 — what the promoter API does, on the OPE-1618 import's write path.
  *
  *  - A NEW external_id goes through the import's preview (dedup) and then:
- *      new       → createEvent: a PENDING event, every value cited to the API
+ *      new       → createEvent: a PENDING event (or gated APPROVED/TENTATIVE for a trusted key, below), every value cited to the API
  *                  call (provenance `promoter_api`, the key_id in the citation);
  *      own match → the ref is bound to that event and the changes are staged;
  *      another promoter's event → 409, the import's rule.
@@ -10,6 +10,18 @@
  *    staged against it exactly like an import `match` (nothing is written to
  *    the live event; a `promoter_import_update` flag when something differs).
  *  - Cancel stages status → CANCELLED with a `promoter_cancel_request` flag.
+ *
+ * OPE-1620 ruling (John, 2026-11-12): a NEW event from a TRUSTED key skips
+ * review. Trusted = the promoter is claimed AND the key was issued by the
+ * promoter's own claimed account (`promoter_api_keys.created_by_user_id =
+ * promoters.user_id`). There is no per-promoter trust flag to add: the email
+ * sender-trust list is per address, and `promoters.verified` is set on 1 of
+ * ~750 rows and on none of the claimed ones. A trusted create then takes the
+ * existing approval gate (APPROVED with a venue or statewide+state, else
+ * TENTATIVE), the OPE-1630 rule. It stays PENDING when createEvent marked a
+ * possible duplicate or raised a review flag, since those are exactly the
+ * questions review exists for. Each auto-publish writes an admin_actions row
+ * (`promoter_api.auto_publish`). Updates and cancels are unchanged: staged.
  *
  * The ref is CLAIMED before the event is created (ON CONFLICT DO NOTHING on
  * UNIQUE(promoter, external_id)), so two concurrent first posts of one
@@ -25,7 +37,18 @@
  */
 import { and, asc, eq, gt, isNull, lt } from "drizzle-orm";
 import type { getCloudflareDb } from "@/lib/cloudflare";
-import { events, promoterApiEventRefs, venues } from "@/lib/db/schema";
+import {
+  adminActions,
+  eventReviewFlags,
+  events,
+  promoterApiEventRefs,
+  promoterApiKeys,
+  promoters,
+  venues,
+} from "@/lib/db/schema";
+import { eventApprovalBlockReason } from "@takemetothefair/utils";
+import { autoLinkVenue } from "@/lib/venue-matching";
+import { trackEventStatusChange } from "@/lib/server-analytics";
 import {
   createEvent,
   diffAgainstEvent,
@@ -227,6 +250,73 @@ const inProgress = (): ServiceResult => ({
   message: "Another request for this external_id is still being processed. Retry in a moment.",
 });
 
+/**
+ * OPE-1620 — may this key's NEW events skip review? Read fresh on every create,
+ * so unclaiming a promoter (or a key issued by someone else) takes effect at once.
+ */
+export async function isTrustedPublisher(db: Db, c: Caller): Promise<boolean> {
+  const [r] = await db
+    .select({
+      claimed: promoters.claimed,
+      ownerUserId: promoters.userId,
+      createdBy: promoterApiKeys.createdByUserId,
+    })
+    .from(promoterApiKeys)
+    .innerJoin(promoters, eq(promoters.id, promoterApiKeys.promoterId))
+    .where(
+      and(
+        eq(promoterApiKeys.keyId, c.keyId),
+        eq(promoterApiKeys.promoterId, c.promoterId),
+        isNull(promoterApiKeys.revokedAt)
+      )
+    )
+    .limit(1);
+  return !!r && r.claimed === true && !!r.ownerUserId && r.createdBy === r.ownerUserId;
+}
+
+type Gate = { venueId: string | null; isStatewide: boolean | null; stateCode: string | null };
+const gateStatus = (g: Gate) =>
+  eventApprovalBlockReason({ ...g, isStatewide: !!g.isStatewide }) ? "TENTATIVE" : "APPROVED";
+
+/** A trusted create: the approval gate decides, unless createEvent raised a question. */
+async function autoPublish(db: Db, c: Caller, externalId: string, eventId: string) {
+  const [e] = await db
+    .select({
+      venueId: events.venueId,
+      isStatewide: events.isStatewide,
+      stateCode: events.stateCode,
+      possibleDuplicateOf: events.possibleDuplicateOf,
+    })
+    .from(events)
+    .where(eq(events.id, eventId))
+    .limit(1);
+  const [flag] = await db
+    .select({ reason: eventReviewFlags.reason })
+    .from(eventReviewFlags)
+    .where(and(eq(eventReviewFlags.eventId, eventId), isNull(eventReviewFlags.clearedAt)))
+    .limit(1);
+  if (!e || e.possibleDuplicateOf || flag) return "PENDING";
+  const status = gateStatus(e);
+  await db.update(events).set({ status, updatedAt: c.now }).where(eq(events.id, eventId));
+  await trackEventStatusChange(db, eventId, "PENDING", status, c.promoterUserId ?? undefined);
+  await db.insert(adminActions).values({
+    action: "promoter_api.auto_publish",
+    actorUserId: c.promoterUserId,
+    targetType: "event",
+    targetId: eventId,
+    payloadJson: JSON.stringify({
+      promoter_id: c.promoterId,
+      key_id: c.keyId,
+      external_id: externalId,
+      request_id: c.requestId,
+      status,
+      rule: "OPE-1620 trusted claimed promoter",
+    }),
+    createdAt: c.now,
+  });
+  return status;
+}
+
 /** POST /api/v1/promoter/events — create or stage. */
 export async function upsertEvent(
   db: Db,
@@ -317,7 +407,20 @@ export async function upsertEvent(
           .where(eq(promoterApiEventRefs.id, refId));
       return stageAgainst(db, c, externalId, refId ?? "", eventId, p.event!.status, cells);
     }
-    if (c.dryRun || !refId)
+    if (c.dryRun || !refId) {
+      // A dry run reports the status the real create would get. It can't see
+      // a review flag createEvent would raise, so it is the optimistic answer.
+      let status = "PENDING";
+      if (await isTrustedPublisher(db, c)) {
+        const v = row.value;
+        const venue = await autoLinkVenue(db, {
+          venueName: v.venueName,
+          venueAddress: v.address,
+          venueCity: v.city,
+          venueState: v.state,
+        });
+        status = gateStatus({ venueId: venue.venueId, isStatewide: false, stateCode: v.state });
+      }
       return {
         ok: true,
         httpStatus: 201,
@@ -325,10 +428,11 @@ export async function upsertEvent(
           external_id: externalId,
           event_id: null,
           outcome: "created",
-          status: "PENDING",
+          status,
           ...(row.warnings.length ? { warnings: row.warnings } : {}),
         },
       };
+    }
     const created = await createEvent(db, ctx, row);
     if (created.outcome !== "created" || !created.event_id) {
       await release();
@@ -344,6 +448,9 @@ export async function upsertEvent(
       .update(promoterApiEventRefs)
       .set({ eventId: created.event_id, updatedAt: c.now })
       .where(eq(promoterApiEventRefs.id, refId));
+    const status = (await isTrustedPublisher(db, c))
+      ? await autoPublish(db, c, externalId, created.event_id)
+      : "PENDING";
     return {
       ok: true,
       httpStatus: 201,
@@ -351,7 +458,7 @@ export async function upsertEvent(
         external_id: externalId,
         event_id: created.event_id,
         outcome: "created",
-        status: "PENDING",
+        status,
         ...(row.warnings.length ? { warnings: row.warnings } : {}),
       },
     };

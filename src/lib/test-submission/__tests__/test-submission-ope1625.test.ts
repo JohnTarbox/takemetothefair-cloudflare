@@ -755,8 +755,13 @@ describe("promoter API dry_run", () => {
     expect(up.report.outcome).toEqual({
       kind: "match",
       summary: expect.any(String),
-      // Their own PENDING listing: named, not yet public.
-      listing: { url: null, name: "Fall Craft Fair", public: false },
+      // Their own listing. A trusted claimed promoter's create is auto-published
+      // (OPE-1620 ruling, venue matched → APPROVED), so it is already public.
+      listing: {
+        url: "https://meetmeatthefair.com/events/fall-craft-fair",
+        name: "Fall Craft Fair",
+        public: true,
+      },
       changes: [{ field: "booth_fee_min", current: "60.00", proposed: "75.00" }],
     });
 
