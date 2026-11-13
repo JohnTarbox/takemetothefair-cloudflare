@@ -1962,6 +1962,17 @@ const PROMOTER_IMPORT_SQL = (() => {
   return sql;
 })();
 
+// OPE-1620 — promoter API keys, request ids and event refs, loaded from the
+// migration itself (DDL only: the heartbeat_probes seed is cut). OPE-1647 —
+// merge_promoter repoints these, so every suite that merges needs them.
+const PROMOTER_API_SQL = (() => {
+  const sql = readFileSync(join(__dirname, "../../drizzle/0411_ope1620_promoter_api.sql"), "utf8");
+  const end = sql.indexOf("INSERT INTO heartbeat_probes");
+  if (end < 0 || !sql.includes("CREATE TABLE promoter_api_event_refs"))
+    throw new Error("0411 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
 // OPE-1621 — change-ping columns, WebSub subscriptions and ping counters,
 // loaded from the migration itself (DDL only: the heartbeat_probes seed is cut).
 const CHANGE_PING_SQL = (() => {
@@ -2004,6 +2015,7 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   raw["exec"](FEED_PROVENANCE_SQL);
   raw["exec"](CALENDAR_READER_SQL);
   raw["exec"](PROMOTER_IMPORT_SQL);
+  raw["exec"](PROMOTER_API_SQL);
   raw["exec"](CHANGE_PING_SQL);
   raw["exec"](FEED_READER_SQL);
   raw["exec"](FEED_REVIEW_SQL);
