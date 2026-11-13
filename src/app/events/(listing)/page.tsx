@@ -3,6 +3,8 @@ import { isD1PlatformFault } from "@/lib/db/degraded";
 import { DegradedPanel } from "@/components/layout/degraded-panel";
 import { Suspense } from "react";
 import Link from "next/link";
+import { notFound } from "next/navigation";
+import { parseListingPage } from "@/lib/listing-page-param";
 import { Search, Filter, Store, Heart, X } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { CalendarSSR } from "@/components/events/calendar-ssr";
@@ -204,7 +206,8 @@ async function getEventsOnce(
 ) {
   const viewMode = parseView(searchParams.view);
   const isCalendarView = viewMode === "calendar";
-  const page = parseInt(searchParams.page || "1");
+  // Validated by the page component before this runs (OPE-1573).
+  const page = parseListingPage(searchParams.page) ?? 1;
   const limit = 30;
   const offset = (page - 1) * limit;
   const sort = searchParams.sort || "date-asc";
@@ -998,6 +1001,9 @@ export default async function EventsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
+
+  // OPE-1573 — a malformed ?page= 404s here, before auth() and any D1 query.
+  if (parseListingPage(params.page) === null) notFound();
 
   // Get session to check if user is a vendor
   const session = await auth();
