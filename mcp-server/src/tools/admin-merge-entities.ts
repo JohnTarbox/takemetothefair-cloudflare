@@ -30,9 +30,15 @@
  *     3. INSERT promoter_slug_history (promoter_id = KEEPER, old_slug =
  *        duplicate's original slug). Points at KEEPER so the slug-history
  *        row survives the duplicate's hard-delete via FK cascade.
- *     4. promoters has no status column, but events.promoter_id has
- *        ON DELETE CASCADE. Since we already reassigned every event,
- *        the cascade has nothing to cascade -- safe to hard-delete.
+ *     3b. OPE-1120 / OPE-1647 — repointPromoterChildren moves EVERY other
+ *        row that references the duplicate (series, contacts, feeds,
+ *        outreach, list subscriptions, API keys/refs, import rows, …) onto
+ *        the keeper, keeper winning unique-key collisions (reported), and
+ *        fills the keeper's empty profile fields from the duplicate.
+ *     4. promoters has no status column, so the duplicate is hard-deleted;
+ *        after 3b nothing is left for its FK CASCADE / SET NULL to reach.
+ *     Defaults to preview: true (OPE-1647) — nothing is written until
+ *     preview: false.
  *     5. WRITE admin_actions(action='promoter.merge')
  *
  * Both tools fail-soft on missing input + return a structured result.
@@ -40,7 +46,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   events,
   venues,
@@ -275,7 +281,7 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
   // ── merge_promoter ──────────────────────────────────────────────
   server.tool(
     "merge_promoter",
-    "Merge two promoter rows. Reassigns all events from the duplicate to the keeper, writes a promoter_slug_history row pointing at the keeper (so the row survives the duplicate's hard-delete via the cascade), then HARD-DELETES the duplicate (promoters has no soft-delete column). Old slug 301-redirects to the keeper via src/middleware.ts. Refuses self-merge. Admin only.",
+    "Merge two promoter rows. Reassigns all events from the duplicate to the keeper; moves every other row that references the duplicate onto the keeper — event series, validated contacts, feeds (with their items and reads), outreach attempts, list subscriptions and arrivals, newsletters, API keys and event refs, import rows, enrichment candidates, slug history, successor pointers; copies the duplicate's website/contact/logo/hero/social/city/state/description into keeper fields that are EMPTY; writes a promoter_slug_history row so the old slug 301-redirects; then HARD-DELETES the duplicate (promoters has no soft-delete column). Where both promoters hold the same unique row (same contact email, feed URL, list address, API external id, import row), the KEEPER's row wins and the duplicate's is dropped — every such drop is listed in children.collisions. Defaults to preview: true — reads everything, writes nothing, and returns the full transfer report; pass preview: false to commit. Refuses self-merge. Admin only.",
     {
       keeper_promoter_id: z
         .string()
@@ -287,7 +293,14 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
         .string()
         .min(1)
         .describe(
-          "The promoter row to retire. After merge: events reassigned, row hard-deleted (FK cascade has nothing left to cascade)."
+          "The promoter row to retire. After merge: events and every child row moved to the keeper, then the row is hard-deleted."
+        ),
+      preview: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe(
+          "DEFAULTS TRUE. Reads everything and writes nothing, returning per-table counts (moved / dropped as duplicate / deleted), collisions, harvested fields and warnings. Pass false to commit — the duplicate is HARD-deleted."
         ),
     },
     async (params) => {
@@ -336,6 +349,37 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
         };
       }
       const dupRow = dup[0];
+      const preview = params.preview ?? true;
+
+      // 0. OPE-1647 — preview: the same plan the real merge would run, no writes.
+      if (preview) {
+        const [{ n: eventCount }] = await db
+          .select({ n: sql<number>`count(*)` })
+          .from(events)
+          .where(eq(events.promoterId, params.duplicate_promoter_id));
+        const children = await repointPromoterChildren(
+          db,
+          params.keeper_promoter_id,
+          params.duplicate_promoter_id,
+          { preview: true }
+        );
+        return {
+          content: [
+            jsonContent({
+              preview: true,
+              merged: false,
+              keeper_id: params.keeper_promoter_id,
+              duplicate_id: params.duplicate_promoter_id,
+              duplicate_company_name: dupRow.companyName,
+              duplicate_slug: dupRow.slug,
+              keeper_slug: keeper[0].slug,
+              events_to_reassign: Number(eventCount),
+              children,
+              note: "Nothing was written. Pass preview: false to merge.",
+            }),
+          ],
+        };
+      }
 
       // 1. Reassign events.
       const reassignResult = await db
@@ -386,17 +430,18 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
         };
       }
 
-      // 2b. OPE-1120 — the rows no FK protects. Before the delete, so nothing
-      //     is left pointing at a dead id. Shared with the app's merge path.
+      // 2b. OPE-1120 / OPE-1647 — every other row that references the
+      //     duplicate, FK or not, plus the field harvest. Before the delete, so
+      //     nothing is cascaded away or left pointing at a dead id. Shared with
+      //     the app's merge path.
       const children = await repointPromoterChildren(
         db,
         params.keeper_promoter_id,
         params.duplicate_promoter_id
       );
 
-      // 3. Hard-delete the loser. FK cascade has nothing to cascade
-      // since we already reassigned every event, and the slug-history
-      // row points at the keeper not the duplicate.
+      // 3. Hard-delete the loser. Its events and children are already on the
+      // keeper, so the FK CASCADE / SET NULL actions have nothing left to reach.
       await db.delete(promoters).where(eq(promoters.id, params.duplicate_promoter_id));
 
       // 4. Audit trail.
