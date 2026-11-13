@@ -276,6 +276,13 @@ afterEach(() => raw.close());
 describe("POST / PATCH / cancel round trip", () => {
   it("creates PENDING and cited, then stages an update and a cancellation without writing the event", async () => {
     const key = await mintKey();
+    // OPE-1620 ruling: an owner-issued key on a claimed promoter would skip
+    // review. This test is about the review path, so the key is one the owner
+    // did not issue (an operator's) — untrusted. The trusted branch is pinned
+    // in the "trusted, claimed promoters skip review" block below.
+    raw
+      .prepare("UPDATE promoter_api_keys SET created_by_user_id='u-operator' WHERE key_id=?")
+      .run(key.key_id);
 
     // create
     const created = await call(key, "POST", "/api/v1/promoter/events", FALL);
@@ -663,5 +670,100 @@ describe("heartbeat probe (OPE-246)", () => {
   it("is registered and seeded dormant (enabled_at NULL)", () => {
     expect(HEARTBEAT_PROBES.some((p) => p.name === "promoter-api-write")).toBe(true);
     expect(MIGRATION).toMatch(/'promoter-api-write',\s*NULL,/);
+  });
+});
+
+// ------------------------------------------------------------------ OPE-1620 ruling
+
+describe("trusted, claimed promoters skip review (John, 2026-11-12)", () => {
+  const audits = () =>
+    raw
+      .prepare(
+        "SELECT target_id t, payload_json p FROM admin_actions WHERE action='promoter_api.auto_publish'"
+      )
+      .all() as Array<{ t: string; p: string }>;
+  const statusOf = (id: string) =>
+    (raw.prepare("SELECT status s FROM events WHERE id=?").get(id) as { s: string }).s;
+  const create = async (key: { key_id: string; secret: string }, body = FALL) => {
+    const res = await call(key, "POST", "/api/v1/promoter/events", body);
+    expect(res.status).toBe(201);
+    return (await res.json()) as { event_id: string; status: string };
+  };
+  const addVenue = () =>
+    raw
+      .prepare(
+        "INSERT INTO venues (id, name, slug, city, state) VALUES ('v-grange','Grange Hall','grange-hall','Concord','NH')"
+      )
+      .run();
+
+  it("claimed + owner-issued key + a matched venue → APPROVED, and the skip is audited", async () => {
+    addVenue();
+    const key = await mintKey();
+    const c = await create(key);
+    expect(c.status).toBe("APPROVED");
+    expect(statusOf(c.event_id)).toBe("APPROVED");
+    const a = audits();
+    expect(a).toHaveLength(1);
+    expect(a[0].t).toBe(c.event_id);
+    expect(JSON.parse(a[0].p)).toMatchObject({
+      promoter_id: "p-joyce",
+      key_id: key.key_id,
+      external_id: "fall-2027",
+      status: "APPROVED",
+    });
+  });
+
+  it("trusted but the approval gate fails (no venue) → TENTATIVE, still audited", async () => {
+    const key = await mintKey();
+    const c = await create(key);
+    expect(c.status).toBe("TENTATIVE");
+    expect(statusOf(c.event_id)).toBe("TENTATIVE");
+    expect(audits()).toHaveLength(1);
+  });
+
+  it("a key the owner did not issue → PENDING, nothing audited", async () => {
+    addVenue();
+    const key = await mintKey();
+    raw
+      .prepare("UPDATE promoter_api_keys SET created_by_user_id='u-operator' WHERE key_id=?")
+      .run(key.key_id);
+    const c = await create(key);
+    expect(c.status).toBe("PENDING");
+    expect(statusOf(c.event_id)).toBe("PENDING");
+    expect(audits()).toHaveLength(0);
+  });
+
+  it("a promoter unclaimed after its key was issued → PENDING (trust is read per request)", async () => {
+    addVenue();
+    const key = await mintKey();
+    raw.prepare("UPDATE promoters SET claimed=0 WHERE id='p-joyce'").run();
+    const c = await create(key);
+    expect(c.status).toBe("PENDING");
+    expect(audits()).toHaveLength(0);
+  });
+
+  it("updates and cancels from a trusted key are still only staged", async () => {
+    addVenue();
+    const key = await mintKey();
+    const c = await create(key);
+    const up = await call(key, "POST", "/api/v1/promoter/events", { ...FALL, booth_fee_min: 75 });
+    expect(await up.json()).toMatchObject({ outcome: "update_staged", status: "APPROVED" });
+    expect(n("SELECT vendor_fee_min_cents n FROM events WHERE id=?", c.event_id)).toBe(6000);
+    const cancel = await call(key, "POST", "/api/v1/promoter/events/fall-2027/cancel", {
+      reason: "Hall flooded",
+    });
+    expect(await cancel.json()).toMatchObject({ outcome: "cancel_staged" });
+    expect(statusOf(c.event_id)).toBe("APPROVED");
+    expect(audits()).toHaveLength(1);
+  });
+
+  it("a trusted dry run reports the status the real create would get, and writes nothing", async () => {
+    addVenue();
+    const key = await mintKey();
+    const res = await call(key, "POST", "/api/v1/promoter/events?dry_run=1", FALL);
+    const body = (await res.json()) as { would_return: Record<string, unknown> };
+    expect(body.would_return).toMatchObject({ status: 201, listing_status: "APPROVED" });
+    expect(n("SELECT count(*) n FROM events WHERE promoter_id='p-joyce'")).toBe(0);
+    expect(audits()).toHaveLength(0);
   });
 });

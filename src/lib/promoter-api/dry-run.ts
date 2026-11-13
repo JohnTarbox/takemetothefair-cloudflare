@@ -80,7 +80,13 @@ async function outcomeFor(db: Db, caller: Caller, r: ServiceResult): Promise<Out
   if (r.body.outcome === "created" || !r.body.event_id)
     return {
       kind: "new",
-      summary: "New: this would create a listing that goes to our review queue first.",
+      // OPE-1620 ruling: a trusted, claimed promoter's new event skips review.
+      summary:
+        r.body.status === "APPROVED"
+          ? "New: this would create a listing that goes live right away."
+          : r.body.status === "TENTATIVE"
+            ? "New: this would create a listing that goes live as tentative until it has a venue."
+            : "New: this would create a listing that goes to our review queue first.",
     };
   const listing = await publicListing(db, r.body.event_id, { ownerPromoterId: caller.promoterId });
   return {
@@ -112,6 +118,7 @@ export async function dryRunResponse(
         status: result.httpStatus,
         outcome: result.body.outcome,
         event_id: result.body.event_id,
+        listing_status: result.body.status,
         ...(result.body.not_compared ? { not_compared: result.body.not_compared } : {}),
         ...(result.body.warnings ? { warnings: result.body.warnings } : {}),
       }
