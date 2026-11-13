@@ -18,6 +18,7 @@
  *  - auto-file dedup reuses OPE-76's `cpi_signal_filings` ledger — nothing new.
  */
 import { and, eq, gte, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import {
   entityDuplicateSweepRuns,
   analyticsEvents,
@@ -2952,6 +2953,9 @@ export function assessHeartbeatSilence(a: HeartbeatActivity, now: Date): StaleRe
   };
 }
 
+/** Max heartbeat probe queries in flight at once (OPE-1573). */
+export const HEARTBEAT_PROBE_CONCURRENCY = 4;
+
 /** Join every probe to its `heartbeat_probes.enabled_at` + newest evidence. */
 export async function gatherHeartbeatActivity(db: Db): Promise<HeartbeatActivity[]> {
   const anchors = await db
@@ -2959,13 +2963,15 @@ export async function gatherHeartbeatActivity(db: Db): Promise<HeartbeatActivity
     .from(heartbeatProbes);
   const enabledByName = new Map(anchors.map((a) => [a.probeName, a.enabledAt ?? null]));
 
-  return Promise.all(
-    HEARTBEAT_PROBES.map(async (probe) => ({
-      probe,
-      enabledAt: enabledByName.get(probe.name) ?? null,
-      lastEvidenceAt: await probe.lastEvidenceAt(db),
-    }))
-  );
+  // OPE-1573: bounded, not Promise.all. ~110 probes fired at once put ~110
+  // requests in D1's single-threaded queue on every Overview render and every
+  // stale-red scan; concurrent public renders then failed with "Requests
+  // queued for too long". See src/lib/concurrency.ts.
+  return mapWithConcurrency(HEARTBEAT_PROBES, HEARTBEAT_PROBE_CONCURRENCY, async (probe) => ({
+    probe,
+    enabledAt: enabledByName.get(probe.name) ?? null,
+    lastEvidenceAt: await probe.lastEvidenceAt(db),
+  }));
 }
 
 /** Assess all probes; returns the silent ones as StaleReds (healthy drop out). */
