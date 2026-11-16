@@ -70,6 +70,7 @@ import {
   IMMINENT_DAYS,
   IMMINENT_SECONDS,
 } from "./events/tentative-queue.js";
+import { readLatestAutopromoteRun } from "./events/tentative-autopromote.js";
 
 const SOURCE = "mcp:schedule:operator-queue-notice";
 /** OPE-1585 — this digest's row in `digest_change_state`. */
@@ -476,7 +477,30 @@ export async function readOperatorQueues(
   const tentative = selectImminentTentative(
     await readTentativePromotionQueue(db, now, { withinSeconds: IMMINENT_SECONDS })
   );
-  for (const t of tentative) lines.push(formatTentativeLine(t));
+  // OPE-1586 — the auto-promotion rule ran just before this notice (sequenced
+  // in the daily cron). Its summary is ONE line here, never its own email, and
+  // it does not count toward totalWaiting: a run alone must not cause a send.
+  // Each row it held carries the rule's reason, so the list is actionable.
+  let autoHeld = new Map<string, string>();
+  try {
+    const run = await readLatestAutopromoteRun(db, now);
+    if (run) {
+      lines.push(`TENTATIVE auto-promotion (OPE-1586): ${run.summary}`);
+      autoHeld = new Map(
+        run.held.map((h) => [h.slug, h.detail ? `${h.reason}: ${h.detail}` : h.reason])
+      );
+    }
+  } catch (error) {
+    await logError(db, {
+      source: SOURCE,
+      message: "[operator-queue] auto-promotion run read failed",
+      error,
+    });
+  }
+  for (const t of tentative) {
+    const why = autoHeld.get(t.slug);
+    lines.push(formatTentativeLine(t) + (why ? ` — auto-check held: ${why}` : ""));
+  }
 
   // OPE-626 — `reply:*` mail that reached a customer in the last 24h.
   //

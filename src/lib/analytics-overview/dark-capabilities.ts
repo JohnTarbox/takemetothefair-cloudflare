@@ -152,6 +152,16 @@ export const CAPABILITY_FLAGS: CapabilityFlag[] = [
     offIsDeliberate: false,
   },
   {
+    name: "TENTATIVE_AUTOPROMOTE_ENABLED",
+    worker: "mcp",
+    darkMeans:
+      "TENTATIVE events whose cited organizer page confirms our start date are not promoted " +
+      "to SCHEDULED, so they stay out of the weekend digest and every SCHEDULED-filtered feed " +
+      "until a person promotes each by hand. On since OPE-1586 (John's option 2: promote only " +
+      "when a fresh read of the page agrees).",
+    offIsDeliberate: false,
+  },
+  {
     name: "WEBSUB_ENABLED",
     worker: "mcp",
     darkMeans:

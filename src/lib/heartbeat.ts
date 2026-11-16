@@ -758,6 +758,26 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1586 — the daily TENTATIVE → SCHEDULED auto-promotion rule.
+    //
+    // Watches the run STAMP, not promotions: a quiet week legitimately
+    // promotes nothing (every page held, or no ready rows), so a yield probe
+    // would go red on a healthy rule. The rule stamps on every run, including
+    // a run that promoted zero. 48h: daily, one miss tolerated.
+    name: "tentative-autopromote",
+    ownerOpe: "OPE-1586",
+    label: "Daily TENTATIVE → SCHEDULED auto-promotion (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:tentative-autopromote")
+      ),
+  },
+  {
     // OPE-588 — proof the GSC sweep's FILLER tiers still select work.
     //
     // Tiers 1, 2, 2c and REL5 were unreachable for two months and nothing said

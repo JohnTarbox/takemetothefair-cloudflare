@@ -241,6 +241,15 @@ FEED_POLLING_ENABLED = "true"
 # third-party hub and was NOT approved with polling, so it is a separate flag
 # and needs FEED_POLLING_ENABLED as well. Change pings are unaffected.
 WEBSUB_ENABLED = "false"
+# OPE-1586 — daily TENTATIVE → SCHEDULED auto-promotion (06:00Z cron). ON:
+# John ruled 2026-11-16 (option 2) — promote only when a fresh read of the cited
+# organizer page agrees with our start date; anything unconfirmed stays
+# TENTATIVE in the operator digest. "false" stops it (reversible; promotions
+# already made stay, and each can be demoted with update_event_lifecycle).
+# If you turn it off for long, also set heartbeat_probes.enabled_at = NULL for
+# 'tentative-autopromote', or its probe will (correctly) report it silent.
+# Edit THIS line — a dashboard edit is reverted by the next deploy.
+TENTATIVE_AUTOPROMOTE_ENABLED = "true"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 # Inbound-email failures (parse / extract / submit) get forwarded here.
 # Must be a verified destination address in Cloudflare Email Routing —
