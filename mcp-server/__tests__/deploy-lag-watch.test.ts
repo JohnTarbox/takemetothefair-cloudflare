@@ -19,6 +19,10 @@ import {
   DEPLOY_LAG_WATCH_CODE,
   DEPLOY_LAG_SOURCE,
   DEPLOY_LAG_FAULT_MESSAGE,
+  DEPLOY_LAG_BLIND_FAULT_MESSAGE,
+  headFailureReason,
+  parseBlindState,
+  blindTransitionToMail,
   type WorkerLag,
 } from "../src/deploy-lag-watch.js";
 import { createTestDb } from "./setup-db.js";
@@ -230,5 +234,122 @@ describe("runDeployLagWatch end to end — the 11-13 → 11-16 freeze", () => {
     const s = await stamp();
     expect(s.kind).toBe("watchdog");
     expect(s.lastSeenAt.toISOString()).toBe("2026-11-16T03:00:00.000Z");
+  });
+  // ── OPE-1655 rework (John 2026-11-16): a watch that cannot read main is blind ──
+  it("records WHY main could not be read in the stamp note", async () => {
+    gh.down = true; // GitHub answers 403 (rate limit)
+    await runDeployLagWatch(env, { now: at("2026-11-16T20:00:00Z"), fetchImpl });
+    expect((await stamp()).note).toMatch(/;main=\?\(403\);/);
+    expect((await stamp()).note).toMatch(/;blind=1(;|$)/);
+  });
+
+  it("4 blind ticks in a row → exactly ONE blind fault + ONE email; a later read clears it with ONE email", async () => {
+    gh.appSha = MAIN.slice(0, 7);
+    env.GIT_SHA = MAIN.slice(0, 7); // prod current, so the lag alarm never fires here
+    gh.down = true;
+    const blindRows = async () =>
+      (await faultRows()).filter((r: any) => r.message === DEPLOY_LAG_BLIND_FAULT_MESSAGE);
+
+    for (const h of ["20", "21", "22"]) {
+      const r = await runDeployLagWatch(env, { now: at(`2026-11-16T${h}:00:00Z`), fetchImpl });
+      expect(r.blindMailed).toBeNull();
+    }
+    expect(await blindRows()).toHaveLength(0); // 3 ticks is the tolerance, not yet a fault
+    expect(sent).toHaveLength(0);
+
+    let r = await runDeployLagWatch(env, { now: at("2026-11-16T23:00:00Z"), fetchImpl });
+    expect(r.blindTicks).toBe(4);
+    expect(r.blindMailed).toBe("blind");
+    expect(await blindRows()).toHaveLength(1);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].subject).toContain("deploy-lag watch can't read main");
+    expect(sent[0].to).toBe("alert@example.com");
+    expect((await stamp()).note).toMatch(/;blind=4;blindmail=1$/);
+
+    // Still blind: the fault row repeats (CPI evidence), the email does not.
+    r = await runDeployLagWatch(env, { now: at("2026-11-17T00:00:00Z"), fetchImpl });
+    expect(r.blindMailed).toBeNull();
+    expect(sent).toHaveLength(1);
+    expect(await blindRows()).toHaveLength(2);
+
+    // A good read clears it: one "sighted" mail, counter back to 0.
+    gh.down = false;
+    r = await runDeployLagWatch(env, { now: at("2026-11-17T01:00:00Z"), fetchImpl });
+    expect(r.blindTicks).toBe(0);
+    expect(r.blindMailed).toBe("sighted");
+    expect(sent).toHaveLength(2);
+    expect(sent[1].subject).toContain("can read main again");
+    expect((await stamp()).note).toMatch(/;main=72523dc;lag=0;blind=0$/);
+
+    // And stays quiet afterwards.
+    await runDeployLagWatch(env, { now: at("2026-11-17T02:00:00Z"), fetchImpl });
+    expect(sent).toHaveLength(2);
+  });
+
+  it("a single good read resets the counter, so intermittent blindness never alarms", async () => {
+    gh.appSha = MAIN.slice(0, 7);
+    env.GIT_SHA = MAIN.slice(0, 7);
+    for (const [h, down] of [
+      ["10", true],
+      ["11", true],
+      ["12", true],
+      ["13", false],
+      ["14", true],
+      ["15", true],
+      ["16", true],
+    ] as const) {
+      gh.down = down;
+      await runDeployLagWatch(env, { now: at(`2026-11-16T${h}:00:00Z`), fetchImpl });
+    }
+    expect(sent).toHaveLength(0);
+    expect((await stamp()).note).toMatch(/;blind=3$/);
+  });
+
+  it("sends the GitHub token on every GitHub call when one is configured", async () => {
+    const seen: Array<string | null> = [];
+    const spy = async (url: string, init?: RequestInit) => {
+      if (url.includes("api.github.com"))
+        seen.push(new Headers(init?.headers).get("authorization"));
+      return fetchImpl(url);
+    };
+    env.GITHUB_TOKEN = "github_pat_test";
+    await runDeployLagWatch(env, { now: at("2026-11-16T03:00:00Z"), fetchImpl: spy });
+    expect(seen.length).toBeGreaterThanOrEqual(3); // commits + compare ×2 (+ contents when lagging)
+    expect(seen.every((h) => h === "Bearer github_pat_test")).toBe(true);
+  });
+});
+
+describe("blind helpers (pure)", () => {
+  it("compacts the failure reason", () => {
+    expect(headFailureReason("commits HTTP 403")).toBe("403");
+    expect(headFailureReason("fetch failed: The operation was aborted due to timeout")).toBe(
+      "timeout"
+    );
+    expect(headFailureReason("fetch failed: network down")).toBe("fetch");
+    expect(headFailureReason("commit shape")).toBe("shape");
+  });
+  it("parses blind state and decides the two mails", () => {
+    expect(parseBlindState("state=ok;main=?(403);lag=0;blind=4;blindmail=1")).toEqual({
+      blind: 4,
+      blindMailed: true,
+    });
+    expect(parseBlindState("state=ok;mcp=a;app=b;main=abc1234;lag=0")).toEqual({
+      blind: 0,
+      blindMailed: false,
+    });
+    expect(blindTransitionToMail({ blindMailed: false, blind: 3 })).toBeNull();
+    expect(blindTransitionToMail({ blindMailed: false, blind: 4 })).toBe("blind");
+    expect(blindTransitionToMail({ blindMailed: true, blind: 5 })).toBeNull();
+    expect(blindTransitionToMail({ blindMailed: true, blind: 0 })).toBe("sighted");
+    expect(blindTransitionToMail({ blindMailed: false, blind: 0 })).toBeNull();
+  });
+  it("the blind fault classifies as its own family, ahead of FAM-DEPLOY-LAG", async () => {
+    const { classifyFault } = await import("../../src/lib/faults/family-registry.js");
+    expect(classifyFault({ errorClass: DEPLOY_LAG_BLIND_FAULT_MESSAGE })).toMatchObject({
+      familyKey: "FAM-DEPLOY-LAG-WATCH-BLIND",
+    });
+    expect(classifyFault({ errorClass: DEPLOY_LAG_FAULT_MESSAGE })).toMatchObject({
+      familyKey: "FAM-DEPLOY-LAG",
+    });
   });
 });
