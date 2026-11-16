@@ -16,25 +16,14 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/require-admin";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import {
-  LIST_MAX,
-  REVIEW_STATES,
-  listFeedItems,
-  type ListedFeedItem,
-  type ReviewState,
-} from "@/lib/feed-review/review";
+import { LIST_MAX, listFeedItems, type ListedFeedItem } from "@/lib/feed-review/review";
+import { parseReviewState } from "@/lib/feed-review/parse-review-state";
 import { Card, CardContent } from "@/components/ui/card";
 import { FeedItemReviewActions } from "@/components/admin/FeedItemReviewActions";
 
 export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<{ review_state?: string; feed_id?: string; offset?: string }>;
-
-/** The states a reviewer can filter to. "all" is every state. Pure, exported for tests. */
-export function parseReviewState(raw: string | undefined): ReviewState | "all" {
-  if (raw === "all") return "all";
-  return REVIEW_STATES.includes(raw as ReviewState) ? (raw as ReviewState) : "awaiting_review";
-}
 
 function stateHref(state: string, feedId: string | null): string {
   const q = new URLSearchParams({ review_state: state });

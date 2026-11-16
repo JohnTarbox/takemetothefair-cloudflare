@@ -12,7 +12,7 @@ const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
 import { FeedItemReviewActions, refusalChoices } from "../FeedItemReviewActions";
-import { parseReviewState } from "@/app/admin/feed-review/page";
+import { parseReviewState } from "@/lib/feed-review/parse-review-state";
 
 const SUGGEST = {
   action: "link" as const,
