@@ -2,6 +2,8 @@ export interface GateDecision {
   decision: "deploy" | "skip";
   sha: string | null;
   reason: string;
+  /** OPE-1655 — a skip that must FAIL the deploy run (main's HEAD did not deploy). */
+  loud: boolean;
 }
 export function decide(input: {
   eventName: string;
