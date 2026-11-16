@@ -53,6 +53,9 @@ export default function AdminSubmissionsPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
 
   useEffect(() => {
+    // OPE-1645 — the dashboard's "+N ended submissions →" link opens on that tab.
+    const b = new URLSearchParams(window.location.search).get("bucket");
+    if (b === "upcoming" || b === "ended" || b === "no_date") setBucket(b);
     fetchSubmissions();
   }, []);
 
