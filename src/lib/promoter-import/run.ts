@@ -254,6 +254,13 @@ export interface CommitContext {
    * an event's name must not get a second hub). The caller checks it exists.
    */
   seriesId?: string;
+  /**
+   * OPE-1630 — the reviewer PICKED this venue (`review_feed_item` venue_id): use
+   * it instead of re-resolving the row's venue text, which can be ambiguous
+   * (two same-named rows in one city) even when the row was filled from the
+   * venue itself. The caller checks it exists.
+   */
+  venueId?: string;
 }
 
 const citationSource = (ctx: CommitContext, row: number) =>
@@ -405,13 +412,16 @@ export async function createEvent(db: Db, ctx: CommitContext, r: ImportRow): Pro
       outcome: "skipped",
       reason: "Event name must contain letters or numbers.",
     };
-  const venue = await autoLinkVenue(db, {
-    venueName: v.venueName,
-    venueAddress: v.address,
-    venueCity: v.city,
-    venueState: v.state,
-  });
-  const venueId = venue.venueId;
+  const venueId =
+    ctx.venueId ??
+    (
+      await autoLinkVenue(db, {
+        venueName: v.venueName,
+        venueAddress: v.address,
+        venueCity: v.city,
+        venueState: v.state,
+      })
+    ).venueId;
   const start = normalizeEventDate(v.startDate);
   const end = normalizeEventDate(v.endDate);
   const formerVenue = await checkEventVenue(db, venueId, end ?? start);
@@ -498,9 +508,7 @@ export async function createEvent(db: Db, ctx: CommitContext, r: ImportRow): Pro
     ctx,
     r,
     eventId,
-    venue.venueId
-      ? null
-      : [v.venueName, v.address, v.city, v.state, v.zip].filter(Boolean).join(", ")
+    venueId ? null : [v.venueName, v.address, v.city, v.state, v.zip].filter(Boolean).join(", ")
   );
   return { row: r.rowNumber, outcome: "created", event_id: eventId };
 }

@@ -4,7 +4,8 @@ export const dynamic = "force-dynamic";
  * the MCP Worker's X-Internal-Key; `review_feed_item`). Audit-logged; sends no
  * email.
  *
- * JSON: { action: approve|approve_as_occurrence|link|reject, event_id?, series_id?, note?, actorUserId? }
+ * JSON: { action: approve|approve_as_occurrence|link|reject, event_id?, series_id?, venue_id?,
+ *         not_duplicate_of?, note?, actorUserId? }
  */
 import { NextResponse } from "next/server";
 import { withAuthorized } from "@/lib/api/with-auth";
@@ -14,6 +15,7 @@ const STATUS_FOR: Record<string, number> = {
   not_found: 404,
   event_not_found: 404,
   series_not_found: 404,
+  venue_not_found: 404,
   bad_request: 400,
   already_reviewed: 409,
   duplicate: 409,
@@ -25,6 +27,8 @@ export const POST = withAuthorized<{ id: string }>(async ({ request, db, userId,
     action?: string;
     event_id?: string;
     series_id?: string;
+    venue_id?: string;
+    not_duplicate_of?: string;
     note?: string;
     actorUserId?: string;
   };
@@ -43,6 +47,8 @@ export const POST = withAuthorized<{ id: string }>(async ({ request, db, userId,
     action: body.action as ReviewAction,
     eventId: body.event_id ?? null,
     seriesId: body.series_id ?? null,
+    venueId: body.venue_id ?? null,
+    notDuplicateOf: body.not_duplicate_of ?? null,
     note: body.note?.trim().slice(0, 1000) || null,
     actorUserId: userId ?? body.actorUserId ?? null,
     now: new Date(),
