@@ -23,8 +23,35 @@ export async function POST(request: Request) {
   const db = getCloudflareDb();
   const env = getCloudflareEnv();
 
-  const recomputed = await recomputeKpiStates(db, env);
-  const pruned = await pruneKpiStateHistory(db);
+  // OPE-1650 — a failure answers with a classified body, not an empty 500, so
+  // the cron's log row says what broke instead of guessing a resource kill.
+  let stage: "recompute" | "prune" = "recompute";
+  let recomputed: Awaited<ReturnType<typeof recomputeKpiStates>>;
+  let pruned: Awaited<ReturnType<typeof pruneKpiStateHistory>>;
+  try {
+    recomputed = await recomputeKpiStates(db, env);
+    stage = "prune";
+    pruned = await pruneKpiStateHistory(db);
+  } catch (e) {
+    // Duck-typed: the abort is a DOMException, which is not `instanceof Error`
+    // in every runtime, and its name is the classification that matters.
+    const o = (typeof e === "object" && e !== null ? e : {}) as {
+      name?: unknown;
+      message?: unknown;
+    };
+    const name = typeof o.name === "string" ? o.name : "Error";
+    const message = typeof o.message === "string" ? o.message : String(e);
+    console.error(`[kpi-recompute] ${stage} failed: ${name}: ${message}`, e);
+    return NextResponse.json(
+      {
+        success: false,
+        stage,
+        error: name,
+        message: message.slice(0, 300),
+      },
+      { status: 500 }
+    );
+  }
 
   return NextResponse.json({
     success: true,
