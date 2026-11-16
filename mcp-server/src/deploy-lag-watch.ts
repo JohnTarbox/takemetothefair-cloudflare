@@ -45,6 +45,23 @@ export const APP_HEALTH_URL = "https://meetmeatthefair.com/api/health";
 export const DEPLOY_LAG_FAULT_MESSAGE =
   "[deploy-lag] production is behind main past the 2h threshold";
 
+/**
+ * OPE-1655 rework (John, 2026-11-16) — the watch went BLIND on its second tick
+ * ever: `main=?` at 20:00Z, because the unauthenticated GitHub read shares 60/hour
+ * per egress IP. By design an unknown neither raises nor clears, so every blind
+ * tick is a tick where a deploy freeze is invisible — the failure this watch
+ * exists for, hidden by the watch itself. After more than this many CONSECUTIVE
+ * hourly ticks without main's HEAD, the blindness is itself the alarm.
+ */
+export const BLIND_TICKS_THRESHOLD = 3;
+/**
+ * Stable text for the fault row (no numbers). Classified as
+ * FAM-DEPLOY-LAG-WATCH-BLIND, which sits BEFORE FAM-DEPLOY-LAG in the
+ * first-match-wins registry — this message also contains "deploy-lag".
+ */
+export const DEPLOY_LAG_BLIND_FAULT_MESSAGE =
+  "[deploy-lag-watch-blind] the deploy-lag watch cannot read main's HEAD from GitHub";
+
 export type LagState = "ok" | "lagging" | "unknown";
 export type WorkerName = "mcp" | "app";
 
@@ -97,6 +114,42 @@ export function transitionToMail(
 ): "lagging" | "cleared" | null {
   if (next === "lagging" && prev !== "lagging") return "lagging";
   if (prev === "lagging" && next === "ok") return "cleared";
+  return null;
+}
+
+/**
+ * Why main's HEAD could not be read, compactly, for the stamp note: `403`,
+ * `429`, `timeout`, `fetch`, `shape`. The note is the one place the cause is
+ * readable without Workers Logs (OPE-1655 rework item 3).
+ */
+export function headFailureReason(note: string): string {
+  const http = /HTTP (\d{3})/.exec(note);
+  if (http) return http[1];
+  if (/timed? ?out|timeout|abort/i.test(note)) return "timeout";
+  if (/fetch failed/i.test(note)) return "fetch";
+  if (/shape/i.test(note)) return "shape";
+  return "unknown";
+}
+
+/** Consecutive blind ticks and whether the blind alarm has mailed, from the stamp note. */
+export function parseBlindState(note: string | null | undefined): {
+  blind: number;
+  blindMailed: boolean;
+} {
+  const b = /(?:^|;)blind=(\d+)(?:;|$)/.exec(note ?? "");
+  const m = /(?:^|;)blindmail=1(?:;|$)/.test(note ?? "");
+  return { blind: b ? Number(b[1]) : 0, blindMailed: m };
+}
+
+/** Exactly two blind transitions mail: into blind (> threshold), and the first good read after. */
+export function blindTransitionToMail(input: {
+  blindMailed: boolean;
+  blind: number;
+  threshold?: number;
+}): "blind" | "sighted" | null {
+  const t = input.threshold ?? BLIND_TICKS_THRESHOLD;
+  if (input.blind > t && !input.blindMailed) return "blind";
+  if (input.blind === 0 && input.blindMailed) return "sighted";
   return null;
 }
 
@@ -237,6 +290,9 @@ export interface DeployLagEnv {
 
 export interface DeployLagResult {
   state: LagState;
+  /** Consecutive ticks without main's HEAD (0 when this tick read it). */
+  blindTicks: number;
+  blindMailed: "blind" | "sighted" | null;
   mainSha: string | null;
   workers: WorkerLag[];
   pendingMigrations: string[] | null;
@@ -413,9 +469,69 @@ export async function runDeployLagWatch(
     }
   }
 
+  // ── OPE-1655 rework: a watch that cannot read main is itself an alarm ──────
+  const prevBlind = parseBlindState(prevRow?.note);
+  const blind = head.sha ? 0 : prevBlind.blind + 1;
+  let blindMailed = prevBlind.blindMailed;
+  let blindSent: DeployLagResult["blindMailed"] = null;
+  if (blind > BLIND_TICKS_THRESHOLD) {
+    // One row per blind tick → fault_signatures (FAM-DEPLOY-LAG-WATCH-BLIND).
+    await logError(env.DB, {
+      source: DEPLOY_LAG_SOURCE,
+      message: DEPLOY_LAG_BLIND_FAULT_MESSAGE,
+      context: { blindTicks: blind, reason: head.note, tokenConfigured: Boolean(env.GITHUB_TOKEN) },
+    });
+  }
+  const blindKind = blindTransitionToMail({ blindMailed, blind });
+  if (blindKind) {
+    const subject =
+      blindKind === "blind"
+        ? "⚠️ deploy-lag watch can't read main (production-lag alarm is blind)"
+        : "✅ deploy-lag watch can read main again";
+    const body =
+      blindKind === "blind"
+        ? [
+            `The hourly deploy-lag watch has failed to read main's HEAD from GitHub for ${blind} consecutive ticks (last reason: ${head.note}).`,
+            "While it is blind, a deploy freeze would NOT alert: an unreadable main neither raises nor clears the lag alarm.",
+            env.GITHUB_TOKEN
+              ? "A GITHUB_TOKEN is configured, so check that it is still valid (expired or revoked tokens return 401/403)."
+              : "No GITHUB_TOKEN is configured, so the watch shares GitHub's 60/hour unauthenticated limit per egress IP. Add a fine-grained read-only token as the MCP Worker secret GITHUB_TOKEN.",
+            "You'll get one more mail when a read succeeds. (OPE-1655)",
+          ]
+        : [`main HEAD read again: ${head.sha}. The production-lag alarm is sighted. (OPE-1655)`];
+    if (!env.ALERT_EMAIL_TECHNICAL || !env.EMAIL_JOBS) {
+      await logError(env.DB, {
+        level: "warn",
+        source: DEPLOY_LAG_SOURCE,
+        message: `[deploy-lag] would mail (${subject}) but ALERT_EMAIL_TECHNICAL/EMAIL_JOBS not configured`,
+      });
+    } else {
+      try {
+        await env.EMAIL_JOBS.send({
+          to: env.ALERT_EMAIL_TECHNICAL,
+          subject,
+          text: `${body.join("\n\n")}\n\nSent by the Cloudflare deploy-lag watch (hourly, MCP Worker).\n`,
+          html: `<p><strong>${subject}</strong></p>${body.map((l) => `<p>${l}</p>`).join("")}`,
+          source: "deploy-lag-watch",
+        });
+        blindMailed = blindKind === "blind";
+        blindSent = blindKind;
+      } catch (error) {
+        // Leave blindMailed unchanged so the mail is retried next hour.
+        await logError(env.DB, {
+          source: DEPLOY_LAG_SOURCE,
+          message: "[deploy-lag] blind alert enqueue failed",
+          error,
+        });
+      }
+    }
+  }
+
+  const mainField = head.sha ? head.sha.slice(0, 7) : `?(${headFailureReason(head.note)})`;
   const stampNote =
     `state=${recorded};mcp=${workers[0].liveSha ?? "?"};app=${workers[1].liveSha ?? "?"};` +
-    `main=${head.sha?.slice(0, 7) ?? "?"};lag=${maxLag}`;
+    `main=${mainField};lag=${maxLag};blind=${blind}` +
+    (blindMailed ? ";blindmail=1" : "");
   // Stamp LAST, so a crash above never reads as a healthy run (OPE-246 evidence).
   await db
     .insert(agentHeartbeats)
@@ -432,5 +548,14 @@ export async function runDeployLagWatch(
     });
 
   console.log(`[cron] deploy-lag ${stampNote} (live state ${state}); mailed ${mailed ?? "none"}`);
-  return { state, mainSha: head.sha, workers, pendingMigrations, mailed, stampNote };
+  return {
+    state,
+    blindTicks: blind,
+    blindMailed: blindSent,
+    mainSha: head.sha,
+    workers,
+    pendingMigrations,
+    mailed,
+    stampNote,
+  };
 }
