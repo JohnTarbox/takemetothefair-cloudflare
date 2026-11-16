@@ -93,6 +93,7 @@ import { runScheduledBurstCapSelfTest } from "./burst-cap-selftest-canary.js";
 import { runScheduledOperatorQueueNotice } from "./operator-queue-notice.js";
 import { runAgentSilenceWatchdog } from "./agent-silence-watchdog.js";
 import { isWatchedLane, recordHostHeartbeat, runHostSilenceWatch } from "./host-silence-watch.js";
+import { runDeployLagWatch } from "./deploy-lag-watch.js";
 import { runScheduledCpiScanWatchdog } from "./cpi-scan-watchdog.js";
 import {
   runScheduledHeroProposals,
@@ -1872,6 +1873,9 @@ export default {
           ["organizer-feed-poll", () => runScheduledFeedPoll(env)],
           // OPE-1637 — Battleship host silence (75 min). Mails once on silent, once on clear.
           ["host-silence-watch", () => runHostSilenceWatch(env)],
+          // OPE-1655 — production behind main for > 2h (both Workers' live SHA vs
+          // main's HEAD). Mails once on lagging, once on caught-up.
+          ["deploy-lag-watch", () => runDeployLagWatch(env)],
         ]).then(() => undefined)
       );
       return;

@@ -836,6 +836,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1655 — proof the hourly deploy-lag watch is itself running. It stamps
+    // `watchdog:deploy-lag` on every run, whatever the verdict (ok, lagging, or
+    // unknown when GitHub would not answer), so a dead hourly cron goes red here
+    // and the alarm that catches a frozen deploy cannot itself die quietly.
+    // 3h = two missed hourly runs plus slack.
+    name: "deploy-lag-watch",
+    ownerOpe: "OPE-1655",
+    label: "Hourly production-behind-main watch (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:deploy-lag")
+      ),
+  },
+  {
     // OPE-532 — proof the held-submission queue is still being MEASURED.
     //
     // This probe exists because of what this ticket found: three separate
