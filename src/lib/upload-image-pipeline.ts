@@ -28,7 +28,8 @@
  * upload_image_bytes MCP tool.
  */
 
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, isNull, sql } from "drizzle-orm";
+import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 import * as schema from "@/lib/db/schema";
@@ -37,6 +38,11 @@ import { logError } from "@/lib/logger";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { sha256Hex } from "@takemetothefair/db-schema";
+import {
+  buildFieldHistoryRows,
+  fieldHistoryInserts,
+  systemActor,
+} from "@takemetothefair/db-schema/field-history";
 import {
   identifyUnsupportedImageFormat,
   unsupportedImageFormatForMime,
@@ -376,6 +382,50 @@ export function detectMagicBytes(buf: Uint8Array): string | null {
  * status the route should emit. The pipeline never throws — internal
  * errors are caught + logged + returned as PipelineFailure.
  */
+const IMAGE_HISTORY_TABLES = { event: events, vendor: vendors, venue: venues, promoter: promoters };
+
+/**
+ * OPE-1651 — write one image column and its field-history row in one batch.
+ * Reads the column's current value first: the history row must carry what the
+ * upload REPLACED, which is the thing nobody could recover before this.
+ */
+export async function writeImageWithHistory(
+  db: Db,
+  entityType: keyof typeof IMAGE_HISTORY_TABLES,
+  targetId: string,
+  patch: Record<string, string>,
+  actorId: string | null | undefined,
+  uploadSource: string
+): Promise<void> {
+  const table = IMAGE_HISTORY_TABLES[entityType];
+  const [column] = Object.keys(patch);
+  const columnRef = (getTableColumns(table) as unknown as Record<string, SQLiteColumn>)[column];
+  const [before] = await db
+    .select({ value: columnRef })
+    .from(table)
+    .where(eq(table.id, targetId))
+    .limit(1);
+  // No row → nothing was replaced and the UPDATE matches nothing; no history.
+  const rows = !before
+    ? []
+    : buildFieldHistoryRows({
+        table,
+        entityType,
+        entityId: targetId,
+        before: { [column]: before.value ?? null },
+        patch,
+        actor: actorId || systemActor(uploadSource),
+        source: `upload:${uploadSource}`,
+      });
+  const update = db.update(table).set(patch).where(eq(table.id, targetId));
+  const history = fieldHistoryInserts(db, rows);
+  if (history.length > 0) {
+    await db.batch([update, ...history] as unknown as Parameters<typeof db.batch>[0]);
+  } else {
+    await update;
+  }
+}
+
 export async function runUploadPipeline(args: RunPipelineArgs): Promise<PipelineResult> {
   const imageRole: PipelineImageRole = args.imageRole ?? "logo";
   const { db, env, targetType, targetId, caption, actorId, uploadSource, fileName, declaredType } =
@@ -672,19 +722,23 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
           .values({ ...common, vendorId: targetId, sortOrder: (maxRow?.max ?? -1) + 1 });
       }
     } else if (targetType === "event") {
-      await db.update(events).set({ imageUrl: url }).where(eq(events.id, targetId));
+      await writeImageWithHistory(db, "event", targetId, { imageUrl: url }, actorId, uploadSource);
       await recomputeEventCompleteness(db, targetId);
     } else if (targetType === "vendor") {
-      await db.update(vendors).set({ logoUrl: url }).where(eq(vendors.id, targetId));
+      await writeImageWithHistory(db, "vendor", targetId, { logoUrl: url }, actorId, uploadSource);
     } else if (targetType === "promoter") {
       // OPE-33 — write the role-selected column (logo_url default, hero_image_url
       // when imageRole === "hero", per OPE-34's two promoter image fields).
-      await db
-        .update(promoters)
-        .set(imageColumn === "heroImageUrl" ? { heroImageUrl: url } : { logoUrl: url })
-        .where(eq(promoters.id, targetId));
+      await writeImageWithHistory(
+        db,
+        "promoter",
+        targetId,
+        imageColumn === "heroImageUrl" ? { heroImageUrl: url } : { logoUrl: url },
+        actorId,
+        uploadSource
+      );
     } else {
-      await db.update(venues).set({ imageUrl: url }).where(eq(venues.id, targetId));
+      await writeImageWithHistory(db, "venue", targetId, { imageUrl: url }, actorId, uploadSource);
       // OPE-433 scope 5 — a venue's published image changing is visible to
       // every visitor, and this path is reachable from several upload surfaces.
       // `actorId ?? uploadSource` because an unattended upload still has an

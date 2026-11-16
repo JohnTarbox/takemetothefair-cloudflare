@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./intent-feedback": "./src/intent-feedback.ts",
-    "./email-suppression": "./src/email-suppression.ts"
+    "./email-suppression": "./src/email-suppression.ts",
+    "./field-history": "./src/field-history.ts"
   },
   "scripts": {
     "test": "vitest --run --passWithNoTests"

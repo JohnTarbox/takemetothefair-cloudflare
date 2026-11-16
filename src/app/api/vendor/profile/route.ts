@@ -16,6 +16,10 @@ import {
   isDestructiveBlank,
   recordEntityWrite,
 } from "@/lib/audit/entity-write-log";
+import {
+  buildFieldHistoryRows,
+  fieldHistoryInserts,
+} from "@takemetothefair/db-schema/field-history";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 import { indexNowUrlFor, pingIndexNow } from "@/lib/indexnow";
@@ -273,8 +277,27 @@ export async function PATCH(request: NextRequest) {
       displayMode !== undefined && displayMode !== currentVendor.displayMode;
 
     const vendorUpdate = db.update(vendors).set(updateData).where(eq(vendors.userId, gate.userId));
-    if (slugRename) {
-      await db.batch([vendorUpdate, slugRename.historyInsert]);
+    // OPE-1651 — per-field history in full, attributed to the vendor's own user.
+    // (`entity_write_log` below keeps the save-outcome record, capped at 200
+    // chars by design; this is the full-value per-field record.)
+    const historyStmts = fieldHistoryInserts(
+      db,
+      buildFieldHistoryRows({
+        table: vendors,
+        entityType: "vendor",
+        entityId: currentVendor.id,
+        before: currentVendor as unknown as Record<string, unknown>,
+        patch: updateData,
+        actor: gate.userId,
+        source: "api:PATCH /api/vendor/profile",
+      })
+    );
+    if (slugRename || historyStmts.length > 0) {
+      await db.batch([
+        vendorUpdate,
+        ...(slugRename ? [slugRename.historyInsert] : []),
+        ...historyStmts,
+      ] as unknown as Parameters<typeof db.batch>[0]);
     } else {
       await vendorUpdate;
     }

@@ -43,6 +43,11 @@ import { enqueueSyndicationChange } from "@/lib/queues/producers";
 import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
 import { raiseHoursReviewFlag } from "@/lib/events/hours-review-flag";
 import { loadUnresolvedFlagForEvent } from "@/lib/duplicates/flag-queue";
+import {
+  buildFieldHistoryRows,
+  fieldHistoryBeforeSelect,
+  fieldHistoryInserts,
+} from "@takemetothefair/db-schema/field-history";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -651,11 +656,33 @@ export const PATCH = withAuth<{ id: string }>(
         });
       }
 
+      // OPE-1651 — per-field history. `currentEvent` is a partial projection,
+      // so read exactly the patched columns: a diff against a partial row would
+      // report every unselected column as "was null".
+      const [historyBefore] = await db
+        .select(fieldHistoryBeforeSelect(events, updateData))
+        .from(events)
+        .where(eq(events.id, id))
+        .limit(1);
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: events,
+          entityType: "event",
+          entityId: id,
+          before: historyBefore,
+          patch: updateData,
+          actor: session.user.id,
+          source: "api:PATCH /api/admin/events/[id]",
+        })
+      );
+
       // db.batch requires a non-empty tuple. The events UPDATE is always present,
       // so cast-spreading the conditional statements is safe.
       const batchStatements = [
         db.update(events).set(updateData).where(eq(events.id, id)),
         ...(slugRename ? [slugRename.historyInsert] : []),
+        ...historyStmts,
         ...(data.eventDays !== undefined
           ? [
               db.delete(eventDays).where(eq(eventDays.eventId, id)),

@@ -59,6 +59,11 @@ import { citationSupersedeScope } from "@takemetothefair/db-schema";
 import { writeEventVisitorNoteCitation, VISITOR_NOTE_MAX } from "../tools/visitor-notes.js";
 import { writeEventPetCitation } from "../tools/pet-friendly.js";
 import { gateUrlForField, loadClassifications } from "../url-classification.js";
+import {
+  buildFieldHistoryRows,
+  recordFieldHistory,
+  systemActor,
+} from "@takemetothefair/db-schema/field-history";
 
 export const ENRICH_APPLIED_ACTION = "dedup.enrich_applied";
 
@@ -447,10 +452,36 @@ export async function applyEmptyFields(
 
   async function record(
     field: string,
+    /** The events column written; null for a child-table write (event_days hours). */
+    colKey: keyof typeof events.$inferSelect | null,
     value: unknown,
     old: unknown,
     writeCite: () => Promise<string | null>
   ): Promise<void> {
+    // OPE-1651 — the unattended writer this table most needs: what it replaced
+    // (for a fill, `old` is null — the guard only matched an empty value) and
+    // which email drove it. After the guarded write landed; best-effort, so a
+    // history insert can never turn an applied field into an error.
+    if (colKey) {
+      try {
+        await recordFieldHistory(
+          db,
+          buildFieldHistoryRows({
+            table: events,
+            entityType: "event",
+            entityId: args.eventId,
+            before: { [colKey]: old },
+            patch: { [colKey]: value },
+            actor: systemActor("enrich-auto-apply"),
+            source: "mcp:enrich-auto-apply",
+            requestId: `inbound:${args.inboundEmailId}`,
+            at: now,
+          })
+        );
+      } catch (e) {
+        console.error("entity_field_history insert failed (enrich-auto-apply)", e);
+      }
+    }
     const overwrote = !blank(old);
     const prior = await activeCitation(db, args.eventId, citationFieldName(field));
     const entry: AppliedField = {
@@ -506,7 +537,7 @@ export async function applyEmptyFields(
         return;
       }
       const c = citationFor(field, value);
-      await record(field, value, g.old, () =>
+      await record(field, colKey, value, g.old, () =>
         writeCitation(db, {
           eventId: args.eventId,
           field: c.name,
@@ -539,7 +570,7 @@ export async function applyEmptyFields(
         miss[field] = raw;
         return;
       }
-      await record(field, fact.value, g.old, () =>
+      await record(field, colKey, fact.value, g.old, () =>
         writeEventVisitorNoteCitation(db, {
           eventId: args.eventId,
           field: field as "parking_notes" | "accessibility_notes",
@@ -576,7 +607,7 @@ export async function applyEmptyFields(
         miss[field] = raw;
         return;
       }
-      await record(field, fact.value, g.old, () =>
+      await record(field, "petFriendly", fact.value, g.old, () =>
         writeEventPetCitation(db, {
           eventId: args.eventId,
           value: fact.value as "YES" | "NO",
@@ -632,6 +663,7 @@ export async function applyEmptyFields(
       }
       await record(
         field,
+        null,
         { openTime: h.startTime, closeTime: h.endTime, days: done.length },
         null,
         () =>

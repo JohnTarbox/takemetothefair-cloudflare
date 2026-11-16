@@ -26,6 +26,11 @@ import { vendorClaimConfirmationTemplate } from "@/lib/email/templates";
 import { markActedAllForTarget } from "@/lib/recommendations/engine";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
+import {
+  buildFieldHistoryRows,
+  fieldHistoryBeforeSelect,
+  fieldHistoryInserts,
+} from "@takemetothefair/db-schema/field-history";
 
 export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
   const { id } = params;
@@ -364,8 +369,31 @@ export const PATCH = withAuth<{ id: string }>(
       }
 
       const vendorUpdate = db.update(vendors).set(updateData).where(eq(vendors.id, id));
-      if (slugRename) {
-        await db.batch([vendorUpdate, slugRename.historyInsert]);
+      // OPE-1651 — per-field history, in the same batch as the UPDATE.
+      // `currentVendor` is a partial projection; read exactly the patched columns.
+      const [historyBefore] = await db
+        .select(fieldHistoryBeforeSelect(vendors, updateData))
+        .from(vendors)
+        .where(eq(vendors.id, id))
+        .limit(1);
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: vendors,
+          entityType: "vendor",
+          entityId: id,
+          before: historyBefore,
+          patch: updateData,
+          actor: session.user.id,
+          source: "api:PATCH /api/admin/vendors/[id]",
+        })
+      );
+      if (slugRename || historyStmts.length > 0) {
+        await db.batch([
+          vendorUpdate,
+          ...(slugRename ? [slugRename.historyInsert] : []),
+          ...historyStmts,
+        ] as unknown as Parameters<typeof db.batch>[0]);
       } else {
         await vendorUpdate;
       }

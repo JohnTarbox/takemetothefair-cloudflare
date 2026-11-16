@@ -36,6 +36,11 @@ import {
 } from "../venues/geocode-new.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import type { Db } from "../db.js";
+import {
+  buildFieldHistoryRows,
+  fieldHistoryBeforeSelect,
+  fieldHistoryInserts,
+} from "@takemetothefair/db-schema/field-history";
 import type { AuthContext } from "../auth.js";
 import { gateUrlOnce, loadClassifications, shouldIngestFromSource } from "../url-classification.js";
 import {
@@ -206,7 +211,33 @@ export function registerVendorTools(
 
       updates.updatedAt = new Date();
 
-      await db.update(vendors).set(updates).where(eq(vendors.id, vendorId));
+      // OPE-1651 — vendor self-edit over MCP: per-field history, attributed
+      // to the vendor's own user, in the same batch as the UPDATE.
+      const [historyBefore] = await db
+        .select(fieldHistoryBeforeSelect(vendors, updates))
+        .from(vendors)
+        .where(eq(vendors.id, vendorId))
+        .limit(1);
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: vendors,
+          entityType: "vendor",
+          entityId: vendorId,
+          before: historyBefore,
+          patch: updates,
+          actor: auth.userId,
+          source: "mcp:update_vendor_profile",
+        })
+      );
+      const vendorUpdate = db.update(vendors).set(updates).where(eq(vendors.id, vendorId));
+      if (historyStmts.length > 0) {
+        await db.batch([vendorUpdate, ...historyStmts] as unknown as Parameters<
+          typeof db.batch
+        >[0]);
+      } else {
+        await vendorUpdate;
+      }
 
       await recomputeVendorCompleteness(db, vendorId);
 

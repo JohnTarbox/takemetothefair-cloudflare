@@ -162,6 +162,11 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // /go/; its arming ticket measures the redirect-row inter-arrival then.
       // Two weekly sends, because scanners prefetch every link on each send.
       "go-click-redirect": 336,
+      // OPE-1651 — PLACEHOLDER (no rows can exist before drizzle/0420 ships).
+      // Sized on the claim that the analyst/discovery lanes edit events most
+      // days; re-size from real entity_field_history inter-arrivals once a
+      // month of rows exists.
+      "entity-field-history": 168,
       // OPE-1558 — PLACEHOLDER window. Armed by OPE-1559 (drizzle/0391) with
       // the nav CTA, before any traffic existed to measure an inter-arrival
       // from; re-measure the list_view gap once ~2 weeks of rows exist.
