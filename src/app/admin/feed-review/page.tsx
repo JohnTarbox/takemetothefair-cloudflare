@@ -14,6 +14,7 @@
  * renders an empty state, never a throw (the OPE-58 crash class).
  */
 import Link from "next/link";
+import { safeHref } from "@takemetothefair/utils";
 import { requireAdmin } from "@/lib/require-admin";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { LIST_MAX, listFeedItems, type ListedFeedItem } from "@/lib/feed-review/review";
@@ -25,10 +26,11 @@ export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<{ review_state?: string; feed_id?: string; offset?: string }>;
 
-function stateHref(state: string, feedId: string | null): string {
+/** The page's query string. Callers prefix the literal route, so the href is provably internal. */
+function stateQuery(state: string, feedId: string | null): string {
   const q = new URLSearchParams({ review_state: state });
   if (feedId) q.set("feed_id", feedId);
-  return `/admin/feed-review?${q.toString()}`;
+  return q.toString();
 }
 
 export default async function AdminFeedReviewPage({
@@ -69,7 +71,7 @@ export default async function AdminFeedReviewPage({
           <Link
             prefetch={false}
             key={s}
-            href={stateHref(s, feedId)}
+            href={`/admin/feed-review?${stateQuery(s, feedId)}`}
             className={`px-3 py-1 rounded border ${
               s === reviewState
                 ? "bg-navy text-white border-navy"
@@ -82,7 +84,7 @@ export default async function AdminFeedReviewPage({
         {feedId ? (
           <Link
             prefetch={false}
-            href={stateHref(reviewState, null)}
+            href={`/admin/feed-review?${stateQuery(reviewState, null)}`}
             className="px-3 py-1 text-muted-foreground underline"
           >
             all feeds
@@ -113,7 +115,7 @@ export default async function AdminFeedReviewPage({
         {offset > 0 ? (
           <Link
             prefetch={false}
-            href={`${stateHref(reviewState, feedId)}&offset=${Math.max(offset - LIST_MAX, 0)}`}
+            href={`/admin/feed-review?${stateQuery(reviewState, feedId)}&offset=${Math.max(offset - LIST_MAX, 0)}`}
             className="underline"
           >
             ← previous
@@ -124,7 +126,7 @@ export default async function AdminFeedReviewPage({
         {nextOffset != null ? (
           <Link
             prefetch={false}
-            href={`${stateHref(reviewState, feedId)}&offset=${nextOffset}`}
+            href={`/admin/feed-review?${stateQuery(reviewState, feedId)}&offset=${nextOffset}`}
             className="underline"
           >
             next →
@@ -153,7 +155,7 @@ function FeedItemRow({ item, feedFiltered }: { item: ListedFeedItem; feedFiltere
               ) : (
                 <Link
                   prefetch={false}
-                  href={stateHref(item.review_state, item.feed_id)}
+                  href={`/admin/feed-review?${stateQuery(item.review_state, item.feed_id)}`}
                   className="underline"
                 >
                   {item.promoter}
@@ -163,15 +165,18 @@ function FeedItemRow({ item, feedFiltered }: { item: ListedFeedItem; feedFiltere
               <span className="uppercase tracking-wide">{item.review_state.replace("_", " ")}</span>
               {item.inclusion_reason ? ` · ${item.inclusion_reason}` : ""}
             </p>
-            {item.url ? (
+            {/* A feed-supplied URL: safeHref() keeps a javascript: value out of an admin session (OPE-1385). */}
+            {safeHref(item.url) ? (
               <a
-                href={item.url}
+                href={safeHref(item.url)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-xs text-navy underline break-all"
               >
                 {item.url}
               </a>
+            ) : item.url ? (
+              <p className="text-xs text-muted-foreground break-all">{item.url}</p>
             ) : null}
             {item.closest_event ? (
               <p className="text-xs text-amber-800" data-testid="feed-closest-event">
