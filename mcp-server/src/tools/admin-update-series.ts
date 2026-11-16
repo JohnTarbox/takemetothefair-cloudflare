@@ -40,6 +40,7 @@ import {
   eventSlugHistory,
   events,
   pendingSearchPings,
+  promoters,
   seriesSlugHistory,
 } from "../schema.js";
 import type { Db } from "../db.js";
@@ -54,6 +55,8 @@ export interface SeriesRow {
   imageUrl: string | null;
   categories: string | null;
   tags: string | null;
+  /** OPE-1649 — optional so older callers/tests that never set it still type-check. */
+  promoterId?: string | null;
 }
 
 export interface UpdateSeriesArgs {
@@ -64,6 +67,8 @@ export interface UpdateSeriesArgs {
   tags?: string[];
   categories?: string[];
   image_url?: string | null;
+  /** OPE-1649 — the series' promoter: the landing's organizer and the next occurrence's default. */
+  promoter_id?: string;
   reason: string;
   dry_run?: boolean;
 }
@@ -80,7 +85,7 @@ export interface SlugCollisions {
   eventHistory: string[];
 }
 
-type Field = "name" | "description" | "image_url" | "categories" | "tags";
+type Field = "name" | "description" | "image_url" | "categories" | "tags" | "promoter_id";
 
 export interface SeriesUpdatePlan {
   changes: Partial<Record<Field, { from: string | null; to: string | null }>>;
@@ -99,7 +104,9 @@ const NO_COLLISIONS: SlugCollisions = {
 export function planSeriesUpdate(
   current: SeriesRow,
   args: Omit<UpdateSeriesArgs, "series_id" | "reason" | "dry_run">,
-  collisions: SlugCollisions = NO_COLLISIONS
+  collisions: SlugCollisions = NO_COLLISIONS,
+  /** OPE-1649 — false when `promoter_id` names no promoters row. */
+  promoterKnown = true
 ): SeriesUpdatePlan {
   const plan: SeriesUpdatePlan = { changes: {}, slug: null, problems: [] };
   const diff = (field: Field, from: string | null, to: string | null | undefined) => {
@@ -125,6 +132,10 @@ export function planSeriesUpdate(
     }
   }
   if (args.tags !== undefined) diff("tags", current.tags, JSON.stringify(args.tags));
+  if (args.promoter_id !== undefined) {
+    if (!promoterKnown) plan.problems.push(`promoter_id "${args.promoter_id}" is not a promoter`);
+    else diff("promoter_id", current.promoterId ?? null, args.promoter_id);
+  }
 
   if (args.slug !== undefined && args.slug !== current.canonicalSlug) {
     const to = args.slug;
@@ -199,6 +210,7 @@ export async function handleUpdateSeries(
       imageUrl: eventSeries.imageUrl,
       categories: eventSeries.categories,
       tags: eventSeries.tags,
+      promoterId: eventSeries.promoterId,
     })
     .from(eventSeries)
     .where(eq(eventSeries.id, args.series_id))
@@ -208,7 +220,17 @@ export async function handleUpdateSeries(
   const newSlug =
     args.slug !== undefined && args.slug !== current.canonicalSlug ? unsafeSlug(args.slug) : null;
   const collisions = newSlug ? await findCollisions(db, current.id, newSlug) : NO_COLLISIONS;
-  const plan = planSeriesUpdate(current, args, collisions);
+  const promoterKnown =
+    args.promoter_id === undefined
+      ? true
+      : (
+          await db
+            .select({ id: promoters.id })
+            .from(promoters)
+            .where(eq(promoters.id, args.promoter_id))
+            .limit(1)
+        ).length > 0;
+  const plan = planSeriesUpdate(current, args, collisions, promoterKnown);
   const dryRun = args.dry_run !== false;
 
   const oldSlug = unsafeSlug(current.canonicalSlug);
@@ -252,6 +274,7 @@ export async function handleUpdateSeries(
   if (plan.changes.image_url) set.imageUrl = plan.changes.image_url.to;
   if (plan.changes.categories) set.categories = plan.changes.categories.to;
   if (plan.changes.tags) set.tags = plan.changes.tags.to;
+  if (plan.changes.promoter_id) set.promoterId = plan.changes.promoter_id.to;
   if (newSlug) set.canonicalSlug = newSlug;
 
   const ping = (slug: Slug) =>
@@ -322,7 +345,8 @@ export function registerUpdateSeriesTool(server: McpServer, db: Db, auth: AuthCo
     "update_series",
     [
       "Edit an event series (the evergreen hub at /events/<slug>): name, slug,",
-      "description, tags, categories, image_url. Use this instead of SQL. A SLUG change",
+      "description, tags, categories, image_url, promoter_id (the hub's JSON-LD organizer",
+      "and the promoter a new occurrence inherits). Use this instead of SQL. A SLUG change",
       "writes the series_slug_history row in the same atomic batch, so the old hub URL",
       "and its /<old-slug>/<year|edition> URLs 301 to the new ones. It also repoints",
       "earlier retired slugs at the new one (A→B→C becomes A→C) and queues IndexNow",
@@ -346,6 +370,14 @@ export function registerUpdateSeriesTool(server: McpServer, db: Db, auth: AuthCo
       tags: z.array(z.string().max(100)).max(50).optional(),
       categories: z.array(z.string().max(100)).max(50).optional(),
       image_url: z.string().url().max(2000).nullable().optional(),
+      promoter_id: z
+        .string()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe(
+          "OPE-1649 — the series' promoter id. Must exist. update_event(promoter_id) already carries a reassignment to the series when the series is unset, on the placeholder, or this is its latest edition; use this for the rest."
+        ),
       reason: z.string().min(1).max(500).describe("Why. Recorded in admin_actions."),
       dry_run: z.boolean().optional().describe("Default true: return the plan, write nothing."),
     },
