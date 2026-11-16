@@ -315,6 +315,27 @@ describe("reviewer answers to a refusal (venue_id, not_duplicate_of)", () => {
     expect(n("SELECT COUNT(*) n FROM events")).toBe(before);
   });
 
+  it("OPE-1630: a merged-away INACTIVE venue is neither offered as a candidate nor accepted as a pick", async () => {
+    // merge_venue keeps the loser's name and town; only the slug and status change.
+    raw
+      .prepare(
+        "INSERT INTO venues (id, name, slug, city, state, status) VALUES ('v-bath-tomb','Bath Middle School','bath-middle-school-merged-tomb','Bath','ME','INACTIVE')"
+      )
+      .run();
+    const r = await review({ feedItemId: "i-novenue", action: "approve" });
+    expect(r).toMatchObject({ ok: false, code: "venue_unmatched" });
+    if (r.ok) throw new Error("unreachable");
+    const ids = r.venue_candidates?.map((c) => c.id) ?? [];
+    expect(ids).toContain("v-bath"); // landmark: the candidate query still ran and matched
+    expect(ids).not.toContain("v-bath-tomb");
+
+    const before = n("SELECT COUNT(*) n FROM events");
+    expect(
+      await review({ feedItemId: "i-novenue", action: "approve", venueId: "v-bath-tomb" })
+    ).toMatchObject({ ok: false, code: "venue_inactive" });
+    expect(n("SELECT COUNT(*) n FROM events")).toBe(before);
+  });
+
   it("not_duplicate_of overrides only the match the reviewer named", async () => {
     // Another organizer's DIFFERENT show at the same venue a day earlier: dedup's
     // venue ±7-day stage calls it the same event.
