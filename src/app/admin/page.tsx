@@ -72,57 +72,60 @@ function QueueTileCard({ tile }: { tile: QueueTile }) {
 /** OPE-1632 — "Organizer feeds": funnel bar, backlog age (red past target), coverage, new to us. */
 function FeedLaneCard({ tile }: { tile: FeedLaneTile | null }) {
   const pct = (n: number) => (tile && tile.read > 0 ? `${(n / tile.read) * 100}%` : "0%");
+  // OPE-1630 item 3: the tile opens the queue it counts.
   return (
-    <Card className="h-full">
-      <CardContent className="p-5">
-        <p className="text-sm text-muted-foreground">Organizer feeds</p>
-        <p className="text-3xl font-bold text-foreground mt-1 tabular-nums">
-          {tile ? fmtCount(tile.awaitingReview) : "—"}
-          <span className="text-sm font-normal text-muted-foreground"> awaiting review</span>
-        </p>
-        {tile ? (
-          <>
-            <p
-              className={`text-xs mt-1 tabular-nums ${tile.pastTarget ? "text-red-600 font-semibold" : "text-muted-foreground"}`}
-              data-testid="feed-backlog-age"
-            >
-              Oldest {formatFeedAge(tile.oldestAgeDays)}
-              {tile.pastTarget ? ` · past the ${tile.targetDays}d target` : ""}
-            </p>
-            {tile.healthFlagsText ? (
+    <Link prefetch={false} href="/admin/feed-review" data-testid="feed-lane-tile-link">
+      <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
+        <CardContent className="p-5">
+          <p className="text-sm text-muted-foreground">Organizer feeds</p>
+          <p className="text-3xl font-bold text-foreground mt-1 tabular-nums">
+            {tile ? fmtCount(tile.awaitingReview) : "—"}
+            <span className="text-sm font-normal text-muted-foreground"> awaiting review</span>
+          </p>
+          {tile ? (
+            <>
               <p
-                className="text-xs mt-1 text-red-600 font-semibold"
-                data-testid="feed-health-flags"
+                className={`text-xs mt-1 tabular-nums ${tile.pastTarget ? "text-red-600 font-semibold" : "text-muted-foreground"}`}
+                data-testid="feed-backlog-age"
               >
-                {tile.healthFlagsText}
+                Oldest {formatFeedAge(tile.oldestAgeDays)}
+                {tile.pastTarget ? ` · past the ${tile.targetDays}d target` : ""}
               </p>
-            ) : null}
-            <div
-              className="flex h-2 w-full overflow-hidden rounded bg-muted mt-3"
-              role="img"
-              aria-label={`Last ${tile.windowDays} days: ${tile.read} items read, ${tile.matched} matched, ${tile.fresh} new, ${tile.dropped} dropped`}
-            >
-              <div className="bg-green-600" style={{ width: pct(tile.matched) }} />
-              <div className="bg-amber-500" style={{ width: pct(tile.fresh) }} />
-              <div className="bg-gray-400" style={{ width: pct(tile.dropped) }} />
-            </div>
-            <p className="text-xs text-muted-foreground mt-2 tabular-nums">
-              {tile.windowDays}d: {fmtCount(tile.read)} read · {fmtCount(tile.matched)} matched ·{" "}
-              {fmtCount(tile.fresh)} new · {fmtCount(tile.dropped)} dropped
-            </p>
-            <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-              {tile.feedsHealthy} of {tile.feedsEnabled} feeds healthy · coverage{" "}
-              {tile.coverageHealthyShare == null
-                ? "—"
-                : `${Math.round(tile.coverageHealthyShare * 100)}%`}{" "}
-              · {fmtCount(tile.newToUs7d)} new to us this week
-            </p>
-          </>
-        ) : (
-          <p className="text-xs text-muted-foreground mt-2">Read failed</p>
-        )}
-      </CardContent>
-    </Card>
+              {tile.healthFlagsText ? (
+                <p
+                  className="text-xs mt-1 text-red-600 font-semibold"
+                  data-testid="feed-health-flags"
+                >
+                  {tile.healthFlagsText}
+                </p>
+              ) : null}
+              <div
+                className="flex h-2 w-full overflow-hidden rounded bg-muted mt-3"
+                role="img"
+                aria-label={`Last ${tile.windowDays} days: ${tile.read} items read, ${tile.matched} matched, ${tile.fresh} new, ${tile.dropped} dropped`}
+              >
+                <div className="bg-green-600" style={{ width: pct(tile.matched) }} />
+                <div className="bg-amber-500" style={{ width: pct(tile.fresh) }} />
+                <div className="bg-gray-400" style={{ width: pct(tile.dropped) }} />
+              </div>
+              <p className="text-xs text-muted-foreground mt-2 tabular-nums">
+                {tile.windowDays}d: {fmtCount(tile.read)} read · {fmtCount(tile.matched)} matched ·{" "}
+                {fmtCount(tile.fresh)} new · {fmtCount(tile.dropped)} dropped
+              </p>
+              <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+                {tile.feedsHealthy} of {tile.feedsEnabled} feeds healthy · coverage{" "}
+                {tile.coverageHealthyShare == null
+                  ? "—"
+                  : `${Math.round(tile.coverageHealthyShare * 100)}%`}{" "}
+                · {fmtCount(tile.newToUs7d)} new to us this week
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground mt-2">Read failed</p>
+          )}
+        </CardContent>
+      </Card>
+    </Link>
   );
 }
 
@@ -198,6 +201,7 @@ export default async function AdminDashboard() {
                         </p>
                       </div>
                       <Link
+                        prefetch={false}
                         href={`/admin/submissions?id=${event.id}`}
                         className="text-sm text-royal hover:text-navy font-medium"
                       >
@@ -210,6 +214,7 @@ export default async function AdminDashboard() {
             )}
             {recentSubmissions.endedCount > 0 && (
               <Link
+                prefetch={false}
                 href="/admin/submissions?bucket=ended"
                 className="block pt-3 text-sm text-royal hover:text-navy font-medium"
               >

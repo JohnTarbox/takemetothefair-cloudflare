@@ -585,7 +585,8 @@ export async function readOperatorQueues(
       lines.push(
         `${feedItemsAwaitingReview} new organizer-feed event(s) awaiting review across ` +
           `${rows.length} feed(s) — on a promoter's own calendar, matching none of ours; ` +
-          `nothing is created until reviewed. Review with list_feed_items, then ` +
+          `nothing is created until reviewed. Review at ` +
+          `https://meetmeatthefair.com/admin/feed-review, or with list_feed_items then ` +
           `review_feed_item: approve / approve_as_occurrence / link / reject (OPE-1630).`
       );
     }
