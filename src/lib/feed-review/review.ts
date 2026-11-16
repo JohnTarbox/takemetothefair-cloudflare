@@ -54,6 +54,8 @@ import { parseApiRow } from "@/lib/promoter-api/fields";
 import { createEvent, previewRows, type CommitContext } from "@/lib/promoter-import/run";
 import { feedToCells } from "@/lib/test-submission/engine";
 import { trackEventStatusChange } from "@/lib/server-analytics";
+import { normalizeEventDate } from "@/lib/event-dates";
+import { toIsoDateOnlyInVenueZone } from "@takemetothefair/datetime";
 
 type Db = ReturnType<typeof getCloudflareDb>;
 
@@ -387,7 +389,48 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
   });
   // The reviewer checked THIS match and says it is a different event.
   const overridden = !!p.event && !!input.notDuplicateOf && input.notDuplicateOf === p.event.id;
-  if (p.status === "match" && p.event && !overridden)
+
+  // OPE-1659 — approve_as_occurrence: a match that is ALREADY an occurrence of
+  // the requested series on a DIFFERENT date is a sibling, not a duplicate.
+  // Measured on the North Pole Express (2026-11-16): every run has its own
+  // source URL and they share one venue, so findDuplicate's stage 2
+  // (`venue_date`, ±7 days, identifiesSameEvent) matched each run to a sibling
+  // and only two of six went through without a hand-named not_duplicate_of.
+  // Exempted HERE, not in findDuplicate, which suggest_event and update_event
+  // share. The same calendar date anywhere in the series is still a duplicate.
+  let seriesSiblingOf: string | null = null;
+  if (
+    input.action === "approve_as_occurrence" &&
+    input.seriesId &&
+    p.status === "match" &&
+    p.event &&
+    !overridden
+  ) {
+    const itemDay = toIsoDateOnlyInVenueZone(normalizeEventDate(row.value.startDate));
+    const inSeries = await db
+      .select({ id: events.id, name: events.name, slug: events.slug, startDate: events.startDate })
+      .from(events)
+      .where(and(eq(events.seriesId, input.seriesId), isNull(events.mergedInto)));
+    const sameDay = inSeries.find(
+      (e) => itemDay !== "" && toIsoDateOnlyInVenueZone(e.startDate) === itemDay
+    );
+    if (sameDay)
+      return fail(
+        "duplicate",
+        `This series already has "${sameDay.name}" on ${itemDay}. Link it instead.`,
+        {
+          suggest: {
+            action: "link",
+            event_id: sameDay.id,
+            event_name: sameDay.name,
+            event_slug: String(sameDay.slug),
+          },
+        }
+      );
+    if (inSeries.some((e) => e.id === p.event!.id)) seriesSiblingOf = p.event.id;
+  }
+
+  if (p.status === "match" && p.event && !overridden && !seriesSiblingOf)
     return fail("duplicate", `This is already listed as "${p.event.name}". Link it instead.`, {
       suggest: {
         action: "link",
@@ -486,6 +529,8 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
     venue_id: venue.venueId,
     venue_picked: !!picked,
     not_duplicate_of: overridden ? input.notDuplicateOf : null,
+    // OPE-1659 — dedup matched this series' own occurrence on another date.
+    series_sibling_of: seriesSiblingOf,
     previous_state: item.reviewState,
   });
   return {
