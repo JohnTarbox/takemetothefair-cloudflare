@@ -35,7 +35,7 @@
  * and the reviewer names that one event as not-the-same. Neither loosens dedup
  * for anyone else.
  */
-import { and, asc, eq, isNull, like, or, type SQL } from "drizzle-orm";
+import { and, asc, eq, isNull, like, ne, or, type SQL } from "drizzle-orm";
 import type { getCloudflareDb } from "@/lib/cloudflare";
 import {
   adminActions,
@@ -115,6 +115,7 @@ export type ReviewResult =
         | "event_not_found"
         | "series_not_found"
         | "venue_not_found"
+        | "venue_inactive"
         | "skipped";
       message: string;
       /** duplicate: the event to `link` instead. */
@@ -220,11 +221,15 @@ async function venueCandidates(db: Db, venue: FeedEvent["venue"]) {
     .filter((w) => w.length >= 4 && !/^(the|center|centre|hall|school|hotel)$/i.test(w))[0];
   if (word) conds.push(like(venues.name, `%${word}%`));
   if (!conds.length) return [];
-  return db
-    .select({ id: venues.id, name: venues.name, city: venues.city, state: venues.state })
-    .from(venues)
-    .where(or(...conds))
-    .limit(8);
+  return (
+    db
+      .select({ id: venues.id, name: venues.name, city: venues.city, state: venues.state })
+      .from(venues)
+      // OPE-1630: merged-away INACTIVE tombstones are not choices — the
+      // Thanksgiving item offered 3 "Royal Plaza" rows, 2 of them merged.
+      .where(and(or(...conds), ne(venues.status, "INACTIVE")))
+      .limit(8)
+  );
 }
 
 export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<ReviewResult> {
@@ -324,11 +329,17 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
         city: venues.city,
         state: venues.state,
         zip: venues.zip,
+        status: venues.status,
       })
       .from(venues)
       .where(eq(venues.id, input.venueId))
       .limit(1);
     if (!v) return fail("venue_not_found", "No venue with that id.");
+    if (v.status === "INACTIVE")
+      return fail(
+        "venue_inactive",
+        `"${v.name}" is INACTIVE (a merged-away venue keeps its row as a redirect). Pick the venue it was merged into.`
+      );
     picked = v;
   }
   const ev = parseSnapshot(item.snapshot);

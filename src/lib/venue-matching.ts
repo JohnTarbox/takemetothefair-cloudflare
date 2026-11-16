@@ -23,7 +23,7 @@
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { adminActions, venueNameVariants, venues } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { containsCI } from "@/lib/db/contains-ci";
 import {
   combinedSimilarity,
@@ -138,7 +138,10 @@ export async function autoLinkVenue(db: Db, input: AutoLinkInput): Promise<Venue
     .from(venues)
     // OPE-1376: containsCI (instr), not LIKE — a first token over ~48 chars
     // tripped D1's 50-char LIKE-pattern cap and threw out of the matcher.
-    .where(containsCI(venues.name, firstTokens.split(" ")[0]))
+    // OPE-1630: never a merged-away INACTIVE tombstone. merge_venue keeps the
+    // loser under its original name, so an exact-name tier saw keeper +
+    // tombstone and returned "ambiguous" for a venue we hold exactly once.
+    .where(and(containsCI(venues.name, firstTokens.split(" ")[0]), ne(venues.status, "INACTIVE")))
     .limit(100);
 
   // Tier 1+2: exact normalized-name match.
@@ -201,7 +204,12 @@ export async function autoLinkVenue(db: Db, input: AutoLinkInput): Promise<Venue
     })
     .from(venueNameVariants)
     .innerJoin(venues, eq(venues.id, venueNameVariants.venueId))
-    .where(eq(venueNameVariants.normalizedName, normalizeName(rawName)))
+    .where(
+      and(
+        eq(venueNameVariants.normalizedName, normalizeName(rawName)),
+        ne(venues.status, "INACTIVE")
+      )
+    )
     .limit(10);
   const variantMatches = variantRows.filter((v) =>
     venueLocationCompatible(v, { city: input.venueCity, state })
