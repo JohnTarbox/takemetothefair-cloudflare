@@ -1991,6 +1991,16 @@ const FEED_REVIEW_SQL = (() => {
   return sql;
 })();
 
+// OPE-1633 — fill-count columns on the run log and the feed_health_flags
+// table, loaded from the migration itself (DDL only: the probe seed is cut).
+const FEED_HEALTH_SQL = (() => {
+  const sql = readFileSync(join(__dirname, "../../drizzle/0416_ope1633_feed_health.sql"), "utf8");
+  const end = sql.indexOf("-- OPE-246 — heartbeat probes");
+  if (end < 0 || !sql.includes("CREATE TABLE feed_health_flags"))
+    throw new Error("0416 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
   const raw = new Database(":memory:");
   raw.pragma("foreign_keys = ON");
@@ -2007,6 +2017,7 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   raw["exec"](CHANGE_PING_SQL);
   raw["exec"](FEED_READER_SQL);
   raw["exec"](FEED_REVIEW_SQL);
+  raw["exec"](FEED_HEALTH_SQL);
   const db = drizzle(raw, { schema });
   // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.
   // Shim it so code paths that batch — e.g. SYN1's outbox-row + version-bump

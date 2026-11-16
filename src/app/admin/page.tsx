@@ -113,6 +113,14 @@ function FeedLaneCard({ tile }: { tile: FeedLaneTile | null }) {
               Oldest {formatFeedAge(tile.oldestAgeDays)}
               {tile.pastTarget ? ` · past the ${tile.targetDays}d target` : ""}
             </p>
+            {tile.healthFlagsText ? (
+              <p
+                className="text-xs mt-1 text-red-600 font-semibold"
+                data-testid="feed-health-flags"
+              >
+                {tile.healthFlagsText}
+              </p>
+            ) : null}
             <div
               className="flex h-2 w-full overflow-hidden rounded bg-muted mt-3"
               role="img"

@@ -6836,8 +6836,47 @@ export const promoterFeedReads = sqliteTable(
     discrepancies: integer("discrepancies").notNull().default(0),
     thirdValues: integer("third_values").notNull().default(0),
     error: text("error"),
+    // OPE-1633 — written on outcome='ok' reads only; NULL everywhere else.
+    titleFilled: integer("title_filled"),
+    startFilled: integer("start_filled"),
+    venueFilled: integer("venue_filled"),
+    unmappable: integer("unmappable"),
   },
   (t) => [index("idx_promoter_feed_reads_feed").on(t.feedId, t.startedAt)]
+);
+
+/**
+ * OPE-1633 — feed health flags (drizzle/0416). One OPEN row per (feed, check)
+ * while the check trips; `clearedAt` is set when a later evaluation is back in
+ * bounds. Written by mcp-server/src/feeds/health.ts; read by
+ * list_promoter_feeds, loadFeedLaneMetrics (digest line + /admin tile).
+ */
+export const FEED_HEALTH_CHECKS = [
+  "freshness",
+  "volume_drop",
+  "format_drift",
+  "inclusion_swing",
+] as const;
+export type FeedHealthCheck = (typeof FEED_HEALTH_CHECKS)[number];
+
+export const feedHealthFlags = sqliteTable(
+  "feed_health_flags",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    feedId: text("feed_id")
+      .notNull()
+      .references(() => promoterEventFeeds.id, { onDelete: "cascade" }),
+    checkName: text("check_name", { enum: FEED_HEALTH_CHECKS }).notNull(),
+    observed: real("observed"),
+    baseline: real("baseline"),
+    detail: text("detail"),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+    clearedAt: integer("cleared_at", { mode: "timestamp" }),
+  },
+  (t) => [index("idx_feed_health_flags_feed").on(t.feedId, t.firstSeenAt)]
 );
 
 export const promoterFeedItems = sqliteTable(

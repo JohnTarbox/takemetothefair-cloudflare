@@ -38,6 +38,7 @@ import { PING_COALESCE_MS, promoterEventFeeds } from "../schema.js";
 import { getDb, type Db } from "../db.js";
 import { logError } from "../logger.js";
 import { runFeedRead } from "./run.js";
+import { evaluateFreshnessAll, FEED_HEALTH_SOURCE } from "./health.js";
 import {
   ensureWebSubSubscription,
   isWebSubEnabled,
@@ -58,6 +59,11 @@ export interface FeedPollSummary {
   /** OPE-1626 — a feed disabled between selection and read. */
   skipped: number;
   feed_ids: string[];
+  /**
+   * OPE-1633 — the hourly pass's freshness evaluation over every enabled feed
+   * (absent on the pinged pass and when polling is off; null if it failed).
+   */
+  health?: { evaluated: number; stale: number; open: number } | null;
 }
 
 /**
@@ -150,6 +156,20 @@ export async function pollDueFeeds(
     // instead of being re-read every pass.
     await settlePing(db, f.id, args.now).catch(() => undefined);
   }
+  // OPE-1633 — freshness for EVERY enabled feed, after the reads (a feed just
+  // read clears here). A stale feed is the one not being read, so this cannot
+  // hang off runFeedRead. Observability: a failure never fails the poll.
+  if (!args.onlyPinged) {
+    summary.health = await evaluateFreshnessAll(db, args.now).catch(async (error) => {
+      await logError(db, {
+        level: "warn",
+        source: "feeds:health",
+        message: "feed freshness evaluation failed",
+        error,
+      });
+      return null;
+    });
+  }
   return summary;
 }
 
@@ -178,6 +198,15 @@ export async function runScheduledFeedPoll(env: {
           : "websub off (WEBSUB_ENABLED is not true)")
       : "feed poll: FEED_POLLING_ENABLED is not true; read nothing",
   });
+  // OPE-1633 — the `feed-health-eval` heartbeat probe's evidence: one row per
+  // hourly run that actually evaluated (none when polling is off or it failed).
+  if (s.health) {
+    await logError(env.DB, {
+      level: "info",
+      source: FEED_HEALTH_SOURCE,
+      message: `feed health: evaluated ${s.health.evaluated} enabled feeds, ${s.health.stale} stale, ${s.health.open} flags open`,
+    });
+  }
 }
 
 /**
