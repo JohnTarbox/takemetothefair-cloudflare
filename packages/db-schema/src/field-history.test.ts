@@ -132,10 +132,15 @@ describe("helpers", () => {
   it("fieldHistoryInserts splits 10 rows into 2 statements, each under the cap", () => {
     const db = drizzle({} as never, { schema: {} as never }) as never;
     const rows = Array.from({ length: 10 }, (_, i) => ({
-      ...base,
+      entityType: "event" as const,
+      entityId: "e1",
       field: `f${i}`,
       oldValue: null,
       newValue: String(i),
+      actor: "u1",
+      source: "test",
+      requestId: "r1",
+      changedAt: base.at,
     }));
     const stmts = fieldHistoryInserts(db, rows);
     expect(stmts).toHaveLength(2);
