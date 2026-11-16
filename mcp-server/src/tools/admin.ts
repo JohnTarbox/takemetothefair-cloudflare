@@ -119,6 +119,8 @@ import {
   normalizeEventDate,
   reclassifySourceOnEdit,
   assertIngestionMethod,
+  INGESTION_METHODS,
+  type IngestionMethod,
   nextGateFlags,
   freePlaceholderEmail,
   validateVenueLifecycle,
@@ -1393,7 +1395,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       source_name: z
         .string()
         .optional()
-        .describe("Name of the source (e.g. 'facebook', 'eventbrite')"),
+        .describe(
+          "Name of the source we cite (e.g. 'facebook', 'eventbrite'). Editing it (or source_url) refreshes source_domain but NEVER changes ingestion_method — how the row was collected is written once, at creation (OPE-1642). To reclassify deliberately, pass ingestion_method."
+        ),
+      ingestion_method: z
+        .enum(INGESTION_METHODS as unknown as [IngestionMethod, ...IngestionMethod[]])
+        .optional()
+        .describe(
+          "Deliberate reclassification of HOW the row was collected (OPE-1642). Never inferred from source_name/source_url on an edit. Reported in previousValues/newValues like any field."
+        ),
       recurrence_rule: z.string().optional().describe("iCal RRULE recurrence string"),
       discontinuous_dates: z
         .boolean()
@@ -1602,6 +1612,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "source_url", column: "sourceUrl" },
         { param: "source_id", column: "sourceId" },
         { param: "source_name", column: "sourceName" },
+        { param: "ingestion_method", column: "ingestionMethod" },
         { param: "recurrence_rule", column: "recurrenceRule" },
         { param: "discontinuous_dates", column: "discontinuousDates" },
         { param: "sync_enabled", column: "syncEnabled" },
@@ -2100,17 +2111,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           // OPE-491 rework — the domain refreshes; HOW the row was collected is
           // kept unless the edit states a new collection label, or the old
           // value was itself domain-derived (see reclassifySourceOnEdit).
+          // OPE-1642 — write-once: a valid stored method is kept whatever the new
+          // label says; only a blank one is filled. An explicit
+          // `ingestion_method` param (a fieldMap entry) is the reclassify path.
           const reclassified = reclassifySourceOnEdit({
             currentMethod: evRow.ingestionMethod as string | null | undefined,
-            suggesterEmail: evRow.suggesterEmail as string | null | undefined,
             sourceName: mergedSourceName,
             sourceUrl: mergedSourceUrl,
           });
           updates.sourceDomain = reclassified.sourceDomain;
-          updates.ingestionMethod = assertIngestionMethod(
-            reclassified.ingestionMethod,
-            "update_event"
-          );
+          if (params.ingestion_method === undefined && !reclassified.preservedMethod) {
+            updates.ingestionMethod = assertIngestionMethod(
+              reclassified.ingestionMethod,
+              "update_event"
+            );
+          }
         }
 
         const gateResult = evaluateGates({
@@ -2544,6 +2559,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.name !== undefined && updates.slug) {
         newValues.slug = updates.slug;
       }
+      // OPE-1642 — a column the write DERIVED (not passed) is reported too, so
+      // no change is invisible. This echo is the only record (OPE-505).
+      const derivedFieldsUpdated: string[] = [];
+      const evStored = event as Record<string, unknown>;
+      for (const [field, column] of [
+        ["source_domain", "sourceDomain"],
+        ["ingestion_method", "ingestionMethod"],
+      ] as const) {
+        if (requestedFields.includes(field)) continue;
+        if (updates[column] === undefined) continue;
+        const before = evStored[column] ?? null;
+        if (updates[column] === before) continue;
+        previousValues[field] = before;
+        newValues[field] = updates[column];
+        derivedFieldsUpdated.push(field);
+      }
 
       // Handle inline venue field updates
       let venueUpdateResult: Record<string, unknown> | null = null;
@@ -2677,6 +2708,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (requestedFields.length > 0) {
         result.fieldsUpdated = requestedFields;
+        result.previousValues = previousValues;
+        result.newValues = newValues;
+      }
+      if (derivedFieldsUpdated.length > 0) {
+        result.derivedFieldsUpdated = derivedFieldsUpdated;
         result.previousValues = previousValues;
         result.newValues = newValues;
       }
