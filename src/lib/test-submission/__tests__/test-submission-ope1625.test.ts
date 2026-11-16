@@ -54,11 +54,13 @@ import { PROMOTER_API_OPENAPI } from "@/lib/promoter-api/openapi";
 import { POST as eventsPost } from "@/app/api/v1/promoter/events/route";
 import { PATCH as eventPatch } from "@/app/api/v1/promoter/events/[externalId]/route";
 import { POST as eventCancel } from "@/app/api/v1/promoter/events/[externalId]/cancel/route";
-import { POST as keysPost } from "@/app/api/promoter/api-keys/route";
+import { GET as keysGet, POST as keysPost } from "@/app/api/promoter/api-keys/route";
+import { withPromoterApi } from "@/lib/promoter-api/handler";
 import type { CalendarCheckReport, ItemReport } from "../types";
 
 const ROOT = join(__dirname, "../../../..");
 const MIGRATION_0411 = readFileSync(join(ROOT, "drizzle/0411_ope1620_promoter_api.sql"), "utf8");
+const MIGRATION_0418 = readFileSync(join(ROOT, "drizzle/0418_ope1625_test_api_keys.sql"), "utf8");
 const TEC = JSON.parse(readFileSync(join(__dirname, "fixtures/ohtm-like-tec.json"), "utf8"));
 // The real OHTM export the OPE-1617 suite reads, read in place (not copied).
 const OHTM_ICS = readFileSync(
@@ -163,6 +165,7 @@ const previewReq = (body: unknown, ip = "203.0.113.7") =>
 beforeEach(() => {
   ({ raw, db } = createTestDb());
   raw["exec"](MIGRATION_0411.slice(0, MIGRATION_0411.indexOf("INSERT INTO heartbeat_probes")));
+  raw["exec"](MIGRATION_0418);
   raw["exec"](
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_event_days_event_date_vendor ON event_days(event_id, date, vendor_only)"
   );
@@ -663,15 +666,15 @@ async function call(
   return eventsPost(request);
 }
 
-async function mintKey() {
+async function mintKey(opts: { test?: boolean } = {}) {
   const res = await keysPost(
     new Request(`${BASE}/api/promoter/api-keys`, {
       method: "POST",
-      body: JSON.stringify({ name: "Website sync" }),
+      body: JSON.stringify({ name: "Website sync", ...(opts.test ? { test: true } : {}) }),
     })
   );
   expect(res.status).toBe(201);
-  return (await res.json()) as { key_id: string; secret: string };
+  return (await res.json()) as { key_id: string; secret: string; test: boolean };
 }
 
 const FALL = {
@@ -849,5 +852,83 @@ describe("promoter API dry_run", () => {
     expect(Object.keys(PROMOTER_API_OPENAPI.components.schemas)).toEqual(
       expect.arrayContaining(["DryRunResult", "TestReport"])
     );
+  });
+});
+
+// ------------------------------------------------------------------ promoter API test keys
+
+describe("promoter API test keys (can never publish)", () => {
+  it("a key minted with test:true says so at creation and in the list; a normal key does not", async () => {
+    const live = await mintKey();
+    const test = await mintKey({ test: true });
+    expect(live.test).toBe(false);
+    expect(test.test).toBe(true);
+    const listed = (await (await keysGet()).json()) as {
+      keys: Array<{ key_id: string; test: boolean }>;
+    };
+    expect(listed.keys.find((k) => k.key_id === test.key_id)?.test).toBe(true);
+    expect(listed.keys.find((k) => k.key_id === live.key_id)?.test).toBe(false);
+  });
+
+  it("a plain write with a test key answers the dry-run report and writes nothing — even with dry_run:false", async () => {
+    const key = await mintKey({ test: true });
+    const before = snapshot();
+    const res = await call(key, "POST", "/api/v1/promoter/events", { ...FALL, dry_run: false });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as DryBody & { test_key: boolean }).toMatchObject({
+      dry_run: true,
+      test_key: true,
+      would_return: { status: 201, outcome: "created", event_id: null },
+      report: { outcome: { kind: "new" } },
+    });
+    expect(snapshot()).toEqual(before);
+  });
+
+  it("PATCH and cancel with a test key are dry runs on the promoter's real listing", async () => {
+    const live = await mintKey();
+    const created = await call(live, "POST", "/api/v1/promoter/events", FALL);
+    expect(created.status).toBe(201);
+    const test = await mintKey({ test: true });
+    const before = snapshot();
+    const patch = await call(test, "PATCH", "/api/v1/promoter/events/fall-2027", {
+      booth_fee_min: 75,
+    });
+    expect(patch.status).toBe(200);
+    expect((await patch.json()) as DryBody).toMatchObject({
+      dry_run: true,
+      would_return: { status: 200, outcome: "update_staged" },
+    });
+    const cancel = await call(test, "POST", "/api/v1/promoter/events/fall-2027/cancel", {});
+    expect(cancel.status).toBe(200);
+    expect(((await cancel.json()) as DryBody).dry_run).toBe(true);
+    expect(snapshot()).toEqual(before);
+  });
+
+  it("structural layer: a test key's route is handed a database that refuses writes", async () => {
+    const key = await mintKey({ test: true });
+    const body = "{}";
+    const ts = String(Math.floor(Date.now() / 1000));
+    const request = new Request(`${BASE}/api/v1/promoter/events`, {
+      method: "POST",
+      headers: {
+        "x-mmatf-key": key.key_id,
+        "x-mmatf-timestamp": ts,
+        "x-mmatf-request-id": "structural-1",
+        "x-mmatf-signature": await signRequest(key.secret, ts, "structural-1", body),
+      },
+      body,
+    });
+    let threw: unknown = null;
+    // A route that FORGETS to honour testKey and writes anyway.
+    const res = await withPromoterApi(request, "/test/forgetful", async ({ db: routeDb }) => {
+      try {
+        await routeDb.insert(supportObligations).values({} as never);
+      } catch (e) {
+        threw = e;
+      }
+      return new Response(null, { status: 204 });
+    });
+    expect(res.status).toBe(204);
+    expect(threw).toBeInstanceOf(DryRunWriteError);
   });
 });

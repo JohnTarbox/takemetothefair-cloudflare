@@ -28,7 +28,7 @@ export async function POST(
       });
     const json = parseJson(ctx.body, true);
     if (!json.ok) return json.response;
-    const dry = readDryRun(request, json.value);
+    const dry = readDryRun(request, json.value, ctx.caller);
     if (!dry.ok) return dry.response;
     const parsed = cancelBodySchema.safeParse(dry.value);
     if (!parsed.success)

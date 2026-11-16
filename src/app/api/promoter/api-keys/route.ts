@@ -1,7 +1,9 @@
 export const dynamic = "force-dynamic";
 /**
  * OPE-1620 — the promoter's own API keys (session-authed, claimed promoters only).
- * POST {name} → {key_id, secret}: the ONLY response that ever carries the secret.
+ * POST {name, test?} → {key_id, secret, test}: the ONLY response that ever carries the
+ * secret. `test: true` (OPE-1625) makes a TEST key: it can never publish — every
+ * write endpoint answers the dry-run report.
  * GET → the keys, without secrets.
  */
 import { NextResponse } from "next/server";
@@ -15,6 +17,7 @@ import { createApiKey, listApiKeys } from "@/lib/promoter-api/store";
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "Give the key a name.").max(80).transform(decodeHtmlEntities),
+  test: z.boolean().optional(),
 });
 
 export async function GET() {
@@ -53,6 +56,7 @@ export async function POST(request: Request) {
       name: parsed.data.name,
       userId: who.userId,
       now: new Date(),
+      isTest: parsed.data.test === true,
     });
     if ("error" in created) return NextResponse.json({ error: created.error }, { status: 409 });
     return NextResponse.json(
@@ -60,6 +64,7 @@ export async function POST(request: Request) {
         key_id: created.keyId,
         secret: created.secret,
         name: created.name,
+        test: created.isTest,
         created_at: created.createdAt.toISOString(),
       },
       { status: 201, headers: { "Cache-Control": "no-store" } }

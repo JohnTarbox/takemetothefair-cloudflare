@@ -56,6 +56,7 @@ import { HEARTBEAT_PROBES } from "@/lib/heartbeat";
 
 const ROOT = join(__dirname, "../../../..");
 const MIGRATION = readFileSync(join(ROOT, "drizzle/0411_ope1620_promoter_api.sql"), "utf8");
+const MIGRATION_0418 = readFileSync(join(ROOT, "drizzle/0418_ope1625_test_api_keys.sql"), "utf8");
 
 // ------------------------------------------------------------------ pure signing
 
@@ -66,6 +67,7 @@ describe("authenticate (pure)", () => {
     promoterId: "p1",
     promoterUserId: "u1",
     revokedAt: null,
+    isTest: false,
   };
   const now = 1_800_000_000;
   const deps = (over: Partial<Parameters<typeof authenticate>[3]> = {}) => {
@@ -249,6 +251,7 @@ const FALL = {
 beforeEach(() => {
   ({ raw, db } = createTestDb());
   raw["exec"](MIGRATION.slice(0, MIGRATION.indexOf("INSERT INTO heartbeat_probes")));
+  raw["exec"](MIGRATION_0418);
   raw["exec"](
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_event_days_event_date_vendor ON event_days(event_id, date, vendor_only)"
   );

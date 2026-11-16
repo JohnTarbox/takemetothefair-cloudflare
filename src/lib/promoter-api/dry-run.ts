@@ -33,10 +33,12 @@ type Db = ReturnType<typeof getCloudflareDb>;
  */
 export function readDryRun(
   request: Request,
-  json: unknown
+  json: unknown,
+  /** A TEST key (OPE-1625) makes every write a dry run, whatever the request asks. */
+  caller?: Pick<Caller, "testKey">
 ): { ok: true; dryRun: boolean; value: unknown } | { ok: false; response: Response } {
   const q = new URL(request.url).searchParams.get("dry_run");
-  const fromQuery = q !== null && /^(true|1)$/i.test(q);
+  const fromQuery = (q !== null && /^(true|1)$/i.test(q)) || !!caller?.testKey;
   if (!json || typeof json !== "object" || Array.isArray(json) || !("dry_run" in json))
     return { ok: true, dryRun: fromQuery, value: json };
   const { dry_run, ...rest } = json as Record<string, unknown>;
@@ -124,7 +126,13 @@ export async function dryRunResponse(
         },
       };
   return NextResponse.json(
-    { dry_run: true, external_id: externalId, would_return, report },
+    {
+      dry_run: true,
+      ...(caller.testKey ? { test_key: true } : {}),
+      external_id: externalId,
+      would_return,
+      report,
+    },
     { status: 200 }
   );
 }

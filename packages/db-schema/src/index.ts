@@ -2077,6 +2077,11 @@ export const promoterApiKeys = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
     revokedAt: integer("revoked_at", { mode: "timestamp" }),
+    /**
+     * OPE-1625 (drizzle/0418) — a TEST key can never publish: every write
+     * endpoint answers the dry-run report and the route gets a read-only db.
+     */
+    isTest: integer("is_test", { mode: "boolean" }).notNull().default(false),
   },
   (t) => [
     uniqueIndex("uq_promoter_api_keys_key_id").on(t.keyId),
