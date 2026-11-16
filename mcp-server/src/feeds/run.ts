@@ -63,6 +63,8 @@ export interface FeedRunResult {
     warnings?: string[];
     calendar_name?: string | null;
     calendar_tz?: string | null;
+    /** OPE-1648 — TEC paging stopped at a `next_rest_url` on this other host. */
+    refused_next_host?: string;
   };
   next_read_at: string | null;
   report: IngestReport | null;
@@ -93,14 +95,21 @@ async function readItems(
       endDate: opts.end,
       fetchImpl: opts.fetchImpl,
     });
-    // TEC REST has no validators to send back; a read that hit the page cap is partial.
+    // TEC REST has no validators to send back; a read that hit the page cap is
+    // partial, and so is one whose paging was refused off-host (OPE-1648).
+    const complete = r.pages < 10 && r.refusedNextHost === null;
     return {
       status: "ok",
       items: r.events,
-      complete: r.pages < 10,
+      complete,
       etag: null,
       lastModified: null,
-      meta: { complete: r.pages < 10, pages: r.pages, unmappable_items: r.skipped },
+      meta: {
+        complete,
+        pages: r.pages,
+        unmappable_items: r.skipped,
+        ...(r.refusedNextHost ? { refused_next_host: r.refusedNextHost } : {}),
+      },
       websub: null,
     };
   }
