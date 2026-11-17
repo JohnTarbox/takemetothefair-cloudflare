@@ -27,6 +27,7 @@ import {
   emailSendLedger,
   events,
   inboundEmails,
+  inboundEmailSenders,
   inboundNewsletters,
   promoterContacts,
   promoterListArrivals,
@@ -40,6 +41,7 @@ import {
   ENRICH_NOTHING_STAGED_ACTION,
   ENRICH_PROPOSED_ACTION,
 } from "../email-handlers/enrich-proposal.js";
+import { ENRICH_APPLIED_ACTION } from "../email-handlers/enrich-auto-apply.js";
 import { buildVendorInquiryBriefing } from "../inbound/vendor-inquiry-briefing.js";
 import { jsonContent } from "../helpers.js";
 import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
@@ -227,22 +229,47 @@ export function registerInboundReadTools(
           .from(adminActions)
           .where(
             and(
-              inArray(adminActions.action, [ENRICH_PROPOSED_ACTION, ENRICH_NOTHING_STAGED_ACTION]),
+              // OPE-1660 — the applied row too: since OPE-1506 a match can WRITE
+              // fields, and a read that only lists staged rows hides every write.
+              inArray(adminActions.action, [
+                ENRICH_PROPOSED_ACTION,
+                ENRICH_NOTHING_STAGED_ACTION,
+                ENRICH_APPLIED_ACTION,
+              ]),
               sql`json_extract(${adminActions.payloadJson}, '$.inboundEmailId') = ${row.id}`
             )
           )
           .orderBy(adminActions.createdAt);
         enrichOnMatch = rows.map((r) => {
           const p = safeJson<Record<string, unknown>>(r.payloadJson, {});
+          const createdAt = r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt;
+          if (r.action === ENRICH_APPLIED_ACTION) {
+            return {
+              action: r.action,
+              event_id: r.targetId,
+              created_at: createdAt,
+              path: p.path ?? null,
+              match_type: p.matchType ?? null,
+              basis: p.basis ?? null,
+              applied_fields: Array.isArray(p.fields) ? p.fields : [],
+            };
+          }
           return {
             action: r.action,
             event_id: r.targetId,
-            created_at: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+            created_at: createdAt,
             path: p.path ?? null,
             match_type: p.matchType ?? null,
             proposals: p.proposals ?? {},
             extracted_fields: p.extractedFields ?? [],
             unstaged_fields: p.unstagedFields ?? [],
+            // OPE-1660 — the OPE-1506 auto-apply verdict the stager recorded:
+            // `basis` null + `reason` = DECLINED and why; `applied` = what was
+            // written. Absent (null) = the match had no auto-apply-eligible
+            // field, or the row predates OPE-1506 — the rule never ran. This was
+            // on the row all along and dropped here, so a decline read as a
+            // rule that should have fired.
+            auto_apply: p.autoApply ?? null,
           };
         });
       } catch {
@@ -261,6 +288,16 @@ export function registerInboundReadTools(
       // OPE-1330 — is this sender a recorded promoter contact? Every contact row
       // for the From address (one per promoter), so the reader sees status,
       // method and first-validated next to matched_entities. [] when none.
+      // OPE-1660 — keyed exactly as resolveAutoApplyBasis keys it (trimmed,
+      // lower-cased From), so this reports the value the rule saw.
+      const [trustRow] = await db
+        .select({ status: inboundEmailSenders.trustStatus })
+        .from(inboundEmailSenders)
+        .where(eq(inboundEmailSenders.email, row.fromAddress.trim().toLowerCase()))
+        .limit(1)
+        .catch(() => [] as Array<{ status: string }>);
+      const senderTrustStatus = trustRow?.status ?? "unknown";
+
       const senderAddr = normalizeEmailAddress(row.fromAddress);
       const contactRows = senderAddr
         ? await db
@@ -453,7 +490,12 @@ export function registerInboundReadTools(
               "Singular by schema — an email that created several events records only one here (OPE-464).",
             enrich_on_match: enrichOnMatch,
             enrich_on_match_note:
-              "OPE-1152 — one row per match against an EXISTING event: `dedup.enrich_proposed` (fill-empty proposals, staged only — nothing was applied) or `dedup.enrich_nothing_staged` (`unstaged_fields` = carried by the email but the event already holds a different value; compare by hand). `null` means the read failed. Empty = no match was staged from this email (or it predates OPE-1152).",
+              "OPE-1152 — one row per match against an EXISTING event: `dedup.enrich_proposed` (fill-empty proposals still STAGED for a human) or `dedup.enrich_nothing_staged` (`unstaged_fields` = carried by the email but the event already holds a different value; compare by hand). OPE-1506 — a `dedup.enrich_applied` row means fields WERE written (`applied_fields`, old → new, with citations). Each staged row's `auto_apply` is the auto-apply verdict: `basis` null + `reason` = declined and why (e.g. the sender is not `trusted` — see `sender_trust_status`); `auto_apply: null` = the rule never ran (no eligible field). `null` means the read failed. Empty = no match was staged from this email (or it predates OPE-1152).",
+            // OPE-1660 — the trust annotation the OPE-1506 `trusted` basis (and
+            // the trusted fast-path) actually read. `unknown` covers "no row":
+            // a sender the analyst regards as trusted is not trusted to the
+            // pipeline until `set_email_sender_trust` records it.
+            sender_trust_status: senderTrustStatus,
             attachment_count: row.attachmentCount,
             attachment_refs: refs,
             attachment_skips: skips,
