@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv, getCloudflareRateLimitKv } from "@/lib/cloudflare";
 import { sql } from "drizzle-orm";
 
 interface HealthCheck {
@@ -36,10 +36,21 @@ export async function GET() {
     {
       status: overallStatus,
       timestamp: new Date().toISOString(),
+      // OPE-1655 — which build is live. Set by deploy.yml (`--var GIT_SHA`);
+      // the MCP Worker's hourly deploy-lag watch compares it with main's HEAD.
+      gitSha: readGitSha(),
       checks,
     },
     { status: dbHealthy ? 200 : 503 }
   );
+}
+
+function readGitSha(): string {
+  try {
+    return getCloudflareEnv().GIT_SHA || "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 async function checkDatabase(): Promise<HealthCheck> {

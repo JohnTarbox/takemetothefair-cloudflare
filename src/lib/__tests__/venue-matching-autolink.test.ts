@@ -312,3 +312,54 @@ describe("autoLinkVenue — OPE-1376 D1 LIKE-pattern cap", () => {
     expect(result.venueId).toBe("v-long");
   });
 });
+
+describe("autoLinkVenue — OPE-1630: a merged-away INACTIVE tombstone is never a candidate", () => {
+  // merge_venue keeps the loser's NAME, renames only its slug to
+  // `*-merged-<id8>` and sets status INACTIVE. Prod 2026-11-16: 15 of the 16
+  // INACTIVE venues are exactly that shape.
+  function tombstone(id: string, name: string, state: string) {
+    raw
+      .prepare("INSERT INTO venues (id, name, slug, state, status) VALUES (?, ?, ?, ?, 'INACTIVE')")
+      .run(id, name, `${id}-merged-${id}`, state);
+  }
+
+  it("keeper + same-name tombstone links the keeper (was 'ambiguous')", async () => {
+    insertVenue({ id: "v-keep", name: "Best Western Royal Plaza Trade Center", state: "MA" });
+    tombstone("v-tomb", "Best Western Royal Plaza Trade Center", "MA");
+    const r = await autoLinkVenue(asDb(db), {
+      venueName: "Best Western Royal Plaza Trade Center",
+      venueState: "MA",
+    });
+    expect(r).toMatchObject({ venueId: "v-keep", decision: "exact-name+state" });
+  });
+
+  it("a name only a tombstone carries is no-match, never the tombstone", async () => {
+    tombstone("v-tomb", "Royal Plaza Trade Center", "MA");
+    const r = await autoLinkVenue(asDb(db), {
+      venueName: "Royal Plaza Trade Center",
+      venueState: "MA",
+    });
+    expect(r.venueId).toBeNull();
+  });
+
+  it("a name variant recorded on a tombstone is ignored", async () => {
+    tombstone("v-tomb", "Old Grange Hall", "ME");
+    raw
+      .prepare(
+        `INSERT INTO venue_name_variants (id, venue_id, name, normalized_name, created_at) VALUES (?,?,?,?,0)`
+      )
+      .run("nv-1", "v-tomb", "Grange 42", normalizeName("Grange 42"));
+    const r = await autoLinkVenue(asDb(db), { venueName: "Grange 42", venueState: "ME" });
+    expect(r.venueId).toBeNull();
+  });
+
+  it("control: two ACTIVE same-name rows are still ambiguous", async () => {
+    insertVenue({ id: "v-a", name: "Royal Plaza Trade Center", state: "MA" });
+    insertVenue({ id: "v-b", name: "Royal Plaza Trade Center", state: "MA" });
+    const r = await autoLinkVenue(asDb(db), {
+      venueName: "Royal Plaza Trade Center",
+      venueState: "MA",
+    });
+    expect(r.decision).toBe("ambiguous");
+  });
+});

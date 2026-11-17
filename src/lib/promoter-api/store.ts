@@ -31,12 +31,13 @@ export async function lookupApiKey(db: Db, keyId: string): Promise<ApiKeyRecord 
       promoterId: promoterApiKeys.promoterId,
       promoterUserId: promoters.userId,
       revokedAt: promoterApiKeys.revokedAt,
+      isTest: promoterApiKeys.isTest,
     })
     .from(promoterApiKeys)
     .innerJoin(promoters, eq(promoters.id, promoterApiKeys.promoterId))
     .where(eq(promoterApiKeys.keyId, keyId))
     .limit(1);
-  return row ?? null;
+  return row ? { ...row, isTest: !!row.isTest } : null;
 }
 
 /**
@@ -71,8 +72,11 @@ export async function touchApiKey(db: Db, keyId: string, now: Date): Promise<voi
 
 export async function createApiKey(
   db: Db,
-  args: { promoterId: string; name: string; userId: string; now: Date }
-): Promise<{ keyId: string; secret: string; name: string; createdAt: Date } | { error: string }> {
+  args: { promoterId: string; name: string; userId: string; now: Date; isTest?: boolean }
+): Promise<
+  | { keyId: string; secret: string; name: string; createdAt: Date; isTest: boolean }
+  | { error: string }
+> {
   const [{ n }] = await db
     .select({ n: sql<number>`count(*)` })
     .from(promoterApiKeys)
@@ -89,8 +93,9 @@ export async function createApiKey(
     secret,
     createdByUserId: args.userId,
     createdAt: args.now,
+    isTest: !!args.isTest,
   });
-  return { keyId, secret, name: args.name, createdAt: args.now };
+  return { keyId, secret, name: args.name, createdAt: args.now, isTest: !!args.isTest };
 }
 
 /** A promoter's keys, newest first — never the secret. */
@@ -102,6 +107,7 @@ export async function listApiKeys(db: Db, promoterId: string) {
       created_at: promoterApiKeys.createdAt,
       last_used_at: promoterApiKeys.lastUsedAt,
       revoked_at: promoterApiKeys.revokedAt,
+      test: promoterApiKeys.isTest,
     })
     .from(promoterApiKeys)
     .where(eq(promoterApiKeys.promoterId, promoterId))

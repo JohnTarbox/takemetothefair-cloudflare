@@ -245,6 +245,16 @@ function formatAge(hoursInRed: number): string {
  */
 export const DIGEST_INCIDENT_FAMILIES: ReadonlyArray<{ pattern: RegExp; label: string }> = [
   {
+    // OPE-1655 rework — must precede the deploy-lag pattern below (it also matches it).
+    pattern: /deploy-lag-watch-blind/i,
+    label: "Deploy-lag watch can't read main (alarm blind)",
+  },
+  {
+    // OPE-1655 — the deploy-lag watch's hourly fault, as one plain digest line.
+    pattern: /deploy-lag|production is behind main/i,
+    label: "Production behind main (deploys not landing)",
+  },
+  {
     pattern: /d1 db is overloaded|too many resources consumed/i,
     label: "D1 overloaded (platform incident)",
   },

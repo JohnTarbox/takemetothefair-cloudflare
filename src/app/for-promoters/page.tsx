@@ -4,6 +4,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { Metadata } from "next";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import {
+  PROMOTER_GUIDE_LINK_TEXT,
+  PROMOTER_GUIDE_POST_PATH,
+} from "@/lib/list-your-event/landing-content";
 
 export const revalidate = 86400;
 
@@ -152,6 +156,15 @@ export default function ForPromotersPage() {
             Learn More
           </Link>
         </div>
+        <p className="mt-6">
+          <Link href="/list-your-event" className="font-medium text-royal hover:underline">
+            List your event free
+          </Link>
+          <span className="text-muted-foreground"> · </span>
+          <Link href={PROMOTER_GUIDE_POST_PATH} className="text-royal hover:underline">
+            {PROMOTER_GUIDE_LINK_TEXT}
+          </Link>
+        </p>
       </div>
     </div>
   );

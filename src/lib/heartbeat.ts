@@ -18,6 +18,7 @@
  *  - auto-file dedup reuses OPE-76's `cpi_signal_filings` ledger — nothing new.
  */
 import { and, eq, gte, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import {
   entityDuplicateSweepRuns,
   analyticsEvents,
@@ -757,6 +758,26 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1586 — the daily TENTATIVE → SCHEDULED auto-promotion rule.
+    //
+    // Watches the run STAMP, not promotions: a quiet week legitimately
+    // promotes nothing (every page held, or no ready rows), so a yield probe
+    // would go red on a healthy rule. The rule stamps on every run, including
+    // a run that promoted zero. 48h: daily, one miss tolerated.
+    name: "tentative-autopromote",
+    ownerOpe: "OPE-1586",
+    label: "Daily TENTATIVE → SCHEDULED auto-promotion (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:tentative-autopromote")
+      ),
+  },
+  {
     // OPE-588 — proof the GSC sweep's FILLER tiers still select work.
     //
     // Tiers 1, 2, 2c and REL5 were unreachable for two months and nothing said
@@ -832,6 +853,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         agentHeartbeats,
         agentHeartbeats.lastSeenAt,
         eq(agentHeartbeats.agentCode, "watchdog:host-silence")
+      ),
+  },
+  {
+    // OPE-1655 — proof the hourly deploy-lag watch is itself running. It stamps
+    // `watchdog:deploy-lag` on every run, whatever the verdict (ok, lagging, or
+    // unknown when GitHub would not answer), so a dead hourly cron goes red here
+    // and the alarm that catches a frozen deploy cannot itself die quietly.
+    // 3h = two missed hourly runs plus slack.
+    name: "deploy-lag-watch",
+    ownerOpe: "OPE-1655",
+    label: "Hourly production-behind-main watch (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:deploy-lag")
       ),
   },
   {
@@ -2664,6 +2704,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     },
   },
   {
+    // OPE-1633 — proof the hourly feed poll still EVALUATES feed health. The
+    // flags table is rightly empty while every feed is healthy, so the evidence
+    // is the one info row each hourly run writes under `feeds:health-eval`
+    // after the freshness pass (mcp-server/src/feeds/schedule.ts). 3h = three
+    // missed hourly runs. Polling is on (OPE-1626), so it is live from ship.
+    name: "feed-health-eval",
+    ownerOpe: "OPE-1633",
+    label: "the hourly feed poll evaluated every enabled feed's health",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: async (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "feeds:health-eval"), eq(errorLogs.level, "info"))
+      ),
+  },
+  {
     // OPE-1610 — proof the hourly pending-contact attach job still RUNS. Most
     // runs attach nothing, so it writes one info row per run. 3h = three runs
     // missed. Literal source: the job lives in the MCP Worker.
@@ -2952,6 +3011,9 @@ export function assessHeartbeatSilence(a: HeartbeatActivity, now: Date): StaleRe
   };
 }
 
+/** Max heartbeat probe queries in flight at once (OPE-1573). */
+export const HEARTBEAT_PROBE_CONCURRENCY = 4;
+
 /** Join every probe to its `heartbeat_probes.enabled_at` + newest evidence. */
 export async function gatherHeartbeatActivity(db: Db): Promise<HeartbeatActivity[]> {
   const anchors = await db
@@ -2959,13 +3021,15 @@ export async function gatherHeartbeatActivity(db: Db): Promise<HeartbeatActivity
     .from(heartbeatProbes);
   const enabledByName = new Map(anchors.map((a) => [a.probeName, a.enabledAt ?? null]));
 
-  return Promise.all(
-    HEARTBEAT_PROBES.map(async (probe) => ({
-      probe,
-      enabledAt: enabledByName.get(probe.name) ?? null,
-      lastEvidenceAt: await probe.lastEvidenceAt(db),
-    }))
-  );
+  // OPE-1573: bounded, not Promise.all. ~110 probes fired at once put ~110
+  // requests in D1's single-threaded queue on every Overview render and every
+  // stale-red scan; concurrent public renders then failed with "Requests
+  // queued for too long". See src/lib/concurrency.ts.
+  return mapWithConcurrency(HEARTBEAT_PROBES, HEARTBEAT_PROBE_CONCURRENCY, async (probe) => ({
+    probe,
+    enabledAt: enabledByName.get(probe.name) ?? null,
+    lastEvidenceAt: await probe.lastEvidenceAt(db),
+  }));
 }
 
 /** Assess all probes; returns the silent ones as StaleReds (healthy drop out). */

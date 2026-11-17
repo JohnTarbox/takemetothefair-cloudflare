@@ -70,6 +70,7 @@ import {
   IMMINENT_DAYS,
   IMMINENT_SECONDS,
 } from "./events/tentative-queue.js";
+import { readLatestAutopromoteRun } from "./events/tentative-autopromote.js";
 
 const SOURCE = "mcp:schedule:operator-queue-notice";
 /** OPE-1585 — this digest's row in `digest_change_state`. */
@@ -235,6 +236,12 @@ export interface OperatorQueueCounts {
    */
   feedItemsAwaitingReview: number;
   /**
+   * OPE-1633 — open feed health flags on enabled feeds (freshness, volume
+   * drop, format drift, inclusion swing). A term in `totalWaiting` and the
+   * snapshot so a newly tripped flag makes a zero-state digest send (0→1).
+   */
+  openFeedHealthFlags: number;
+  /**
    * OPE-1510 — open contact obligations past their one-business-day target.
    * Each is a known contact John owes a reply to, already late.
    */
@@ -271,6 +278,7 @@ export function decideOperatorQueueNotice(
     | "contactObligationsPastTarget"
     | "approvedUnsentDrafts"
     | "feedItemsAwaitingReview"
+    | "openFeedHealthFlags"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -305,6 +313,7 @@ export function totalWaiting(
     | "contactObligationsPastTarget"
     | "approvedUnsentDrafts"
     | "feedItemsAwaitingReview"
+    | "openFeedHealthFlags"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -341,7 +350,9 @@ export function totalWaiting(
     // OPE-1605 — `?? 0` for the same reason.
     (counts.approvedUnsentDrafts ?? 0) +
     // OPE-1626 — `?? 0` for the same reason.
-    (counts.feedItemsAwaitingReview ?? 0)
+    (counts.feedItemsAwaitingReview ?? 0) +
+    // OPE-1633 — `?? 0` for the same reason.
+    (counts.openFeedHealthFlags ?? 0)
   );
 }
 
@@ -466,7 +477,30 @@ export async function readOperatorQueues(
   const tentative = selectImminentTentative(
     await readTentativePromotionQueue(db, now, { withinSeconds: IMMINENT_SECONDS })
   );
-  for (const t of tentative) lines.push(formatTentativeLine(t));
+  // OPE-1586 — the auto-promotion rule ran just before this notice (sequenced
+  // in the daily cron). Its summary is ONE line here, never its own email, and
+  // it does not count toward totalWaiting: a run alone must not cause a send.
+  // Each row it held carries the rule's reason, so the list is actionable.
+  let autoHeld = new Map<string, string>();
+  try {
+    const run = await readLatestAutopromoteRun(db, now);
+    if (run) {
+      lines.push(`TENTATIVE auto-promotion (OPE-1586): ${run.summary}`);
+      autoHeld = new Map(
+        run.held.map((h) => [h.slug, h.detail ? `${h.reason}: ${h.detail}` : h.reason])
+      );
+    }
+  } catch (error) {
+    await logError(db, {
+      source: SOURCE,
+      message: "[operator-queue] auto-promotion run read failed",
+      error,
+    });
+  }
+  for (const t of tentative) {
+    const why = autoHeld.get(t.slug);
+    lines.push(formatTentativeLine(t) + (why ? ` — auto-check held: ${why}` : ""));
+  }
 
   // OPE-626 — `reply:*` mail that reached a customer in the last 24h.
   //
@@ -575,7 +609,8 @@ export async function readOperatorQueues(
       lines.push(
         `${feedItemsAwaitingReview} new organizer-feed event(s) awaiting review across ` +
           `${rows.length} feed(s) — on a promoter's own calendar, matching none of ours; ` +
-          `nothing is created until reviewed. Review with list_feed_items, then ` +
+          `nothing is created until reviewed. Review at ` +
+          `https://meetmeatthefair.com/admin/feed-review, or with list_feed_items then ` +
           `review_feed_item: approve / approve_as_occurrence / link / reject (OPE-1630).`
       );
     }
@@ -588,12 +623,15 @@ export async function readOperatorQueues(
   // Body text only: the OPE-1585 change gate compares per-queue COUNTS, so the
   // age in this line changing daily does not, by itself, make the digest send.
   // Only written when a feed is registered, so a lane with no feeds says nothing.
+  // OPE-1633 — the same read carries the open health flags (enabled feeds).
+  let openFeedHealthFlags = 0;
   try {
     const metrics = await loadFeedLaneMetrics(db, {
       now,
       publicWhere: publicEventWhere(),
       windowDays: 30,
     });
+    openFeedHealthFlags = metrics.feeds.open_health_flags.length;
     if (metrics.feeds.registered > 0) lines.push(feedLaneDigestLine(metrics));
   } catch {
     // Observability must not take the notice down with it.
@@ -976,6 +1014,7 @@ export async function readOperatorQueues(
     contactObligationsPastTarget,
     approvedUnsentDrafts,
     feedItemsAwaitingReview,
+    openFeedHealthFlags,
     unpinnedVenueExamined,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
@@ -1052,6 +1091,7 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
       contactObligationsPastTarget: counts.contactObligationsPastTarget,
       approvedUnsentDrafts: counts.approvedUnsentDrafts,
       feedItemsAwaitingReview: counts.feedItemsAwaitingReview,
+      openFeedHealthFlags: counts.openFeedHealthFlags,
     },
     severity: ageBucket(counts.oldestDays),
   };

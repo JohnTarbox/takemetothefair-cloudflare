@@ -153,10 +153,33 @@ describe("get_feed_lane_metrics (OPE-1632)", () => {
     expect(step(m.total, "new").count).toBe(3);
     // e-pend is linked but PENDING: matched, not published.
     expect(step(m.total, "published").count).toBe(1);
-    expect(step(m.total, "reviewed")).toMatchObject({
-      count: null,
-      reason: expect.stringContaining("OPE-1630"),
-    });
+    // No review recorded yet: a real 0, now that the review step exists (OPE-1630).
+    expect(step(m.total, "reviewed")).toMatchObject({ count: 0 });
+    expect(step(m.total, "approved")).toMatchObject({ count: 0, rate: null });
+  });
+
+  it("reviewed / approved / rejected read the review step: reviewed_at + the LATEST feed_item.* action", async () => {
+    const at = secs(READ) + 3600;
+    w.raw
+      .prepare("UPDATE promoter_feed_items SET reviewed_at=? WHERE id IN ('i1','g0','g1')")
+      .run(at);
+    w.raw.prepare("UPDATE promoter_feed_items SET review_state='rejected' WHERE id='g0'").run();
+    const act = w.raw.prepare(
+      "INSERT INTO admin_actions (id, action, actor_user_id, target_type, target_id, payload_json, created_at) VALUES (?,?,?,?,?,?,?)"
+    );
+    // i1: an older link, then an approve — the latest action decides.
+    act.run("a1", "feed_item.link", "u-admin", "promoter_feed_item", "i1", "{}", at - 60);
+    act.run("a2", "feed_item.approve", "u-admin", "promoter_feed_item", "i1", "{}", at);
+    act.run("a3", "feed_item.reject", "u-admin", "promoter_feed_item", "g0", "{}", at);
+    // g1: linked to an existing listing — reviewed, but not an approval.
+    act.run("a4", "feed_item.link", "u-admin", "promoter_feed_item", "g1", "{}", at);
+    // A non-review action on the same target is ignored.
+    act.run("a5", "event.merge", "u-admin", "promoter_feed_item", "g1", "{}", at + 60);
+
+    const m = await call(w.server);
+    expect(step(m.total, "reviewed")).toMatchObject({ count: 3, rate_base: "included" });
+    expect(step(m.total, "approved")).toMatchObject({ count: 1, rate_base: "reviewed" });
+    expect(step(m.total, "rejected")).toMatchObject({ count: 1, rate_base: "reviewed" });
   });
 
   it("coverage: upcoming public events only, by healthy feed and feed link", async () => {

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { containsCI } from "@/lib/db/contains-ci";
 import Link from "next/link";
+import { notFound } from "next/navigation";
+import { parseListingPage } from "@/lib/listing-page-param";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
@@ -35,8 +37,7 @@ interface SearchParams {
   category?: string;
 }
 
-async function getPastEvents(searchParams: SearchParams) {
-  const page = parseInt(searchParams.page || "1");
+async function getPastEvents(searchParams: SearchParams, page: number) {
   const limit = 30;
   const offset = (page - 1) * limit;
 
@@ -154,7 +155,10 @@ export default async function PastEventsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  const { events: eventsList, total, page, limit } = await getPastEvents(params);
+  // OPE-1573 — a malformed ?page= 404s here, before any D1 query (see helper).
+  const requestedPage = parseListingPage(params.page);
+  if (requestedPage === null) notFound();
+  const { events: eventsList, total, page, limit } = await getPastEvents(params, requestedPage);
   const totalPages = Math.ceil(total / limit);
 
   const stateLabel = params.state

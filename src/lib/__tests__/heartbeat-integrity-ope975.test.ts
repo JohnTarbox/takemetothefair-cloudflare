@@ -181,10 +181,13 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "event-data-citations-writer": 72,
       "citation-source-snapshot": 504,
       "occurred-transition-sweep": 48,
+      "tentative-autopromote": 48,
       "gsc-sweep-filler-tiers": 48,
       "agent-silence-watchdog": 48,
       // OPE-1637 — hourly cron; two missed runs plus slack.
       "host-silence-watch": 3,
+      // OPE-1655 — hourly deploy-lag watch; two missed runs plus slack.
+      "deploy-lag-watch": 3,
       "inbound-held-submissions-snapshot": 48,
       // OPE-1117 — written by the same daily stale-red scan as the row above.
       // Measured on that sibling (n=31 snapshots, 2026-08-25 → 09-23): max gap
@@ -225,6 +228,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // OPE-1626 — a deadline offset: evidence is (earliest feed deadline − 1h),
       // the deadline being 2× that feed's own interval after its last good read.
       "feed-reader": 1,
+      // OPE-1633 — one evidence row per hourly poll; three missed runs before it pages.
+      "feed-health-eval": 3,
       "promoter-onboarding": 3,
       "replied-ledger-check": 3,
       // OPE-1239 — */10 cron, run row at most hourly; three missed before it pages.

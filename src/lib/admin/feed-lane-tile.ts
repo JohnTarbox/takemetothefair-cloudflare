@@ -9,6 +9,7 @@
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import {
   FEED_REVIEW_TARGET_DAYS,
+  feedHealthFlagsText,
   loadFeedLaneMetrics,
   type FeedLaneMetrics,
 } from "@takemetothefair/db-schema";
@@ -35,6 +36,10 @@ export interface FeedLaneTile {
   coverageHealthyShare: number | null;
   newToUs7d: number;
   windowDays: number;
+  /** OPE-1633 — open health flags on enabled feeds; the card shows them in red. */
+  openHealthFlags: number;
+  /** e.g. "1 health flag open (Gurley Antique Shows: volume_drop)"; null when none. */
+  healthFlagsText: string | null;
 }
 
 const stepCount = (m: FeedLaneMetrics, step: string): number =>
@@ -57,6 +62,8 @@ export function toFeedLaneTile(m: FeedLaneMetrics): FeedLaneTile {
     coverageHealthyShare: m.coverage.share_with_healthy_feed.value,
     newToUs7d: m.coverage.new_to_us_7d.value ?? 0,
     windowDays: m.window.days,
+    openHealthFlags: m.feeds.open_health_flags?.length ?? 0,
+    healthFlagsText: feedHealthFlagsText(m),
   };
 }
 

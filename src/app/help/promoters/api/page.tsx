@@ -18,7 +18,7 @@ export const revalidate = 86400;
 const URL_BASE = "https://meetmeatthefair.com";
 const PAGE_URL = `${URL_BASE}/help/promoters/api`;
 const DESCRIPTION =
-  "Send your events to Meet Me at the Fair from your own system, Zapier or Make: a signed JSON API for promoters. New events are reviewed before they appear.";
+  "Send your events to Meet Me at the Fair from your own system, Zapier or Make: a signed JSON API for promoters. Changes to a listed event are reviewed before they appear.";
 
 export const metadata: Metadata = {
   title: "Promoter Events API | Meet Me at the Fair",
@@ -175,10 +175,11 @@ export default function PromoterApiDocsPage() {
           Zapier or Make. Listing is free.
         </p>
         <div className="rounded-lg border border-border p-4">
-          <strong>New events are reviewed before they appear.</strong> A new event goes in as
-          pending and a person checks it. A change to an event that is already listed, and a
-          cancellation, are also reviewed before they go live. The API never changes a listed event
-          directly.
+          <strong>Changes to a listed event are reviewed before they appear.</strong> A change to an
+          event that is already listed, and a cancellation, are checked by a person before they go
+          live. The API never changes a listed event directly. A new event from a claimed
+          organization, sent with a key that organization made, goes live right away (as tentative
+          until it has a venue we know). Other new events are checked by a person first.
         </div>
       </header>
 
@@ -307,9 +308,10 @@ export default function PromoterApiDocsPage() {
             <code>read</code>: each field as we read it.
           </li>
           <li>
-            <code>outcome</code>: <code>new</code> (would go to review), <code>match</code> (your
-            listing, with the fields that would change, old and new), or <code>skip</code> with the
-            reason.
+            <code>outcome</code>: <code>new</code> (a new listing;{" "}
+            <code>would_return.listing_status</code> says whether it would go live or to review),{" "}
+            <code>match</code> (your listing, with the fields that would change, old and new), or{" "}
+            <code>skip</code> with the reason.
           </li>
           <li>
             <code>problems</code>: missing or unreadable fields, a date that has passed, an

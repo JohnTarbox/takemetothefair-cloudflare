@@ -93,6 +93,7 @@ import { runScheduledBurstCapSelfTest } from "./burst-cap-selftest-canary.js";
 import { runScheduledOperatorQueueNotice } from "./operator-queue-notice.js";
 import { runAgentSilenceWatchdog } from "./agent-silence-watchdog.js";
 import { isWatchedLane, recordHostHeartbeat, runHostSilenceWatch } from "./host-silence-watch.js";
+import { runDeployLagWatch } from "./deploy-lag-watch.js";
 import { runScheduledCpiScanWatchdog } from "./cpi-scan-watchdog.js";
 import {
   runScheduledHeroProposals,
@@ -104,6 +105,7 @@ import { runScheduledPageErrorCanary } from "./page-error-canary.js";
 import { runScheduledStandingFailureCanary } from "./standing-failure-canary.js";
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
+import { runTentativeAutopromote } from "./events/tentative-autopromote.js";
 
 import { runInboundExceptionNotice } from "./inbound-exception-notice.js";
 import { runUnterminatedCrossingNotice } from "./inbound/unterminated-crossing-notice.js";
@@ -178,6 +180,8 @@ type Env = WorkerEnv &
      * to admin; only the outbound question is withheld.
      */
     UNROUTED_ASK_ENABLED?: string;
+    /** OPE-1586 — "false" stops the daily TENTATIVE → SCHEDULED auto-promotion. */
+    TENTATIVE_AUTOPROMOTE_ENABLED?: string;
     /** OPE-1617 — scheduled organizer-feed polling. On since OPE-1626 (the OHTM pilot). */
     FEED_POLLING_ENABLED?: string;
     /** OPE-1626 — WebSub subscribe/renew; needs FEED_POLLING_ENABLED too. Ships "false". */
@@ -1872,6 +1876,9 @@ export default {
           ["organizer-feed-poll", () => runScheduledFeedPoll(env)],
           // OPE-1637 — Battleship host silence (75 min). Mails once on silent, once on clear.
           ["host-silence-watch", () => runHostSilenceWatch(env)],
+          // OPE-1655 — production behind main for > 2h (both Workers' live SHA vs
+          // main's HEAD). Mails once on lagging, once on caught-up.
+          ["deploy-lag-watch", () => runDeployLagWatch(env)],
         ]).then(() => undefined)
       );
       return;
@@ -2125,7 +2132,29 @@ export default {
         // Silent when both queues are clear — an alert that fires daily
         // regardless becomes wallpaper, which is how the sibling canaries on
         // this rail stay useful.
-        ["operator-queue-notice", () => runScheduledOperatorQueueNotice(env)],
+        //
+        // OPE-1586 (2026-11-16) — TENTATIVE → SCHEDULED auto-promotion runs
+        // FIRST, sequenced rather than parallel, so the digest it feeds lists
+        // only what the rule could not confirm and carries its summary line.
+        // Promotes only when a fresh read of the cited organizer page agrees
+        // (John's option 2). Kill switch: TENTATIVE_AUTOPROMOTE_ENABLED="false".
+        [
+          "tentative-autopromote+operator-queue-notice",
+          () =>
+            sequenceCronTasks(env.DB, controller.cron, [
+              [
+                "tentative-autopromote",
+                async () => {
+                  if (env.TENTATIVE_AUTOPROMOTE_ENABLED === "false") {
+                    console.log("[cron] tentative-autopromote — disabled by flag");
+                    return;
+                  }
+                  await runTentativeAutopromote(getDb(env.DB), { env });
+                },
+              ],
+              ["operator-queue-notice", () => runScheduledOperatorQueueNotice(env)],
+            ]),
+        ],
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and
