@@ -324,6 +324,31 @@ export async function getFacetEvents(
 }
 
 /**
+ * OPE-1662 — every matching event id for a facet, in listing order, no page.
+ *
+ * The same `baseConditions` + `facetConditions`, the same join shape and the
+ * same `ORDER BY` as `getFacetEvents` above, so `ids.slice(offset, offset+limit)`
+ * IS that function's page and `ids.length` IS its count. The cached facet path
+ * (state-listing-cache.ts) relies on that identity instead of re-implementing
+ * the facet predicates in JavaScript; the parity test pins it.
+ */
+export async function getFacetEventIds(
+  db: FacetDb,
+  stateCode: string,
+  stateSlug: string,
+  facet: ResolvedFacet,
+  now: Date
+): Promise<string[]> {
+  const rows = await db
+    .select({ id: events.id })
+    .from(events)
+    .leftJoin(venues, eq(events.venueId, venues.id))
+    .where(and(...baseConditions(stateCode, now), ...facetConditions(stateSlug, facet, now)))
+    .orderBy(sql`COALESCE(${events.startDate}, 9999999999) ASC`, events.id);
+  return rows.map((r) => r.id);
+}
+
+/**
  * Every facet URL that currently qualifies for the index.
  *
  * ── Why the sitemap counts each facet properly instead of estimating ────────

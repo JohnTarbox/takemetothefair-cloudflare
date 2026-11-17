@@ -29,7 +29,10 @@ const PUBLIC_SURFACES = [
   "src/lib/vendors/listing-page.ts",
   "src/app/vendors/[slug]/page.tsx",
   "src/app/api/events/[slug]/vendors/route.ts",
-  "src/components/events/state-events-page.tsx",
+  // OPE-1662 — the state listing's vendor query moved out of
+  // state-events-page.tsx into the cached-set loader both state and facet pages use.
+  "src/lib/events/state-listing-cache.ts",
+  "src/lib/events/facet-query.ts",
   "src/components/events/category-events-page.tsx",
   "src/lib/vendors/vendor-events.ts",
 ];

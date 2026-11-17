@@ -2,31 +2,25 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { MapPin } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
-import { getCloudflareDb } from "@/lib/cloudflare";
-import {
-  events,
-  venues,
-  promoters,
-  eventVendors,
-  vendors,
-  eventInStateWhere,
-} from "@/lib/db/schema";
-import { eq, and, isNotNull, count, inArray, sql } from "drizzle-orm";
-import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
+import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { events, venues, eventInStateWhere } from "@/lib/db/schema";
+import { eq, and, isNotNull } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
-import { attachEventDayDates } from "@/lib/event-days-attach";
-import { eventJoinProjection } from "@/lib/db/event-join-projection";
+import { kvReadThrough } from "@/lib/kv-read-through";
+import {
+  STATE_LISTING_CACHE_TTL_SECONDS,
+  countStateEvents,
+  getCachedStateUpcomingSet,
+  loadStateEventCards,
+  pageSlice,
+} from "@/lib/events/state-listing-cache";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ListEventCtaLink } from "@/components/list-your-event/list-event-cta";
 import { getStateColors } from "@/lib/state-colors";
 import { STATES, STATE_BY_SLUG } from "@/lib/states";
-import {
-  countUpcomingEventsByState,
-  getUpcomingEventYearSpanByState,
-  formatYearSpanLabel,
-} from "@/lib/queries";
+import { getUpcomingEventYearSpanByState, formatYearSpanLabel } from "@/lib/queries";
 import { buildStateTitle, buildStateMetaDescription } from "@/lib/seo-utils";
 import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
 import { FacetNav } from "@/components/events/facet-nav";
@@ -62,6 +56,11 @@ const STATE_DESCRIPTIONS: Record<string, string> = {
     "Rhode Island may be the smallest state, but its fair calendar is packed — from the Washington County Fair in Richmond, the state's largest agricultural fair, to the Rocky Hill State Fair and seaside summer festivals along the Newport and Narragansett coasts. Farmers markets in Providence, Pawtucket, and South County deliver fresh local produce, while craft fairs celebrate the Ocean State's maritime heritage.",
 };
 
+/**
+ * OPE-1662 — upcoming listings come from ONE cached copy of the state's
+ * upcoming public set (src/lib/events/state-listing-cache.ts), so a `?page=`
+ * crawl costs no D1. `includePast=true` (whole history) stays a live paged read.
+ */
 async function getStateEvents(
   stateCode: string,
   page: number,
@@ -69,106 +68,26 @@ async function getStateEvents(
   includePast: boolean = false
 ) {
   const db = getCloudflareDb();
-  const offset = (page - 1) * limit;
-
-  const conditions = [isPublicEventStatus(), eventInStateWhere(stateCode)];
   if (!includePast) {
-    conditions.push(isNotNull(events.startDate));
-    // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
-    conditions.push(upcomingEndPredicate(new Date()));
+    const all = await getCachedStateUpcomingSet(db, getCloudflareRateLimitKv(), stateCode);
+    return { events: pageSlice(all, page, limit), total: all.length, page, limit };
   }
+  const offset = (page - 1) * limit;
+  const [eventsWithVendors, total] = await Promise.all([
+    loadStateEventCards(db, stateCode, { includePast, limit, offset }),
+    countStateEvents(db, stateCode, includePast),
+  ]);
+  return { events: eventsWithVendors, total, page, limit };
+}
 
-  // Narrow projection — D1 100-col cap; see eventJoinProjection.
-  const results = await db
-    .select(eventJoinProjection)
-    .from(events)
-    .leftJoin(venues, eq(events.venueId, venues.id))
-    .leftJoin(promoters, eq(events.promoterId, promoters.id))
-    .where(and(...conditions))
-    // OPE-1028 — `id` breaks start_date ties. Most events sit at noon UTC, so a
-    // whole day ties; without a unique key SQLite may order that tie differently
-    // for the page-1 and page-2 OFFSET queries, and a row can land on both or neither.
-    .orderBy(sql`COALESCE(${events.startDate}, 9999999999) ASC`, events.id)
-    .limit(limit)
-    .offset(offset);
-
-  // Batch-fetch vendors
-  const eventIds = results.map((r) => r.events.id);
-  const allEventVendors: {
-    eventId: string;
-    vendorId: string;
-    businessName: string;
-    displayName: string | null;
-    slug: string;
-    logoUrl: string | null;
-    vendorType: string | null;
-  }[] = [];
-
-  if (eventIds.length > 0) {
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < eventIds.length; i += BATCH_SIZE) {
-      const batch = eventIds.slice(i, i + BATCH_SIZE);
-      const batchResults = await db
-        .select({
-          eventId: eventVendors.eventId,
-          vendorId: vendors.id,
-          businessName: vendors.businessName,
-          // EH2.1 — brand display_name override surfaces on per-state event
-          // card vendor tiles.
-          displayName: vendors.displayName,
-          slug: vendors.slug,
-          logoUrl: vendors.logoUrl,
-          vendorType: vendors.vendorType,
-        })
-        .from(eventVendors)
-        .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-        .where(and(inArray(eventVendors.eventId, batch), isPubliclyVisibleVendorLink()));
-      allEventVendors.push(...batchResults);
-    }
-  }
-
-  const vendorsByEvent = new Map<string, typeof allEventVendors>();
-  for (const ev of allEventVendors) {
-    const existing = vendorsByEvent.get(ev.eventId) || [];
-    existing.push(ev);
-    vendorsByEvent.set(ev.eventId, existing);
-  }
-
-  // Cast lite projection back to schema row types — see
-  // eventJoinProjection for the audit + maintenance contract.
-  type FullVenue = typeof venues.$inferSelect;
-  type FullPromoter = typeof promoters.$inferSelect;
-  // EventRow derived from results so projection changes flow through.
-  type EventRow = (typeof results)[number];
-  const eventsBase = results.map((r: EventRow) => ({
-    ...r.events,
-    venue: r.venue as FullVenue | null,
-    promoter: r.promoter as FullPromoter | null,
-    vendors: (vendorsByEvent.get(r.events.id) || []).map((ev) => ({
-      id: ev.vendorId,
-      businessName: ev.businessName,
-      displayName: ev.displayName,
-      slug: ev.slug,
-      logoUrl: ev.logoUrl,
-      vendorType: ev.vendorType,
-    })),
-  }));
-  // Cohort 7 follow-up (2026-06-01) — same event_days attachment as
-  // the other event-listing pages so the per-state grid shows the next
-  // occurrence date in card badges.
-  const eventsWithVendors = await attachEventDayDates(db, eventsBase);
-
-  const countResult = await db
-    .select({ count: count() })
-    .from(events)
-    .where(and(...conditions));
-
-  return {
-    events: eventsWithVendors,
-    total: countResult[0]?.count || 0,
-    page,
-    limit,
-  };
+/** OPE-1662 — the year span is a whole-state read too; cache it with the set's TTL. */
+function getCachedYearSpan(stateCode: string) {
+  return kvReadThrough(
+    getCloudflareRateLimitKv(),
+    `listing:v1:state-span:${stateCode.toUpperCase()}`,
+    STATE_LISTING_CACHE_TTL_SECONDS,
+    () => getUpcomingEventYearSpanByState(getCloudflareDb(), stateCode)
+  );
 }
 
 /**
@@ -186,8 +105,11 @@ export async function getStateMetadata(stateSlug: string): Promise<Metadata> {
     return { title: "Fairs & Festivals | Meet Me at the Fair" };
   }
   const { name, adjective } = STATES[code];
-  const db = getCloudflareDb();
-  const eventCount = await countUpcomingEventsByState(db, code);
+  // OPE-1662 — the cached upcoming set has exactly countUpcomingEventsByState's
+  // predicate (public, in state, dated, not over), so its length IS that count.
+  const eventCount = (
+    await getCachedStateUpcomingSet(getCloudflareDb(), getCloudflareRateLimitKv(), code)
+  ).length;
   // OPE-598 — the year comes from the events this page LISTS, not the clock.
   //
   // Both helpers defaulted to `new Date().getFullYear()` while the list itself
@@ -198,7 +120,7 @@ export async function getStateMetadata(stateSlug: string): Promise<Metadata> {
   // This is the SERP snippet, so the cost is not tidiness: someone searching
   // "rhode island fairs 2027" saw a 2026 headline on a page that did have 2027
   // events — the exact query OPE-583 says we are losing.
-  const yearLabel = formatYearSpanLabel(await getUpcomingEventYearSpanByState(db, code));
+  const yearLabel = formatYearSpanLabel(await getCachedYearSpan(code));
   const title = buildStateTitle(name, yearLabel);
   const description = buildStateMetaDescription(name, eventCount, adjective, yearLabel);
   const canonical = `https://meetmeatthefair.com/events/${stateSlug}`;
@@ -242,7 +164,17 @@ export async function getStateMetadata(stateSlug: string): Promise<Metadata> {
  * SQL json_each join — the row count here is a state's upcoming events
  * (hundreds), not the whole table.
  */
-async function getStateInventory(stateCode: string): Promise<StateInventory> {
+function getStateInventory(stateCode: string): Promise<StateInventory> {
+  // OPE-1662 — a whole-state scan per render; cached per state with the set's TTL.
+  return kvReadThrough(
+    getCloudflareRateLimitKv(),
+    `listing:v1:state-inventory:${stateCode.toUpperCase()}`,
+    STATE_LISTING_CACHE_TTL_SECONDS,
+    () => loadStateInventory(stateCode)
+  );
+}
+
+async function loadStateInventory(stateCode: string): Promise<StateInventory> {
   const db = getCloudflareDb();
   const conditions = [
     isPublicEventStatus(),
@@ -319,7 +251,7 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
   // inventory would have added a serial D1 round-trip to a public page render
   // for no ordering reason — the two are independent.
   const [span, inventory] = await Promise.all([
-    getUpcomingEventYearSpanByState(getCloudflareDb(), state.code),
+    getCachedYearSpan(state.code),
     getStateInventory(state.code),
   ]);
   const year = formatYearSpanLabel(span);
