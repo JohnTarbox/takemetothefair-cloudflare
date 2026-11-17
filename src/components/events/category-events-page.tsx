@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { Tag } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
-import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
-import { eq, and, isNotNull, count, inArray, like, sql } from "drizzle-orm";
-import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
-import { isPublicEventStatus } from "@/lib/event-status";
-import { upcomingEndPredicate } from "@/lib/event-dates";
-import { eventJoinProjection } from "@/lib/db/event-join-projection";
+import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import {
+  countCategoryEvents,
+  getCachedCategoryUpcomingSet,
+  loadCategoryEventCards,
+} from "@/lib/events/listing-family-cache";
+import { pageSlice } from "@/lib/events/state-listing-cache";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
@@ -53,6 +53,11 @@ export const CATEGORY_MAP: Record<
   },
 };
 
+/**
+ * OPE-1668 — upcoming renders are a slice of ONE cached set per category
+ * (src/lib/events/listing-family-cache.ts), so `?page=` costs no D1.
+ * `includePast=true` (the category's whole history) stays a live paged read.
+ */
 async function getCategoryEvents(
   category: string,
   page: number,
@@ -60,98 +65,16 @@ async function getCategoryEvents(
   includePast: boolean = false
 ) {
   const db = getCloudflareDb();
-  const offset = (page - 1) * limit;
-
-  const conditions = [isPublicEventStatus(), like(events.categories, `%${category}%`)];
   if (!includePast) {
-    conditions.push(isNotNull(events.startDate));
-    // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
-    conditions.push(upcomingEndPredicate(new Date()));
+    const set = await getCachedCategoryUpcomingSet(db, getCloudflareRateLimitKv(), category);
+    return { events: pageSlice(set, page, limit), total: set.length, page, limit };
   }
-
-  // Narrow projection — D1 100-col cap; see eventJoinProjection.
-  const results = await db
-    .select(eventJoinProjection)
-    .from(events)
-    .leftJoin(venues, eq(events.venueId, venues.id))
-    .leftJoin(promoters, eq(events.promoterId, promoters.id))
-    .where(and(...conditions))
-    .orderBy(sql`COALESCE(${events.startDate}, 9999999999) ASC`)
-    .limit(limit)
-    .offset(offset);
-
-  const eventIds = results.map((r) => r.events.id);
-  const allEventVendors: {
-    eventId: string;
-    vendorId: string;
-    businessName: string;
-    displayName: string | null;
-    slug: string;
-    logoUrl: string | null;
-    vendorType: string | null;
-  }[] = [];
-
-  if (eventIds.length > 0) {
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < eventIds.length; i += BATCH_SIZE) {
-      const batch = eventIds.slice(i, i + BATCH_SIZE);
-      const batchResults = await db
-        .select({
-          eventId: eventVendors.eventId,
-          vendorId: vendors.id,
-          businessName: vendors.businessName,
-          // EH2.1 — brand display_name override surfaces on per-category
-          // event-card vendor tiles.
-          displayName: vendors.displayName,
-          slug: vendors.slug,
-          logoUrl: vendors.logoUrl,
-          vendorType: vendors.vendorType,
-        })
-        .from(eventVendors)
-        .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-        .where(and(inArray(eventVendors.eventId, batch), isPubliclyVisibleVendorLink()));
-      allEventVendors.push(...batchResults);
-    }
-  }
-
-  const vendorsByEvent = new Map<string, typeof allEventVendors>();
-  for (const ev of allEventVendors) {
-    const existing = vendorsByEvent.get(ev.eventId) || [];
-    existing.push(ev);
-    vendorsByEvent.set(ev.eventId, existing);
-  }
-
-  // Cast lite projection back to schema row types for EventsView's
-  // prop contract; see eventJoinProjection.
-  type FullVenue = typeof venues.$inferSelect;
-  type FullPromoter = typeof promoters.$inferSelect;
-  // EventRow derived from results so projection changes flow through.
-  type EventRow = (typeof results)[number];
-  const eventsWithVendors = results.map((r: EventRow) => ({
-    ...r.events,
-    venue: r.venue as FullVenue | null,
-    promoter: r.promoter as FullPromoter | null,
-    vendors: (vendorsByEvent.get(r.events.id) || []).map((ev) => ({
-      id: ev.vendorId,
-      businessName: ev.businessName,
-      displayName: ev.displayName,
-      slug: ev.slug,
-      logoUrl: ev.logoUrl,
-      vendorType: ev.vendorType,
-    })),
-  }));
-
-  const countResult = await db
-    .select({ count: count() })
-    .from(events)
-    .where(and(...conditions));
-
-  return {
-    events: eventsWithVendors,
-    total: countResult[0]?.count || 0,
-    page,
-    limit,
-  };
+  const offset = (page - 1) * limit;
+  const [rows, total] = await Promise.all([
+    loadCategoryEventCards(db, category, { includePast: true, limit, offset }),
+    countCategoryEvents(db, category, true),
+  ]);
+  return { events: rows, total, page, limit };
 }
 
 interface CategoryEventsPageProps {
