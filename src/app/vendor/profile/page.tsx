@@ -216,6 +216,13 @@ export default function VendorProfilePage() {
         savedSnapshot.current = loaded;
         // Only now is it safe to render the form and arm saving.
         setProfile(data);
+      } else if (res.status !== 404) {
+        // OPE-1666 — only a 404 means "this account has no vendor row". A 500
+        // (the route's catch — e.g. a D1 overload, as on 11-13 and 11-17) or any
+        // other failure used to fall through to `!profile` and tell a vendor who
+        // HAS a profile that none exists, and to contact support. It is a failed
+        // read, so it gets the failed-read notice: reload, nothing is saved.
+        setLoadFailed(true);
       }
     } catch (error) {
       console.error("Failed to fetch profile:", error);

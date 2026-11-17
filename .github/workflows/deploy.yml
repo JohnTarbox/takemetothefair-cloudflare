@@ -233,6 +233,14 @@ jobs:
           # inlines blank — same broken state, so also guarded client-side).
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
 
+      # OPE-1666 — refuse to deploy a build whose /vendor/profile bundle has lost
+      # the vendor's own logo upload control (OPE-1112). Reads this build's
+      # .next/app-build-manifest.json — the chunks that page actually ships — so
+      # it needs no login, no network and no browser, and cannot flake. The page
+      # is auth-gated, so a post-deploy curl could only ever see /login.
+      - name: Guard vendor logo upload control in the built bundle
+        run: npx tsx scripts/check-vendor-logo-control.ts
+
       # ── OPE-494 — keep the PREVIOUS build's chunks servable after a deploy ──
       #
       # The Workers Assets manifest is replaced wholesale on every deploy, so the
