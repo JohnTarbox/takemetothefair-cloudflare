@@ -3829,6 +3829,12 @@ export const emailSendLedger = sqliteTable(
   (table) => [
     index("idx_email_send_ledger_sent_at").on(table.sentAt),
     index("idx_email_send_ledger_recipient").on(table.recipient),
+    // OPE-1663 — prod ALSO has `idx_email_send_ledger_lower_recipient_sent_at
+    // ON (lower(recipient), sent_at)` (drizzle/0427). The bare-column index above
+    // cannot serve `lower(recipient) = …`, which is how every case-insensitive
+    // lookup reads. Deliberately NOT declared here: three test suites build DDL
+    // from this config by column `.name`, and an expression column has none, so
+    // declaring it renders `( , sent_at)`. The migration is the source of truth.
     index("idx_email_send_ledger_inbound").on(table.inboundEmailId),
     index("idx_email_send_ledger_status").on(table.status),
     // OPE-177 — the delivery-event consumer looks a row up by this on every
