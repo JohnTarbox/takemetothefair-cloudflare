@@ -31,9 +31,9 @@
  * summary; the operator digest reads it and prints one line. This module
  * never sends anything itself.
  */
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { raiseEventReviewFlag } from "@takemetothefair/db-schema";
-import { chunkIds } from "@takemetothefair/utils";
+import { chunkIds, describeError, errorCauseMessages } from "@takemetothefair/utils";
 import type { BrowserRenderingEnv } from "@takemetothefair/site-fetch";
 import { adminActions, agentHeartbeats, eventDataCitations, events } from "../schema.js";
 import type { Db } from "../db.js";
@@ -58,6 +58,22 @@ const SOURCE = "mcp/tentative-autopromote";
 
 export type HoldReason = DisagreeReason | "fetch_failed" | "no_citation_url";
 
+/**
+ * OPE-1661 — one row per counted error, kept in the RUN ROW. `error_logs` is not
+ * enough: on 2026-11-17 all 8 errors were "D1 DB is overloaded", and the
+ * logger's own insert hit the same overload, so the table held nothing and
+ * "8 error(s)" was unexplained anywhere a reader could look. The run row is
+ * written ~30 s later and landed.
+ */
+export interface AutopromoteError {
+  /** The event slug, or the pass name when a whole pass failed. */
+  slug: string;
+  pass: "promote" | "reversal" | "promote-pass" | "reversal-pass";
+  kind: "d1_overload" | "other";
+  /** The innermost cause (the D1_ERROR text, not Drizzle's "Failed query:" wrapper). */
+  cause: string;
+}
+
 export interface AutopromoteResult {
   examined: number;
   promoted: { slug: string; url: string; matched: string }[];
@@ -65,6 +81,7 @@ export interface AutopromoteResult {
   rechecked: number;
   demoted: { slug: string; reason: HoldReason; detail?: string }[];
   errors: number;
+  errorDetails: AutopromoteError[];
   summary: string;
 }
 
@@ -75,6 +92,45 @@ export interface AutopromoteOptions {
   /** Injected in tests; defaults to the shared SSRF-guarded fetch with Browser-Rendering escalation. */
   fetchPage?: PageFetcher;
   env?: BrowserRenderingEnv;
+  /** Injected in tests so the overload backoff does not really wait. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * OPE-1661 — backoff before retrying a D1 overload. D1 rejects for "too many
+ * resources consumed within a 10 second window"; the 06:00 cron fans out ~30
+ * sibling tasks (OPE-1607), so the burst is short. 2 s + 5 s stays inside one
+ * window's tail without stalling a 48-row run for long.
+ */
+export const OVERLOAD_RETRY_DELAYS_MS = [2000, 5000];
+
+export function isD1Overload(error: unknown): boolean {
+  return /D1 DB is overloaded|overloaded/i.test(describeError(error));
+}
+
+function rootCause(error: unknown): string {
+  const causes = errorCauseMessages(error);
+  const msg =
+    causes.length > 0
+      ? causes[causes.length - 1]
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  return msg.slice(0, 200);
+}
+
+async function withOverloadRetry<T>(
+  fn: () => Promise<T>,
+  sleep: (ms: number) => Promise<void>
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt >= OVERLOAD_RETRY_DELAYS_MS.length || !isD1Overload(error)) throw error;
+      await sleep(OVERLOAD_RETRY_DELAYS_MS[attempt]);
+    }
+  }
 }
 
 type Verdict =
@@ -132,14 +188,63 @@ function reasonTally(rows: { reason: HoldReason }[]): string {
     .join(", ");
 }
 
+function kindTally(rows: { kind: string }[]): string {
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(r.kind, (m.get(r.kind) ?? 0) + 1);
+  return [...m.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .map(([k, v]) => `${k} ×${v}`)
+    .join(", ");
+}
+
 export function summarize(r: Omit<AutopromoteResult, "summary">): string {
   const held = r.held.length;
   return (
     `auto-promoted ${r.promoted.length}; ${held} left for review` +
     (held > 0 ? ` (${reasonTally(r.held)})` : "") +
     (r.demoted.length > 0 ? `; demoted ${r.demoted.length} on a disagreeing re-read` : "") +
-    (r.errors > 0 ? `; ${r.errors} error(s)` : "")
+    (r.errors > 0
+      ? `; ${r.errors} error(s)` +
+        (r.errorDetails.length > 0 ? ` (${kindTally(r.errorDetails)})` : "")
+      : "")
   );
+}
+
+/**
+ * The audit row, inserted only while `guard` (the UPDATE's own predicate) still
+ * holds. Batched BEFORE the UPDATE, so both statements read the same pre-state.
+ * `created_at` is seconds, as Drizzle's timestamp mode stores it.
+ */
+function guardedAuditInsert(
+  db: Db,
+  a: { auditId: string; eventId: string; payload: string; nowSecs: number; guard: SQL | undefined }
+) {
+  // A query BUILDER, not `db.run(sql…)`: Drizzle's `run` is lazy on D1 but
+  // EAGER on the sync test driver, where it would execute while the batch array
+  // is being built — outside the transaction, and again on every retry.
+  return db.insert(adminActions).select(
+    db
+      .select({
+        id: sql<string>`${a.auditId}`.as("id"),
+        action: sql<string>`'event.lifecycle_change'`.as("action"),
+        actorUserId: sql<null>`NULL`.as("actor_user_id"),
+        targetType: sql<string>`'event'`.as("target_type"),
+        targetId: sql<string>`${a.eventId}`.as("target_id"),
+        payloadJson: sql<string>`${a.payload}`.as("payload_json"),
+        createdAt: sql<number>`${a.nowSecs}`.as("created_at"),
+      })
+      .from(events)
+      .where(a.guard)
+  );
+}
+
+async function auditRowExists(db: Db, auditId: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: adminActions.id })
+    .from(adminActions)
+    .where(eq(adminActions.id, auditId))
+    .limit(1);
+  return rows.length > 0;
 }
 
 export async function runTentativeAutopromote(
@@ -149,6 +254,8 @@ export async function runTentativeAutopromote(
   const now = opts.now ?? new Date();
   const nowSecs = Math.floor(now.getTime() / 1000);
   const fetchPage: PageFetcher = opts.fetchPage ?? ((url) => fetchVendorSite(url, opts.env ?? {}));
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const retry = <T>(fn: () => Promise<T>) => withOverloadRetry(fn, sleep);
   const result: Omit<AutopromoteResult, "summary"> = {
     examined: 0,
     promoted: [],
@@ -156,14 +263,26 @@ export async function runTentativeAutopromote(
     rechecked: 0,
     demoted: [],
     errors: 0,
+    errorDetails: [],
+  };
+  const recordError = (slug: string, pass: AutopromoteError["pass"], error: unknown) => {
+    result.errors++;
+    result.errorDetails.push({
+      slug,
+      pass,
+      kind: isD1Overload(error) ? "d1_overload" : "other",
+      cause: rootCause(error),
+    });
   };
 
   // ── Pass 1 + 2: promote or hold ───────────────────────────────────────────
   try {
-    const queue = await readTentativePromotionQueue(db, now, {
-      withinSeconds: PROMOTE_WITHIN_DAYS * 86400,
-      limit: 500,
-    });
+    const queue = await retry(() =>
+      readTentativePromotionQueue(db, now, {
+        withinSeconds: PROMOTE_WITHIN_DAYS * 86400,
+        limit: 500,
+      })
+    );
     let candidates = queue.filter((r) => r.tier === "ready" && !r.recentlyChecked);
 
     // A row this rule already reversed waits for a person (the review flag).
@@ -221,46 +340,52 @@ export async function runTentativeAutopromote(
           500
         );
         // Guarded on lifecycle_status so a person who moved the row while the
-        // fetch was in flight wins; the audit row is written only on a change.
-        const updated = await db
-          .update(events)
-          .set({
-            lifecycleStatus: "SCHEDULED",
-            lifecycleStatusChangedAt: now,
-            lifecycleReason: reason,
-            lifecycleLastCheckedAt: now,
-            lifecycleCheckNote: reason,
-            updatedAt: now,
-          })
-          .where(
-            and(
-              eq(events.id, c.id),
-              eq(events.lifecycleStatus, "TENTATIVE"),
-              isNull(events.mergedInto)
-            )
-          )
-          .returning({ id: events.id });
-        if (updated.length === 0) return;
-        await db.insert(adminActions).values({
-          action: "event.lifecycle_change",
-          actorUserId: null,
-          targetType: "event",
-          targetId: c.id,
-          payloadJson: JSON.stringify({
-            previous_lifecycle: "TENTATIVE",
-            new_lifecycle: "SCHEDULED",
-            reason,
-            slug: c.slug,
-            via: AUTOPROMOTE_VIA,
-            rule: "OPE-1586",
-            matched_url: v.url,
-            matched_text: v.matched,
-          }),
-          createdAt: now,
+        // fetch was in flight wins.
+        //
+        // OPE-1661 — the UPDATE and its audit row are ONE batch (a D1
+        // transaction). They were two awaits, and on 2026-11-17 a D1 overload
+        // landed between them: winter-lights-at-shelburne-museum went SCHEDULED
+        // with no `event.lifecycle_change` row, invisible to pass 3 (which finds
+        // this rule's promotions BY that row) and to get_event_lifecycle_history.
+        // The audit INSERT carries the same guard as the UPDATE and runs first,
+        // so both see the pre-state: both land or neither does.
+        const guard = and(
+          eq(events.id, c.id),
+          eq(events.lifecycleStatus, "TENTATIVE"),
+          isNull(events.mergedInto)
+        );
+        const auditId = crypto.randomUUID();
+        const payload = JSON.stringify({
+          previous_lifecycle: "TENTATIVE",
+          new_lifecycle: "SCHEDULED",
+          reason,
+          slug: c.slug,
+          via: AUTOPROMOTE_VIA,
+          rule: "OPE-1586",
+          matched_url: v.url,
+          matched_text: v.matched,
         });
+        const landed = await retry(async () => {
+          await db.batch([
+            guardedAuditInsert(db, { auditId, eventId: c.id, payload, nowSecs, guard }),
+            db
+              .update(events)
+              .set({
+                lifecycleStatus: "SCHEDULED",
+                lifecycleStatusChangedAt: now,
+                lifecycleReason: reason,
+                lifecycleLastCheckedAt: now,
+                lifecycleCheckNote: reason,
+                updatedAt: now,
+              })
+              .where(guard),
+          ]);
+          return auditRowExists(db, auditId);
+        });
+        if (!landed) return;
         result.promoted.push({ slug: c.slug, url: v.url, matched: v.matched });
       } catch (error) {
-        result.errors++;
+        recordError(c.slug, "promote", error);
         await logError(db, {
           source: SOURCE,
           message: `[tentative-autopromote] promote failed for ${c.slug}`,
@@ -269,7 +394,7 @@ export async function runTentativeAutopromote(
       }
     });
   } catch (error) {
-    result.errors++;
+    recordError("(promote pass)", "promote-pass", error);
     await logError(db, {
       source: SOURCE,
       message: "[tentative-autopromote] promote pass failed",
@@ -280,12 +405,13 @@ export async function runTentativeAutopromote(
   // ── Pass 3: re-read what this rule promoted; demote on contradiction ──────
   try {
     const promotedNow = new Set(result.promoted.map((p) => p.slug));
-    const rows = await db.all<{
-      id: string;
-      slug: string;
-      start_date: number;
-      matched_url: string | null;
-    }>(sql`
+    const rows = await retry(() =>
+      db.all<{
+        id: string;
+        slug: string;
+        start_date: number;
+        matched_url: string | null;
+      }>(sql`
       -- Correlated on idx_admin_actions_target (target_type, target_id), run
       -- only for the upcoming SCHEDULED window — not a window function over the
       -- whole audit table (D1 bills rows read; OPE-1573).
@@ -304,7 +430,8 @@ export async function runTentativeAutopromote(
                  AND a.action = 'event.lifecycle_change'
                ORDER BY a.created_at DESC LIMIT 1) = ${AUTOPROMOTE_VIA}
        ORDER BY e.start_date ASC
-       LIMIT ${RECHECK_LIMIT}`);
+       LIMIT ${RECHECK_LIMIT}`)
+    );
     const toCheck = rows.filter((r) => !promotedNow.has(r.slug) && r.matched_url);
     result.rechecked = toCheck.length;
     await pool(toCheck, FETCH_CONCURRENCY, async (r) => {
@@ -320,37 +447,40 @@ export async function runTentativeAutopromote(
         const reason =
           `auto (OPE-1586): demoted — organizer page no longer agrees (${v.reason}` +
           `${v.detail ? `: ${v.detail}` : ""}) at ${r.matched_url}`;
-        const updated = await db
-          .update(events)
-          .set({
-            lifecycleStatus: "TENTATIVE",
-            lifecycleStatusChangedAt: now,
-            lifecycleReason: reason.slice(0, 500),
-            updatedAt: now,
-          })
-          .where(and(eq(events.id, r.id), eq(events.lifecycleStatus, "SCHEDULED")))
-          .returning({ id: events.id });
-        if (updated.length === 0) return;
-        await db.insert(adminActions).values({
-          action: "event.lifecycle_change",
-          actorUserId: null,
-          targetType: "event",
-          targetId: r.id,
-          payloadJson: JSON.stringify({
-            previous_lifecycle: "SCHEDULED",
-            new_lifecycle: "TENTATIVE",
-            reason: reason.slice(0, 500),
-            slug: r.slug,
-            via: `${AUTOPROMOTE_VIA}:reversal`,
-            rule: "OPE-1586",
-            matched_url: r.matched_url,
-          }),
-          createdAt: now,
+        // OPE-1661 — atomic for the same reason as the promote write.
+        const guard = and(eq(events.id, r.id), eq(events.lifecycleStatus, "SCHEDULED"));
+        const auditId = crypto.randomUUID();
+        const payload = JSON.stringify({
+          previous_lifecycle: "SCHEDULED",
+          new_lifecycle: "TENTATIVE",
+          reason: reason.slice(0, 500),
+          slug: r.slug,
+          via: `${AUTOPROMOTE_VIA}:reversal`,
+          rule: "OPE-1586",
+          matched_url: r.matched_url,
         });
-        await raiseEventReviewFlag(db, r.id, "auto_promotion_reversed", AUTOPROMOTE_VIA);
+        const landed = await retry(async () => {
+          await db.batch([
+            guardedAuditInsert(db, { auditId, eventId: r.id, payload, nowSecs, guard }),
+            db
+              .update(events)
+              .set({
+                lifecycleStatus: "TENTATIVE",
+                lifecycleStatusChangedAt: now,
+                lifecycleReason: reason.slice(0, 500),
+                updatedAt: now,
+              })
+              .where(guard),
+          ]);
+          return auditRowExists(db, auditId);
+        });
+        if (!landed) return;
+        await retry(() =>
+          raiseEventReviewFlag(db, r.id, "auto_promotion_reversed", AUTOPROMOTE_VIA)
+        );
         result.demoted.push({ slug: r.slug, reason: v.reason, detail: v.detail });
       } catch (error) {
-        result.errors++;
+        recordError(r.slug, "reversal", error);
         await logError(db, {
           source: SOURCE,
           message: `[tentative-autopromote] reversal failed for ${r.slug}`,
@@ -359,7 +489,7 @@ export async function runTentativeAutopromote(
       }
     });
   } catch (error) {
-    result.errors++;
+    recordError("(reversal pass)", "reversal-pass", error);
     await logError(db, {
       source: SOURCE,
       message: "[tentative-autopromote] reversal pass failed",
@@ -373,36 +503,41 @@ export async function runTentativeAutopromote(
   // The run row the digest reads, and the heartbeat the OPE-246 probe watches.
   // Both on every run, including a run that promoted nothing.
   try {
-    await db.insert(adminActions).values({
-      action: AUTOPROMOTE_RUN_ACTION,
-      actorUserId: null,
-      targetType: "system",
-      targetId: AUTOPROMOTE_VIA,
-      payloadJson: JSON.stringify({
-        summary,
-        examined: full.examined,
-        promoted: full.promoted.map((p) => p.slug),
-        held: full.held,
-        rechecked: full.rechecked,
-        demoted: full.demoted,
-        errors: full.errors,
-      }),
-      createdAt: now,
-    });
-    const note = `examined=${full.examined} promoted=${full.promoted.length} held=${full.held.length} demoted=${full.demoted.length} errors=${full.errors}`;
-    await db
-      .insert(agentHeartbeats)
-      .values({
-        id: crypto.randomUUID(),
-        agentCode: AUTOPROMOTE_HEARTBEAT_CODE,
-        kind: "watchdog",
-        lastSeenAt: now,
-        note,
+    await retry(() =>
+      db.insert(adminActions).values({
+        action: AUTOPROMOTE_RUN_ACTION,
+        actorUserId: null,
+        targetType: "system",
+        targetId: AUTOPROMOTE_VIA,
+        payloadJson: JSON.stringify({
+          summary,
+          examined: full.examined,
+          promoted: full.promoted.map((p) => p.slug),
+          held: full.held,
+          rechecked: full.rechecked,
+          demoted: full.demoted,
+          errors: full.errors,
+          errorDetails: full.errorDetails,
+        }),
+        createdAt: now,
       })
-      .onConflictDoUpdate({
-        target: agentHeartbeats.agentCode,
-        set: { lastSeenAt: now, kind: "watchdog", note },
-      });
+    );
+    const note = `examined=${full.examined} promoted=${full.promoted.length} held=${full.held.length} demoted=${full.demoted.length} errors=${full.errors}`;
+    await retry(() =>
+      db
+        .insert(agentHeartbeats)
+        .values({
+          id: crypto.randomUUID(),
+          agentCode: AUTOPROMOTE_HEARTBEAT_CODE,
+          kind: "watchdog",
+          lastSeenAt: now,
+          note,
+        })
+        .onConflictDoUpdate({
+          target: agentHeartbeats.agentCode,
+          set: { lastSeenAt: now, kind: "watchdog", note },
+        })
+    );
   } catch (error) {
     await logError(db, {
       source: SOURCE,
