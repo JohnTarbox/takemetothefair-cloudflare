@@ -3714,6 +3714,9 @@ export const faultSignatures = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     /** OPE-1174 — 'class' when the status was inherited, not ruled. See drizzle/0330. */
     inheritedFrom: text("inherited_from"),
+    /** OPE-1665 — on a `d1-platform:*` incident row only: distinct routes / sources the burst hit. See drizzle/0426. */
+    incidentRoutes: integer("incident_routes"),
+    incidentSources: integer("incident_sources"),
   },
   (t) => [index("idx_fault_signatures_status").on(t.status)]
 );

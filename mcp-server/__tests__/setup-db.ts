@@ -1210,7 +1210,10 @@ const SCHEMA_SQL = `
     resolved_at INTEGER,
     created_at INTEGER NOT NULL,
     -- OPE-1174 — drizzle/0330.
-    inherited_from TEXT
+    inherited_from TEXT,
+    -- OPE-1665 — drizzle/0426.
+    incident_routes INTEGER,
+    incident_sources INTEGER
   );
 
   -- OPE-1178 — mirrors drizzle/0331.
