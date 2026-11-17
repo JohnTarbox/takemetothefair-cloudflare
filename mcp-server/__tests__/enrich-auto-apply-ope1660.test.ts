@@ -9,7 +9,7 @@
  *     autoApply: { basis: null,
  *                  reason: "not trusted, not a validated contact, not the promoter's domain" }
  *
- * because `shpandabear10@gmail.com` has NO `inbound_email_senders` row — the
+ * because the forwarding sender (a person, redacted per OPE-1363) has NO `inbound_email_senders` row — the
  * pipeline's only definition of `trusted` (none of her 47 inbound rows ever took
  * the trusted fast-path either). The rule declined correctly. What was broken
  * was the READ: `get_inbound_email` dropped `autoApply` from every
@@ -48,7 +48,7 @@ let db: TestDb;
 const INBOUND = "a3e8acb9-beac-4091-9885-c3d3b476a9a1";
 const EVENT = "290769e0-1b97-4fd9-8cd8-808e850f845c";
 const VENUE = "edf95965-augusta-civic-center";
-const SENDER = "shpandabear10@gmail.com";
+const SENDER = "forwarder@example.com";
 const RECEIVED = new Date("2026-11-16T00:23:31Z");
 
 /** The extraction the stager received for a3e8acb9 (prod payload, verbatim). */
