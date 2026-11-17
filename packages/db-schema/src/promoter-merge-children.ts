@@ -540,6 +540,7 @@ export async function repointPromoterChildren(
     let itemsDropped = 0;
     let readsMoved = 0;
     let websubDropped = 0;
+    let healthFlagsDropped = 0;
     for (const { loserRowId, keeperRowId } of plan.drop) {
       const twinExt = new Set(
         (
@@ -579,6 +580,13 @@ export async function repointPromoterChildren(
         .from(schema.feedWebsubSubscriptions)
         .where(eq(schema.feedWebsubSubscriptions.feedId, loserRowId));
       websubDropped += Number(subs);
+      // OPE-1633's feed_health_flags (0416) describe the dropped feed itself;
+      // the keeper's feed computes its own, so they go with it — reported.
+      const [{ n: flags }] = await db
+        .select({ n: sql<number>`count(*)` })
+        .from(schema.feedHealthFlags)
+        .where(eq(schema.feedHealthFlags.feedId, loserRowId));
+      healthFlagsDropped += Number(flags);
       writes.push(() =>
         db.delete(schema.promoterEventFeeds).where(eq(schema.promoterEventFeeds.id, loserRowId))
       );
@@ -587,6 +595,11 @@ export async function repointPromoterChildren(
       out.tables["promoter_feed_items"] = count(itemsMoved, itemsDropped);
       out.tables["promoter_feed_reads"] = count(readsMoved);
       out.tables["feed_websub_subscriptions"] = count(0, 0, websubDropped);
+      out.tables["feed_health_flags"] = count(0, 0, healthFlagsDropped);
+      if (healthFlagsDropped > 0)
+        out.warnings.push(
+          `${healthFlagsDropped} health flag(s) on the loser's duplicate feed are dropped with it; the keeper's feed keeps its own.`
+        );
       if (itemsDropped > 0)
         out.warnings.push(
           `${itemsDropped} feed item(s) on the loser's duplicate feed were already on the keeper's feed and are dropped with it.`

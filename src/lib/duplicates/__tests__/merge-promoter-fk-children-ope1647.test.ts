@@ -65,6 +65,7 @@ const ALL_TABLES = [
   "promoter_feed_items",
   "promoter_feed_reads",
   "feed_websub_subscriptions",
+  "feed_health_flags",
   "event_field_pins",
 ];
 const snapshot = () =>
@@ -163,6 +164,11 @@ function seed() {
   run(
     `INSERT INTO feed_websub_subscriptions (id, feed_id, hub_url, topic_url, secret, created_at, updated_at)
      VALUES ('ws1','f-l','https://hub','https://topic','s',0,0)`
+  );
+  // OPE-1633 (0416) — a health flag on the loser's colliding feed.
+  run(
+    `INSERT INTO feed_health_flags (id, feed_id, check_name, first_seen_at, last_seen_at)
+     VALUES ('hf1','f-l','freshness',0,0)`
   );
 
   run(
@@ -328,6 +334,13 @@ describe("OPE-1647 — merge_promoter (MCP path)", () => {
       droppedAsDuplicate: 0,
       deleted: 1,
     });
+    // The flag goes with its feed, and the report says so (never silently).
+    expect(r.children.tables.feed_health_flags).toEqual({
+      moved: 0,
+      droppedAsDuplicate: 0,
+      deleted: 1,
+    });
+    expect(r.children.warnings.join(" ")).toMatch(/1 health flag\(s\)/);
   });
 
   it("the preview and the real merge report from the same plan", async () => {
@@ -394,5 +407,28 @@ describe("OPE-1647 — schema coverage: every promoter reference is handled", ()
   it("the handled list names nothing that no longer exists", () => {
     const refs = new Set(promoterReferences());
     expect(PROMOTER_CHILD_TABLES_HANDLED.filter((h) => !refs.has(h))).toEqual([]);
+  });
+  // A feed's own children follow a MOVED feed for free, but on a feed-URL
+  // collision the loser's feed is deleted — so each feed child must be either
+  // moved to the keeper's twin or counted as dropped in the report. OPE-1633's
+  // feed_health_flags landed after this PR was first built and was missed by
+  // the promoter-only enumeration above; this pins the grandchild list.
+  it("every table keyed on a promoter feed is handled on a feed collision", () => {
+    const feedChildren: string[] = [];
+    for (const v of Object.values(schema)) {
+      if (!is(v, SQLiteTable)) continue;
+      const cfg = getTableConfig(v as SQLiteTable);
+      for (const fk of cfg.foreignKeys)
+        if (getTableConfig(fk.reference().foreignTable).name === "promoter_event_feeds")
+          feedChildren.push(cfg.name);
+    }
+    // Landmark: the enumeration really finds feed children.
+    expect(feedChildren).toContain("promoter_feed_items");
+    expect([...new Set(feedChildren)].sort()).toEqual([
+      "feed_health_flags",
+      "feed_websub_subscriptions",
+      "promoter_feed_items",
+      "promoter_feed_reads",
+    ]);
   });
 });
