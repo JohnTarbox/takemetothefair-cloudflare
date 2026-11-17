@@ -309,6 +309,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "newsletter-candidates": 720,
       "unterminated-crossing-notice": 6,
       "error-log-retention": 48,
+      "error-log-buffer-replay": 2,
       "indexnow-submission-retention": 48,
       // OPE-1328 — armed 2026-10-06 at 270 days: a judgement at n=1 (one
       // multi-edition series, one member), not a measurement. See heartbeat.ts.
