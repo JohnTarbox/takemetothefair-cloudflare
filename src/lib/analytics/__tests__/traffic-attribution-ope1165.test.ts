@@ -83,7 +83,12 @@ beforeEach(() => {
 });
 
 let n = 0;
-function click(at: Date, medium: string | null, name = "outbound_ticket_click") {
+function click(
+  at: Date,
+  medium: string | null,
+  name = "outbound_ticket_click",
+  ctaSource?: string
+) {
   raw
     .prepare(
       `INSERT INTO analytics_events (id, event_name, event_category, timestamp, properties, source) VALUES (?,?,?,?,?,?)`
@@ -93,7 +98,11 @@ function click(at: Date, medium: string | null, name = "outbound_ticket_click") 
       name,
       "conversion",
       Math.floor(at.getTime() / 1000),
-      JSON.stringify(medium ? { eventSlug: "x", trafficMedium: medium } : { eventSlug: "x" }),
+      JSON.stringify({
+        eventSlug: "x",
+        ...(medium ? { trafficMedium: medium } : {}),
+        ...(ctaSource ? { ctaSource } : {}),
+      }),
       "client_beacon"
     );
 }
@@ -125,9 +134,23 @@ describe("readOrganicConversionClicks", () => {
     for (let i = 0; i < 25; i++) click(inWindow, "(none)");
     for (let i = 0; i < 25; i++) click(inWindow, "referral");
     const r = await readOrganicConversionClicks(db as never, WINDOW, NOW);
-    expect(r).toEqual({ status: "ready", organicClicks: 2, allClicks: 52 });
+    expect(r).toEqual({ status: "ready", organicClicks: 2, officialSiteClicks: 0, allClicks: 52 });
     // Against 10 organic sessions: 20%, where the old basis read 520%.
     expect((r as { organicClicks: number }).organicClicks / 10).toBeLessThanOrEqual(1);
+  });
+
+  it("OPE-1658 — 'Official Event Website' fallback clicks are split out of the conversion numerator", async () => {
+    click(new Date(NOW.getTime() - 30 * DAY), "organic");
+    click(inWindow, "organic", "outbound_ticket_click", "ticket_url");
+    click(inWindow, "organic"); // pre-10-01 shape: no ctaSource → a conversion
+    click(inWindow, "organic", "outbound_application_click");
+    for (let i = 0; i < 6; i++) click(inWindow, "organic", "outbound_ticket_click", "source_url");
+    click(inWindow, "referral", "outbound_ticket_click", "source_url"); // not organic
+    const r = await readOrganicConversionClicks(db as never, WINDOW, NOW);
+    expect(r).toEqual({ status: "ready", organicClicks: 3, officialSiteClicks: 6, allClicks: 3 });
+    // The two parts sum to the old combined organic numerator (9).
+    const ready = r as { organicClicks: number; officialSiteClicks: number };
+    expect(ready.organicClicks + ready.officialSiteClicks).toBe(9);
   });
 
   it("clicks outside the window and other event names are not counted", async () => {
@@ -135,7 +158,7 @@ describe("readOrganicConversionClicks", () => {
     click(new Date(NOW.getTime() - 1 * DAY), "organic"); // after the window (48h lag)
     click(inWindow, "organic", "blog_outbound_click");
     const r = await readOrganicConversionClicks(db as never, WINDOW, NOW);
-    expect(r).toEqual({ status: "ready", organicClicks: 0, allClicks: 0 });
+    expect(r).toEqual({ status: "ready", organicClicks: 0, officialSiteClicks: 0, allClicks: 0 });
   });
 });
 
