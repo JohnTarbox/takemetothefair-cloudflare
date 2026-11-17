@@ -162,6 +162,15 @@ export const CAPABILITY_FLAGS: CapabilityFlag[] = [
     offIsDeliberate: false,
   },
   {
+    name: "ELAPSED_PENDING_EXPIRY_ENABLED",
+    worker: "mcp",
+    darkMeans:
+      "PENDING submissions whose dates have passed are not expired, so they pile up in " +
+      "/admin/submissions under Ended until someone bulk-rejects them by hand. On since " +
+      "OPE-1596 (John's option 1: expire at end date + 3 days, skip rows touched in 7 days).",
+    offIsDeliberate: false,
+  },
+  {
     name: "WEBSUB_ENABLED",
     worker: "mcp",
     darkMeans:

@@ -778,6 +778,23 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1596 — the nightly elapsed-PENDING expiry. Watches the run stamp,
+    // not yield: once the backlog is cleared most nights expire zero rows.
+    // The rule stamps on every run. 48h: daily, one miss tolerated.
+    name: "elapsed-pending-expiry",
+    ownerOpe: "OPE-1596",
+    label: "Nightly expiry of elapsed PENDING submissions (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:elapsed-pending-expiry")
+      ),
+  },
+  {
     // OPE-588 — proof the GSC sweep's FILLER tiers still select work.
     //
     // Tiers 1, 2, 2c and REL5 were unreachable for two months and nothing said

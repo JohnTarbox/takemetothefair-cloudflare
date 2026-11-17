@@ -182,6 +182,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "citation-source-snapshot": 504,
       "occurred-transition-sweep": 48,
       "tentative-autopromote": 48,
+      "elapsed-pending-expiry": 48,
       "gsc-sweep-filler-tiers": 48,
       "agent-silence-watchdog": 48,
       // OPE-1637 — hourly cron; two missed runs plus slack.

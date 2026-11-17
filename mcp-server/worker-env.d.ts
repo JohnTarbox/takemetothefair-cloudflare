@@ -30,6 +30,7 @@ interface __BaseEnv_WorkerEnv {
   FEED_POLLING_ENABLED: string;
   WEBSUB_ENABLED: string;
   TENTATIVE_AUTOPROMOTE_ENABLED: string;
+  ELAPSED_PENDING_EXPIRY_ENABLED: string;
   SUBMIT_ADMIN_FORWARD: string;
   MCP_OBJECT: DurableObjectNamespace<import("./src/index").MeetMeAtTheFairMCP>;
   BURST_COUNTER: DurableObjectNamespace<import("./src/index").BurstCounter>;
