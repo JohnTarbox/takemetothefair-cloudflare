@@ -23,7 +23,8 @@
  *     2026-11-17), so the copy is small.
  *  2. ONE cached index per facet: the ordered matching ids
  *     (`getFacetEventIds` — the same SQL predicates and ORDER BY as the live
- *     facet listing), its indexability depth, and its seasonality. A facet page
+ *     facet listing) and its indexability depth (seasonality is cached separately,
+ *     built only for an empty page — see getCachedFacetSeasonality). A facet page
  *     maps its id slice onto the state copy. Facet ⊂ state by construction
  *     (same base conditions), so every id is found — and if one is not (the two
  *     entries were built minutes apart and an event changed in between), the
@@ -65,7 +66,7 @@ type ListingDb = ReturnType<typeof getCloudflareDb>;
 export const STATE_LISTING_CACHE_TTL_SECONDS = 300;
 
 /** Bump the version when the cached shape changes, so old entries are never decoded as new. */
-const KEY_PREFIX = "listing:v1";
+const KEY_PREFIX = "listing:v2";
 
 export function stateSetCacheKey(stateCode: string): string {
   return `${KEY_PREFIX}:state:${stateCode.toUpperCase()}`;
@@ -213,8 +214,6 @@ export interface FacetIndex {
   ids: string[];
   /** `countFacetForIndexing`'s answer. */
   depth: number;
-  /** `getFacetSeasonality`'s answer. */
-  seasonality: { total: number; months: number[] };
 }
 
 export async function getCachedFacetIndex(
@@ -237,14 +236,37 @@ export async function getCachedFacetIndex(
         facetDepthBasis(facet.kind) === "rolling12"
           ? await countFacetDepth(db, stateCode, stateSlug, facet, now)
           : ids.length;
-      // Always built, not only for an empty first page: an out-of-range
-      // `?page=` also renders an empty list, and computing seasonality live
-      // there would put a D1 read back on exactly the crawled URL shape.
-      const seasonality = await getFacetSeasonality(db, stateCode, stateSlug, facet, now);
-      return cacheRoundTrip({ ids, depth, seasonality } satisfies FacetIndex);
+      return cacheRoundTrip({ ids, depth } satisfies FacetIndex);
     }
   );
   return fromCacheable<FacetIndex>(encoded);
+}
+
+/**
+ * `getFacetSeasonality`, cached under its own key and built ONLY when a page
+ * renders an empty list (the OPE-470 contract).
+ *
+ * The first cut built it into every facet index, so an out-of-range `?page=`
+ * would not reach D1. Measured on prod (OPE-1662, 11-17 15:22Z cold crawl):
+ * those rolling-window statements were ~860K of the 1.58M rows a cold crawl
+ * read — about 4.5K rows per call, on every facet, for a line almost no page
+ * shows. Cached separately, an out-of-range page still costs D1 at most once
+ * per facet per TTL, and a populated page never pays for it.
+ */
+export async function getCachedFacetSeasonality(
+  db: ListingDb,
+  kv: ReadThroughKv | null | undefined,
+  stateCode: string,
+  stateSlug: string,
+  facet: ResolvedFacet,
+  now: Date
+): Promise<{ total: number; months: number[] }> {
+  return kvReadThrough(
+    kv,
+    `${facetIndexCacheKey(stateSlug, facet)}:season`,
+    STATE_LISTING_CACHE_TTL_SECONDS,
+    () => getFacetSeasonality(db, stateCode, stateSlug, facet, now)
+  );
 }
 
 /**

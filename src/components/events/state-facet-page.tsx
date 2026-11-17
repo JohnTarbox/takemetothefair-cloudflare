@@ -25,6 +25,7 @@ import { getFacetEvents } from "@/lib/events/facet-query";
 import {
   facetPageFromSet,
   getCachedFacetIndex,
+  getCachedFacetSeasonality,
   getCachedStateUpcomingSet,
 } from "@/lib/events/state-listing-cache";
 import {
@@ -244,7 +245,10 @@ export async function StateFacetPage({ stateSlug, facetSlug, searchParams }: Sta
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   // OPE-470 — only when there is nothing forward to show.
-  const seasonality = eventsList.length === 0 ? index.seasonality : null;
+  const seasonality =
+    eventsList.length === 0
+      ? await getCachedFacetSeasonality(db, kv, state.code, stateSlug, facet, now)
+      : null;
   const heading = headline(facet, state.name);
   const Icon = KIND_ICON[facet.kind];
 
