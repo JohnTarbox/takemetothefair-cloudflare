@@ -421,3 +421,150 @@ describe("runTentativeAutopromote", () => {
     expect(counts.imminentTentative).toBe(1);
   });
 });
+
+// ── OPE-1661 — a D1 overload between the UPDATE and its audit row ───────────
+//
+// 2026-11-17 06:00Z: 8 agreeing rows hit "D1 DB is overloaded". 7 failed on the
+// UPDATE (left TENTATIVE, fine); winter-lights-at-shelburne-museum failed on
+// the audit INSERT AFTER its UPDATE landed — SCHEDULED with no audit row, so
+// pass 3 could never see it. error_logs held none of the 8 (the logger's own
+// insert hit the same overload).
+describe("runTentativeAutopromote — D1 overload (OPE-1661)", () => {
+  const OVERLOAD =
+    "D1_ERROR: D1 DB is overloaded. Too many resources consumed within a 10 second window.";
+  const overloadError = () =>
+    Object.assign(new Error('Failed query: update "events" …'), { cause: new Error(OVERLOAD) });
+
+  type Batchable = { batch: (s: unknown[]) => Promise<unknown[]> };
+  const shimBatch = () => (db as unknown as Batchable).batch.bind(db);
+
+  /** D1's batch is a transaction; the shared shim is not. Make this one be. */
+  function transactionalBatch() {
+    const inner = shimBatch();
+    (db as unknown as Batchable).batch = async (stmts) => {
+      raw.exec("BEGIN");
+      try {
+        const out = await inner(stmts);
+        raw.exec("COMMIT");
+        return out;
+      } catch (e) {
+        raw.exec("ROLLBACK");
+        throw e;
+      }
+    };
+  }
+
+  function auditRows(id: string) {
+    return raw
+      .prepare(
+        `SELECT payload_json AS p FROM admin_actions WHERE action = 'event.lifecycle_change' AND target_id = ?`
+      )
+      .all(id) as { p: string }[];
+  }
+
+  it("retries a transient overload, and the promotion lands WITH its audit row", async () => {
+    seedEvent({ id: "agrees", start: NOV20 });
+    const inner = shimBatch();
+    let failures = 1;
+    (db as unknown as Batchable).batch = async (s) => {
+      if (failures-- > 0) throw overloadError();
+      return inner(s);
+    };
+    const sleeps: number[] = [];
+    const r = await runTentativeAutopromote(db, {
+      now: NOW,
+      fetchPage: fetcherFor({ agrees: AGREE_NOV20 }),
+      sleep: async (ms) => void sleeps.push(ms),
+    });
+    expect(sleeps).toEqual([2000]);
+    expect(r.errors).toBe(0);
+    expect(r.promoted.map((p) => p.slug)).toEqual(["agrees"]);
+    expect(lifecycle("agrees")).toBe("SCHEDULED");
+    expect(auditRows("agrees")).toHaveLength(1);
+    // The insert-select maps every column, not just the payload.
+    expect(
+      raw
+        .prepare(
+          `SELECT action, actor_user_id AS actor, target_type AS tt, created_at AS ca
+             FROM admin_actions WHERE target_id = 'agrees'`
+        )
+        .get()
+    ).toEqual({ action: "event.lifecycle_change", actor: null, tt: "event", ca: nowSecs });
+  });
+
+  it("a persistent overload is counted WITH its cause — in the result, the run row and the digest line — and changes nothing", async () => {
+    seedEvent({ id: "agrees", start: NOV20 });
+    (db as unknown as Batchable).batch = async () => {
+      throw overloadError();
+    };
+    const sleeps: number[] = [];
+    const r = await runTentativeAutopromote(db, {
+      now: NOW,
+      fetchPage: fetcherFor({ agrees: AGREE_NOV20 }),
+      sleep: async (ms) => void sleeps.push(ms),
+    });
+    expect(sleeps).toEqual([2000, 5000]);
+    expect(lifecycle("agrees")).toBe("TENTATIVE");
+    expect(auditRows("agrees")).toHaveLength(0);
+    expect(r.errors).toBe(1);
+    expect(r.errorDetails).toEqual([
+      { slug: "agrees", pass: "promote", kind: "d1_overload", cause: OVERLOAD },
+    ]);
+    expect(r.summary).toBe("auto-promoted 0; 0 left for review; 1 error(s) (d1_overload ×1)");
+
+    // The run row — the store that survives an overload — carries the detail.
+    const run = raw
+      .prepare(
+        `SELECT payload_json AS p FROM admin_actions WHERE action = 'event.tentative_autopromote_run'`
+      )
+      .all() as { p: string }[];
+    expect(run).toHaveLength(1);
+    expect(JSON.parse(run[0].p).errorDetails).toEqual(r.errorDetails);
+  });
+
+  it.each([
+    [
+      "the audit INSERT (the Shelburne shape)",
+      "admin_actions",
+      "INSERT",
+      "NEW.action = 'event.lifecycle_change'",
+    ],
+    ["the UPDATE", "events", "UPDATE", "NEW.lifecycle_status = 'SCHEDULED'"],
+  ])(
+    "a failure in %s rolls BOTH back: the row stays TENTATIVE with no audit row",
+    async (_label, table, op, when) => {
+      seedEvent({ id: "agrees", start: NOV20 });
+      transactionalBatch();
+      raw.exec(`
+        CREATE TRIGGER t_fail BEFORE ${op} ON ${table}
+        WHEN ${when}
+        BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END`);
+      const sleeps: number[] = [];
+      const r = await runTentativeAutopromote(db, {
+        now: NOW,
+        fetchPage: fetcherFor({ agrees: AGREE_NOV20 }),
+        sleep: async (ms) => void sleeps.push(ms),
+      });
+      expect(lifecycle("agrees")).toBe("TENTATIVE");
+      expect(auditRows("agrees")).toHaveLength(0);
+      expect(r.promoted).toEqual([]);
+      // Not an overload, so not retried; still explained.
+      expect(sleeps).toEqual([]);
+      expect(r.errorDetails).toMatchObject([{ slug: "agrees", pass: "promote", kind: "other" }]);
+      expect(r.errorDetails[0].cause).toContain("simulated write failure");
+    }
+  );
+
+  it("writes no audit row when a person moved the row while the fetch was in flight", async () => {
+    seedEvent({ id: "agrees", start: NOV20 });
+    const fetchPage = (async (url: string) => {
+      raw.exec(`UPDATE events SET lifecycle_status = 'CANCELLED' WHERE id = 'agrees'`);
+      return fetcherFor({ agrees: AGREE_NOV20 })(url);
+    }) as PageFetcher;
+    const r = await runTentativeAutopromote(db, { now: NOW, fetchPage });
+    expect(lifecycle("agrees")).toBe("CANCELLED");
+    expect(auditRows("agrees")).toHaveLength(0);
+    expect(r.promoted).toEqual([]);
+    expect(r.errors).toBe(0);
+  });
+});
