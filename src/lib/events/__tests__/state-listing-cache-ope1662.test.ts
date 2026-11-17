@@ -25,6 +25,7 @@ import {
   countStateEvents,
   facetPageFromSet,
   getCachedFacetIndex,
+  getCachedFacetSeasonality,
   getCachedStateUpcomingSet,
   loadStateEventCards,
   pageSlice,
@@ -239,7 +240,7 @@ describe("facet pages — cached index ∘ state set vs getFacetEvents", () => {
       expect(facetPageFromSet(index, set, page, LIMIT)).toEqual(live.events);
     }
     expect(index.depth).toBe(await countFacetForIndexing(asListingDb(), "ME", "maine", facet, NOW));
-    expect(index.seasonality).toEqual(
+    expect(await getCachedFacetSeasonality(asListingDb(), kv, "ME", "maine", facet, NOW)).toEqual(
       await getFacetSeasonality(asListingDb(), "ME", "maine", facet, NOW)
     );
   });
@@ -262,7 +263,7 @@ describe("facet pages — cached index ∘ state set vs getFacetEvents", () => {
   });
 
   it("an id missing from the set yields null (→ live read), never a short page", () => {
-    const index = { ids: ["a1", "zz"], depth: 2, seasonality: { total: 0, months: [] } };
+    const index = { ids: ["a1", "zz"], depth: 2 };
     expect(facetPageFromSet(index, [{ id: "a1" }], 1, 30)).toBeNull();
     expect(facetPageFromSet(index, [{ id: "a1" }], 2, 30)).toEqual([]);
   });
