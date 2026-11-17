@@ -23,7 +23,9 @@ const PUBLIC_SURFACES = [
   // `loading.tsx` Suspense boundary no longer covers the sibling `[slug]`
   // routes (a boundary there froze the HTTP status at 200 on bogus slugs).
   // Route groups do not change URLs; only these source paths moved.
-  "src/app/events/(listing)/page.tsx",
+  // OPE-1668 — the /events listing query moved out of the page into the module
+  // that also builds its cached set.
+  "src/lib/events/events-listing.ts",
   "src/app/events/(listing)/past/page.tsx",
   // OPE-1395 — the /vendors listing query moved out of the page into this loader.
   "src/lib/vendors/listing-page.ts",
