@@ -16,17 +16,17 @@ import type { Metadata } from "next";
 import { CalendarDays, MapPin, Tag, Sparkles } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { FacetNav } from "@/components/events/facet-nav";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { truncateAtBoundary } from "@/lib/seo/truncate-meta";
 import { STATES, STATE_BY_SLUG } from "@/lib/states";
+import { getFacetEvents } from "@/lib/events/facet-query";
 import {
-  countFacetEvents,
-  countFacetForIndexing,
-  getFacetEvents,
-  getFacetSeasonality,
-} from "@/lib/events/facet-query";
+  facetPageFromSet,
+  getCachedFacetIndex,
+  getCachedStateUpcomingSet,
+} from "@/lib/events/state-listing-cache";
 import {
   resolveFacet,
   isFacetIndexable,
@@ -162,8 +162,18 @@ export async function getFacetMetadata(stateSlug: string, facetSlug: string): Pr
   // Before this, a summer region measured in mid-August looked thin: the
   // Berkshires read 5 forward against 12 in calendar 2026 and went noindex at
   // the exact moment its season peaks.
-  const total = await countFacetEvents(db, state.code, stateSlug, facet, now);
-  const depth = await countFacetForIndexing(db, state.code, stateSlug, facet, now);
+  // OPE-1662 — both answers come from the cached facet index: `ids.length` is
+  // countFacetEvents (same predicate) and `depth` is countFacetForIndexing.
+  const index = await getCachedFacetIndex(
+    db,
+    getCloudflareRateLimitKv(),
+    state.code,
+    stateSlug,
+    facet,
+    now
+  );
+  const total = index.ids.length;
+  const depth = index.depth;
   const indexable = isFacetIndexable(facet, depth);
 
   const title = `${headline(facet, state.name)} | Meet Me at the Fair`;
@@ -218,23 +228,23 @@ export async function StateFacetPage({ stateSlug, facetSlug, searchParams }: Sta
 
   const page = Math.max(1, parseInt(searchParams.page || "1", 10) || 1);
   const db = getCloudflareDb();
-  const { events: eventsList, total } = await getFacetEvents(
-    db,
-    state.code,
-    stateSlug,
-    facet,
-    now,
-    page,
-    PAGE_SIZE
-  );
+  // OPE-1662 — the page is a slice of the cached facet index mapped onto the
+  // cached state set, so `?page=` of any value costs no D1. If the two cached
+  // entries disagree (built minutes apart around an edit), read this page live
+  // rather than render a short page as if it were the answer.
+  const kv = getCloudflareRateLimitKv();
+  const [index, stateSet] = await Promise.all([
+    getCachedFacetIndex(db, kv, state.code, stateSlug, facet, now),
+    getCachedStateUpcomingSet(db, kv, state.code),
+  ]);
+  const fromCache = facetPageFromSet(index, stateSet, page, PAGE_SIZE);
+  const { events: eventsList, total } = fromCache
+    ? { events: fromCache, total: index.ids.length }
+    : await getFacetEvents(db, state.code, stateSlug, facet, now, page, PAGE_SIZE);
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  // OPE-470 — only when there is nothing forward to show. A populated page pays
-  // nothing for this.
-  const seasonality =
-    eventsList.length === 0
-      ? await getFacetSeasonality(db, state.code, stateSlug, facet, now)
-      : null;
+  // OPE-470 — only when there is nothing forward to show.
+  const seasonality = eventsList.length === 0 ? index.seasonality : null;
   const heading = headline(facet, state.name);
   const Icon = KIND_ICON[facet.kind];
 

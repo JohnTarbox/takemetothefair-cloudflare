@@ -238,16 +238,22 @@ describe("the seasonality copy is drawn from the gate's own window", () => {
     expect(body).not.toMatch(/setUTCMonth/);
   });
 
-  it("renders only when the forward list is empty, so a populated page pays nothing", async () => {
+  it("renders only when the forward list is empty, and is computed once per cached facet index", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const page: string = readFileSync(
       resolve(__dirname, "..", "..", "..", "components", "events", "state-facet-page.tsx"),
       "utf8"
     );
+    const cache: string = readFileSync(resolve(__dirname, "..", "state-listing-cache.ts"), "utf8");
 
-    // The gate on the query…
-    expect(page).toMatch(/eventsList\.length === 0\s*\?\s*await getFacetSeasonality/);
+    // OPE-1662 — the page no longer queries seasonality per render (an
+    // out-of-range ?page= also renders an empty list, so a per-render query put a
+    // D1 read back on the crawled shape). It is built once per TTL inside the
+    // cached facet index, and the page reads it only when its list is empty.
+    expect(page).toMatch(/eventsList\.length === 0\s*\?\s*index\.seasonality/);
+    expect(page).not.toMatch(/await getFacetSeasonality/);
+    expect(cache).toMatch(/await getFacetSeasonality\(/);
     // …and on the render. `total > 0` is what stops a genuinely empty facet
     // (a month with no events at all) from claiming a season it does not have.
     expect(page).toMatch(/seasonality && seasonality\.total > 0/);
