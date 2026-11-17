@@ -2486,6 +2486,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1664 — the */10 MCP cron drains the KV buffer of error_logs rows a D1
+    // overload kept out of the table. Evidence is the RUN STAMP, written only
+    // when a drain COMPLETED (an empty buffer included): a drain that D1 refused,
+    // or that threw, writes none. 2h = twelve missed runs, so one blip doesn't
+    // fire it, but a dead replay path is seen the same morning.
+    name: "error-log-buffer-replay",
+    ownerOpe: "OPE-1664",
+    label: "error_logs KV buffer replay (*/10 MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 2,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:error-log-buffer-replay")
+      ),
+  },
+  {
     // OPE-993 — error_logs 30-day retention, moved off a 1%-per-write dice roll
     // (src/lib/logger.ts) onto the MCP 06:00Z cron. Evidence is the RUN STAMP,
     // which is written only when the prune SUCCEEDED (0 deleted included): a

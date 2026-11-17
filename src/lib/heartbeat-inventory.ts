@@ -115,6 +115,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   // ── scheduled() jobs ────────────────────────────────────────────────────
   "cron:runAgentSilenceWatchdog": { probes: ["agent-silence-watchdog"] },
   "cron:runErrorLogRetention": { probes: ["error-log-retention"] },
+  "cron:runScheduledErrorLogBufferReplay": { probes: ["error-log-buffer-replay"] },
   "cron:runDeployLagWatch": { probes: ["deploy-lag-watch"] },
   "cron:runHostSilenceWatch": { probes: ["host-silence-watch"] },
   "cron:runInboundExceptionNotice": U,

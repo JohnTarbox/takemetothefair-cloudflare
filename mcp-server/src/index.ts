@@ -863,6 +863,26 @@ async function runScheduledBingInspectionSweep(env: Env): Promise<void> {
 }
 
 /**
+ * OPE-1664 — drain the main app's KV buffer of `error_logs` rows whose D1 insert
+ * failed (usually during an overload) back into `error_logs`, keeping their
+ * original timestamps. Every 10 minutes, so a buffered row lands within ~10
+ * minutes of D1 recovering. The endpoint stamps
+ * `watchdog:error-log-buffer-replay` when a drain completes (empty included);
+ * the `error-log-buffer-replay` probe watches that stamp. Failsoft via
+ * runMainAppSweep.
+ */
+async function runScheduledErrorLogBufferReplay(env: Env): Promise<void> {
+  await runMainAppSweep(
+    env,
+    "error-log-buffer replay",
+    "/api/internal/error-log-buffer/replay",
+    (r) =>
+      `replayed=${r.replayed ?? "?"} present=${r.alreadyPresent ?? "?"} discarded=${r.discarded ?? "?"}` +
+      ` stopped=${r.stoppedOnError ?? "?"} more=${r.more ?? "?"} drops=${JSON.stringify(r.recentDrops ?? {})}`
+  );
+}
+
+/**
  * Render-fault emitter (OPE-93) — POSTs the OPE-81 detect→dedup→emit endpoint so
  * error_logs render faults actually flow into fault_signatures. OPE-81 shipped
  * the endpoint + reconcile but nothing SCHEDULED it, so the ledger sat empty
@@ -1857,6 +1877,8 @@ export default {
           // OPE-1621 — re-read feeds a change ping marked due; reads nothing
           // unless FEED_POLLING_ENABLED = "true" (pings stay recorded).
           ["pinged-feed-pass", () => runScheduledPingedFeedPass(env)],
+          // OPE-1664 — replay error_logs rows a D1 overload kept out of the table.
+          ["error-log-buffer-replay", () => runScheduledErrorLogBufferReplay(env)],
         ]).then(() => undefined)
       );
       return;
