@@ -250,6 +250,15 @@ WEBSUB_ENABLED = "false"
 # 'tentative-autopromote', or its probe will (correctly) report it silent.
 # Edit THIS line — a dashboard edit is reverted by the next deploy.
 TENTATIVE_AUTOPROMOTE_ENABLED = "true"
+# OPE-1596 — nightly expiry of elapsed PENDING submissions (06:00Z cron, before
+# the operator digest). ON: John ruled 2026-11-16 (option 1) — a PENDING event
+# more than 3 days past its end date (start date when end is null) → REJECTED,
+# reason elapsed_unreviewed in admin_actions; rows touched in the last 7 days
+# are skipped; nobody is emailed. "false" stops it (each expiry is reversible:
+# set status back to PENDING). If you turn it off for long, also set
+# heartbeat_probes.enabled_at = NULL for 'elapsed-pending-expiry'.
+# Edit THIS line — a dashboard edit is reverted by the next deploy.
+ELAPSED_PENDING_EXPIRY_ENABLED = "true"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 # Inbound-email failures (parse / extract / submit) get forwarded here.
 # Must be a verified destination address in Cloudflare Email Routing —

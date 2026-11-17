@@ -71,6 +71,7 @@ import {
   IMMINENT_SECONDS,
 } from "./events/tentative-queue.js";
 import { readLatestAutopromoteRun } from "./events/tentative-autopromote.js";
+import { readLatestElapsedExpiryRun } from "./events/elapsed-pending-expiry.js";
 
 const SOURCE = "mcp:schedule:operator-queue-notice";
 /** OPE-1585 — this digest's row in `digest_change_state`. */
@@ -500,6 +501,19 @@ export async function readOperatorQueues(
   for (const t of tentative) {
     const why = autoHeld.get(t.slug);
     lines.push(formatTentativeLine(t) + (why ? ` — auto-check held: ${why}` : ""));
+  }
+
+  // OPE-1596 — the elapsed-PENDING expiry also ran just before this notice.
+  // One line, never its own email, and not counted toward totalWaiting.
+  try {
+    const expiry = await readLatestElapsedExpiryRun(db, now);
+    if (expiry) lines.push(`Elapsed PENDING expiry (OPE-1596): ${expiry.summary}`);
+  } catch (error) {
+    await logError(db, {
+      source: SOURCE,
+      message: "[operator-queue] elapsed-expiry run read failed",
+      error,
+    });
   }
 
   // OPE-626 — `reply:*` mail that reached a customer in the last 24h.

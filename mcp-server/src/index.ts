@@ -106,6 +106,7 @@ import { runScheduledStandingFailureCanary } from "./standing-failure-canary.js"
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
 import { runTentativeAutopromote } from "./events/tentative-autopromote.js";
+import { runElapsedPendingExpiry } from "./events/elapsed-pending-expiry.js";
 
 import { runInboundExceptionNotice } from "./inbound-exception-notice.js";
 import { runUnterminatedCrossingNotice } from "./inbound/unterminated-crossing-notice.js";
@@ -182,6 +183,8 @@ type Env = WorkerEnv &
     UNROUTED_ASK_ENABLED?: string;
     /** OPE-1586 — "false" stops the daily TENTATIVE → SCHEDULED auto-promotion. */
     TENTATIVE_AUTOPROMOTE_ENABLED?: string;
+    /** OPE-1596 — "false" stops the nightly elapsed-PENDING expiry. */
+    ELAPSED_PENDING_EXPIRY_ENABLED?: string;
     /** OPE-1617 — scheduled organizer-feed polling. On since OPE-1626 (the OHTM pilot). */
     FEED_POLLING_ENABLED?: string;
     /** OPE-1626 — WebSub subscribe/renew; needs FEED_POLLING_ENABLED too. Ships "false". */
@@ -2139,7 +2142,7 @@ export default {
         // Promotes only when a fresh read of the cited organizer page agrees
         // (John's option 2). Kill switch: TENTATIVE_AUTOPROMOTE_ENABLED="false".
         [
-          "tentative-autopromote+operator-queue-notice",
+          "tentative-autopromote+elapsed-pending-expiry+operator-queue-notice",
           () =>
             sequenceCronTasks(env.DB, controller.cron, [
               [
@@ -2150,6 +2153,20 @@ export default {
                     return;
                   }
                   await runTentativeAutopromote(getDb(env.DB), { env });
+                },
+              ],
+              // OPE-1596 (2026-11-16, John's option 1) — PENDING rows more than
+              // 3 days past their end date → REJECTED `elapsed_unreviewed`.
+              // Also before the digest, which carries its one summary line.
+              // Kill switch: ELAPSED_PENDING_EXPIRY_ENABLED="false".
+              [
+                "elapsed-pending-expiry",
+                async () => {
+                  if (env.ELAPSED_PENDING_EXPIRY_ENABLED === "false") {
+                    console.log("[cron] elapsed-pending-expiry — disabled by flag");
+                    return;
+                  }
+                  await runElapsedPendingExpiry(getDb(env.DB));
                 },
               ],
               ["operator-queue-notice", () => runScheduledOperatorQueueNotice(env)],
