@@ -1,4 +1,4 @@
-import { test, expect, Page } from "@playwright/test";
+import { test, expect, Page } from "./fixtures";
 
 async function enableManualPaste(page: Page) {
   // The checkbox label wraps the input, so click the label text

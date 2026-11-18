@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test.describe("Keyboard Navigation - Skip Link", () => {
   test("skip link appears on focus and navigates to main content", async ({ page }) => {

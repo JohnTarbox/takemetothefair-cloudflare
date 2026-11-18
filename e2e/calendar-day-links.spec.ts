@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 /**
  * OPE-1488 — one click from a date to that day's Day view, and the date survives

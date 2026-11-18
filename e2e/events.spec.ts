@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { gotoAndWaitForHeading } from "./helpers";
 
 test.describe("Events Page", () => {

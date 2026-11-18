@@ -27,7 +27,7 @@
  * The widths are the ones that matter in the field: 320 (iPhone SE), 390
  * (iPhone 12/13/14), 430 (Pro Max).
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 const MOBILE_WIDTHS = [320, 390, 430];
 

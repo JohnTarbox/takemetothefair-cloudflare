@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 /**
  * OPE-1112 — a vendor can set, replace and remove her OWN logo, through the
