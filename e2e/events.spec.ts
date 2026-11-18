@@ -52,6 +52,8 @@ test.describe("Events Page - Mobile", () => {
 
   test("is responsive on mobile", async ({ page }) => {
     await page.goto("/events");
-    await expect(page.locator("h1")).toBeVisible();
+    // OPE-1669 — scoped: the streamed hidden Suspense segment can briefly hold
+    // a second <h1>. See e2e/calendar-day-links.spec.ts's `cal()`.
+    await expect(page.locator("#main-content h1")).toBeVisible();
   });
 });
