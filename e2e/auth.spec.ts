@@ -42,8 +42,8 @@ test.describe("Login Page", () => {
     const registerLink = page.getByRole("link", { name: "Sign up" });
     await expect(registerLink).toBeVisible();
     await registerLink.click();
-    // Dev server may need to compile /register on first visit
-    await expect(page).toHaveURL("/register", { timeout: 15000 });
+    // OPE-1669 — no dev-compile allowance: CI serves a production build.
+    await expect(page).toHaveURL("/register");
   });
 
   test("shows error for invalid credentials", async ({ page }) => {
