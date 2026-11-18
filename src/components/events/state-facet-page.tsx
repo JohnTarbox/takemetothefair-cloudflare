@@ -126,6 +126,14 @@ const SEASON_MONTHS = [
   "December",
 ];
 
+/** One shared formatter: building one per row would construct a new Intl object each call. */
+const LAST_SEASON_DATE = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
 /**
  * OPE-470 — render a month set as a season.
  *
@@ -350,6 +358,28 @@ export async function StateFacetPage({ stateSlug, facetSlug, searchParams }: Sta
               {seasonality.months.length > 0 && <>, typically {formatSeason(seasonality.months)}</>}
               . Next season&rsquo;s dates are usually published a few months ahead.
             </p>
+          )}
+          {/* OPE-1675 — "plus last season's list" (OPE-470 scope 3): the events the
+              sentence above counted, so a reader in January can see which fairs
+              they are and open last year's listing. */}
+          {seasonality && seasonality.recent && seasonality.recent.length > 0 && (
+            <div className="mt-6 mx-auto max-w-md text-left">
+              <h2 className="text-base font-semibold text-foreground mb-2">
+                Last season in {facet.label}
+              </h2>
+              <ul className="space-y-1 text-sm">
+                {seasonality.recent.map((e) => (
+                  <li key={e.slug} className="flex justify-between gap-4">
+                    <Link href={`/events/${e.slug}`} className="text-royal hover:text-navy">
+                      {e.name}
+                    </Link>
+                    <span className="shrink-0 text-muted-foreground">
+                      {LAST_SEASON_DATE.format(new Date(e.startMs))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           <p className="mt-2 text-muted-foreground">
             Organisers publish dates throughout the year — or{" "}

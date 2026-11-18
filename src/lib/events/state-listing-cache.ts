@@ -58,7 +58,12 @@ import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { kvReadThrough, type ReadThroughKv } from "@/lib/kv-read-through";
 import { cacheRoundTrip, fromCacheable } from "@/lib/cache-codec";
-import { countFacetDepth, getFacetEventIds, getFacetSeasonality } from "@/lib/events/facet-query";
+import {
+  countFacetDepth,
+  getFacetEventIds,
+  getFacetSeasonality,
+  type FacetSeasonality,
+} from "@/lib/events/facet-query";
 import { facetDepthBasis, type ResolvedFacet } from "@/lib/events/facets";
 
 type ListingDb = ReturnType<typeof getCloudflareDb>;
@@ -260,10 +265,12 @@ export async function getCachedFacetSeasonality(
   stateSlug: string,
   facet: ResolvedFacet,
   now: Date
-): Promise<{ total: number; months: number[] }> {
+): Promise<FacetSeasonality> {
   return kvReadThrough(
     kv,
-    `${facetIndexCacheKey(stateSlug, facet)}:season`,
+    // `:season2` — OPE-1675 added `recent`; a `:season` entry cached before
+    // that deploy lacks it, so it must not be read back as the new shape.
+    `${facetIndexCacheKey(stateSlug, facet)}:season2`,
     STATE_LISTING_CACHE_TTL_SECONDS,
     () => getFacetSeasonality(db, stateCode, stateSlug, facet, now)
   );
