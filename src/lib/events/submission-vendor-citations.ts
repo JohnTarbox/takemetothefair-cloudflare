@@ -43,11 +43,24 @@ export interface SubmissionVendorValues {
   /** As submitted (YYYY-MM-DD), alongside what the route stored. */
   applicationDeadline: { submitted: string | null | undefined; stored: Date | null };
   now: Date;
+  /**
+   * Which writer this submission came through. Names the synthesized
+   * `submission://<channel>/<eventId>` identity when there is no `sourceUrl`.
+   * Default `suggest-event`. OPE-1680: the promoter portal passes
+   * `promoter-portal`, so its citations stay distinguishable.
+   */
+  channel?: string;
+  /** Overrides the default notes text. */
+  notes?: string;
 }
 
-export function submissionCitationSourceUrl(eventId: string, sourceUrl?: string | null): string {
+export function submissionCitationSourceUrl(
+  eventId: string,
+  sourceUrl?: string | null,
+  channel = "suggest-event"
+): string {
   const url = sourceUrl?.trim();
-  return url ? url : `submission://suggest-event/${eventId}`;
+  return url ? url : `submission://${channel}/${eventId}`;
 }
 
 /** One citation row per vendor field the route stored. Empty when none. */
@@ -66,7 +79,9 @@ export function buildSubmissionVendorCitations(v: SubmissionVendorValues): NewCi
       value: v.applicationDeadline.submitted.slice(0, 10),
     });
   }
-  const sourceUrl = submissionCitationSourceUrl(v.eventId, v.sourceUrl);
+  const sourceUrl = submissionCitationSourceUrl(v.eventId, v.sourceUrl, v.channel);
+  const notes =
+    v.notes ?? `Supplied by the submitter via suggest-event/submit (${v.ingestionMethod}).`;
   return stored.map((f) => ({
     id: crypto.randomUUID(),
     eventId: v.eventId,
@@ -78,7 +93,7 @@ export function buildSubmissionVendorCitations(v: SubmissionVendorValues): NewCi
     sourceName: v.sourceName ?? null,
     sourceType: "user_submitted" as const,
     state: "active" as const,
-    notes: `Supplied by the submitter via suggest-event/submit (${v.ingestionMethod}).`,
+    notes,
     createdBy: v.createdBy || null,
     createdAt: v.now,
   }));

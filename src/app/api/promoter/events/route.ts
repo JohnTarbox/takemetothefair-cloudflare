@@ -16,6 +16,7 @@ import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validation
 import { logError } from "@/lib/logger";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { recomputeEventCompleteness } from "@/lib/completeness";
+import { citePromoterVendorFields } from "@/lib/events/promoter-vendor-citations";
 
 export async function GET(request: NextRequest) {
   const db = getCloudflareDb();
@@ -243,6 +244,22 @@ export async function POST(request: NextRequest) {
     });
     // OPE-767 — recorded as a reason, so it can be discharged on its own.
     if (formerVenue.kind === "flag") await raiseEventReviewFlag(db, eventId, "former_venue");
+
+    // OPE-1680 — the organizer is the source of any vendor fee / deadline
+    // stored above; cite it (best-effort; see citePromoterVendorFields).
+    await citePromoterVendorFields(db, {
+      eventId,
+      promoterName: promoter.companyName,
+      userId: session.user.id,
+      route: "events",
+      vendorFeeMin: { submitted: vendorFeeMin, storedCents: dollarsToCents(vendorFeeMin) },
+      vendorFeeMax: { submitted: vendorFeeMax, storedCents: dollarsToCents(vendorFeeMax) },
+      applicationDeadline: {
+        submitted: applicationDeadline,
+        stored: normalizeEventDate(applicationDeadline),
+      },
+      now: new Date(),
+    });
 
     // OPE-472 — attach to a series parent at write time. `event_series`
     // minted nothing between 2026-06-30 and this fix, so every event from
