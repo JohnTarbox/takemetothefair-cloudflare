@@ -378,6 +378,13 @@ export const promoters = sqliteTable(
     claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
     claimedAt: integer("claimed_at", { mode: "timestamp" }),
     claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
+    // OPE-1682 (drizzle/0432) — the promoter opts in to listing its camps and
+    // workshops from its own feed, which the kids'-program rules otherwise drop.
+    // Applies ONLY while the promoter is registered (claimed + user_id) — John's
+    // ruling 2026-11-18; see campsWorkshopsOptInActive in @takemetothefair/utils/feeds.
+    includeCampsWorkshops: integer("include_camps_workshops", { mode: "boolean" })
+      .notNull()
+      .default(false),
     /**
      * OPE-979 (drizzle/0285) — is this business still trading?
      *

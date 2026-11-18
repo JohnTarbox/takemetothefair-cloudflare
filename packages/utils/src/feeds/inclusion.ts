@@ -19,6 +19,16 @@
  * says "live music, and kids activities" and was dropped as a children's
  * program; OHTM's real programs all say so in the title or come from
  * education@, so they are still dropped.
+ *
+ * OPE-1682: a REGISTERED promoter may opt in to listing its camps and
+ * workshops (`include_camps_workshops`, John's ruling 2026-11-18: registered
+ * promoters only). With the opt-in active, an item whose title or a category
+ * marks it a camp or workshop is kept even though the program rule (`camp`)
+ * or the organizer rule (education@) would drop it. Closures still drop first.
+ * Every other program item stays dropped. Whether the opt-in is ACTIVE —
+ * setting on AND promoter registered — is the caller's decision
+ * (`campsWorkshopsOptInActive`), made from the promoter row at read time, so
+ * a promoter that stops being registered stops getting the exception.
  */
 import type { FeedEvent } from "./feed-event";
 
@@ -106,6 +116,36 @@ export function parseInclusionRules(json: string | null | undefined): FeedInclus
   return { ...DEFAULT_INCLUSION_RULES, ...(parsed as Partial<FeedInclusionRules>) };
 }
 
+/** OPE-1682 — what marks an item as a camp or workshop (title or a category). */
+export const CAMP_WORKSHOP_PATTERNS: string[] = ["\\bcamps?\\b", "\\bworkshops?\\b"];
+
+export interface InclusionOptions {
+  /** OPE-1682 — the promoter's camps/workshops opt-in is ACTIVE (set and registered). */
+  campsWorkshopsOptIn?: boolean;
+}
+
+/** The promoter fields that decide whether its camps/workshops opt-in applies. */
+export interface CampsWorkshopsPromoter {
+  includeCampsWorkshops: boolean | null;
+  claimed: boolean | null;
+  userId: string | null;
+}
+
+/**
+ * OPE-1682 — a promoter is REGISTERED when it has been claimed by a user
+ * account (`claimed` with a linked `user_id`, the OPE-63 claim state).
+ */
+export function isRegisteredPromoter(
+  p: Pick<CampsWorkshopsPromoter, "claimed" | "userId">
+): boolean {
+  return p.claimed === true && !!p.userId;
+}
+
+/** OPE-1682 — the setting applies only while the promoter is registered. */
+export function campsWorkshopsOptInActive(p: CampsWorkshopsPromoter | null | undefined): boolean {
+  return !!p && p.includeCampsWorkshops === true && isRegisteredPromoter(p);
+}
+
 export interface InclusionVerdict {
   included: boolean;
   reason: string;
@@ -116,11 +156,27 @@ const anyMatch = (patterns: string[], text: string): string | null => {
   return null;
 };
 
-export function decideInclusion(ev: FeedEvent, rules: FeedInclusionRules): InclusionVerdict {
+export function decideInclusion(
+  ev: FeedEvent,
+  rules: FeedInclusionRules,
+  opts: InclusionOptions = {}
+): InclusionVerdict {
   const inc = anyMatch(rules.includeTitlePatterns, ev.title);
   const closed = anyMatch(rules.excludeTitlePatterns, ev.title);
   // A closure is dropped even if its title also says "show" ("[Closed] Truck Show day").
   if (closed) return { included: false, reason: `title matches closure /${closed}/` };
+  if (opts.campsWorkshopsOptIn) {
+    // OPE-1682 — ahead of the program and organizer drops, which are exactly
+    // the rules that would otherwise discard a camp.
+    const campTitle = anyMatch(CAMP_WORKSHOP_PATTERNS, ev.title);
+    if (campTitle) {
+      return { included: true, reason: `camp/workshop opt-in: title matches /${campTitle}/` };
+    }
+    const campCategory = ev.categories.find((c) => anyMatch(CAMP_WORKSHOP_PATTERNS, c));
+    if (campCategory) {
+      return { included: true, reason: `camp/workshop opt-in: category "${campCategory}"` };
+    }
+  }
   if (inc) return { included: true, reason: `title matches /${inc}/` };
   const progTitle = anyMatch(rules.excludeProgramPatterns, ev.title);
   if (progTitle) return { included: false, reason: `program title matches /${progTitle}/` };
