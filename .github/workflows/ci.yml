@@ -382,6 +382,17 @@ jobs:
           echo "collecting ${#debs[@]} .deb file(s) for the apt cache"
           if (( ${#debs[@]} )); then cp "${debs[@]}" ~/.cache/playwright-apt-debs/; fi
 
+      # OPE-1669 — E2E serves a production build (`next start`, see
+      # playwright.config.ts) so no route compiles on its first request. Built
+      # here, once: no other CI job runs `next build`, and the deploy's OpenNext
+      # build runs in deploy.yml AFTER CI, with production NEXT_PUBLIC_* secrets,
+      # so it can't be reused here. E2E_BUILD=1 skips Next's in-build ESLint +
+      # tsc, which the Lint job already gates on (next.config.mjs).
+      - name: Build app for E2E
+        run: npx next build
+        env:
+          E2E_BUILD: "1"
+
       # mobile-safari is testMatch-scoped to *-mobile-*.spec.ts, so this adds
       # ~8 tests rather than a fourth full pass of the suite.
       - name: Run E2E tests
