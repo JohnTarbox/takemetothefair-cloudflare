@@ -321,9 +321,13 @@ describe("source sweep — no raw address handed to a log line in these files", 
     const uses = src.match(/[\w.]*\(?m\.body\.to\b/g) ?? [];
     expect(uses.length).toBeGreaterThan(0);
     for (const u of uses) {
-      expect(u === "formatRecipientsForLedger(m.body.to" || u === "maskEmails(m.body.to").toBe(
-        true
-      );
+      // OPE-1683 — `recipientAddresses` parses the recipient for the contact
+      // obligation close (an UPDATE's WHERE), never a log line.
+      expect(
+        u === "formatRecipientsForLedger(m.body.to" ||
+          u === "maskEmails(m.body.to" ||
+          u === "recipientAddresses(m.body.to"
+      ).toBe(true);
     }
   });
 

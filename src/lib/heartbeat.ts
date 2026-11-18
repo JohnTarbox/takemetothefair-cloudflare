@@ -261,10 +261,10 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // 48h after the first uncited value and stays red until it is repaired.
     // SCOPE: the MCP research lanes (ingestion_method discovery / web_research
     // — produced only by suggest_event's source_label), which is where the
-    // uncited values were measured and what this guard covers. The admin UI,
-    // URL import, the web form and the promoter portal write these fields on
-    // other paths, NOT guarded here — widening the scope before they are would
-    // make this probe red for reasons it does not own. OPE-1680: rollover
+    // uncited values were measured. OPE-1680 widened it as each other writer
+    // began citing (see the method list below). The promoter portal and import
+    // leave ingestion_method NULL, so they are guarded by their own tests, not
+    // by this probe, until OPE-486 names a method for them. OPE-1680: rollover
     // (`auto_rollover`) IS in scope — it no longer copies last year's fee, so a
     // rolled edition holding an uncited fee is a regression this probe owns.
     // Tombstones (merged_into) are excluded.
@@ -1317,6 +1317,42 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         supportObligations.openedAt,
         eq(supportObligations.kind, "contact")
       ),
+  },
+  {
+    // OPE-1683 — a sent operator draft answers its recipient's contact
+    // obligation. The email-jobs consumer closes it on the confirmed send, so
+    // after arming NO sent `operator:outbound` row should sit next to an OPEN
+    // contact obligation from the same address that opened before the send.
+    // Demand = the oldest such send (only closing the obligation discharges
+    // it); 2h is ample for a close that runs in the same consumer pass.
+    name: "operator-draft-closes-obligation",
+    ownerOpe: "OPE-1683",
+    label: "sent operator draft → contact obligation closed",
+    priority: "P1",
+    expectedWindowHours: 2,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${emailSendLedger.sentAt})` })
+        .from(emailSendLedger)
+        .innerJoin(
+          supportObligations,
+          and(
+            sql`lower(${supportObligations.fromAddress}) = lower(${emailSendLedger.recipient})`,
+            eq(supportObligations.kind, "contact"),
+            eq(supportObligations.status, "open"),
+            sql`${supportObligations.openedAt} <= ${emailSendLedger.sentAt}`
+          )
+        )
+        .where(
+          and(
+            eq(emailSendLedger.source, "operator:outbound"),
+            eq(emailSendLedger.status, "sent"),
+            sql`${emailSendLedger.sentAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'operator-draft-closes-obligation'), 4102444800)`
+          )
+        );
+      const demand = r?.t != null ? new Date(Number(r.t) * 1000) : null;
+      return demandConditionalEvidence(demand, null, new Date());
+    },
   },
   {
     // OPE-403 — proof the lane still RECORDS what it stored.
