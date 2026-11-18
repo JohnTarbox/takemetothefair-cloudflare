@@ -262,10 +262,12 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // SCOPE: the MCP research lanes (ingestion_method discovery / web_research
     // — produced only by suggest_event's source_label), which is where the
     // uncited values were measured and what this guard covers. The admin UI,
-    // URL import, the web form, the promoter portal and rollover write these
-    // fields on other paths, NOT guarded here — widening the scope before they
-    // are would make this probe red for reasons it does not own. Tombstones
-    // (merged_into) are excluded.
+    // URL import, the web form and the promoter portal write these fields on
+    // other paths, NOT guarded here — widening the scope before they are would
+    // make this probe red for reasons it does not own. OPE-1680: rollover
+    // (`auto_rollover`) IS in scope — it no longer copies last year's fee, so a
+    // rolled edition holding an uncited fee is a regression this probe owns.
+    // Tombstones (merged_into) are excluded.
     name: "vendor-field-citations",
     ownerOpe: "OPE-1673",
     label: "every new vendor fee / deadline has an active citation",
@@ -281,7 +283,7 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
           and(
             sql`${events.createdAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'vendor-field-citations'), 4102444800)`,
             isNull(events.mergedInto),
-            inArray(events.ingestionMethod, ["discovery", "web_research"]),
+            inArray(events.ingestionMethod, ["discovery", "web_research", "auto_rollover"]),
             or(
               and(isNotNull(events.vendorFeeMinCents), uncited("vendor_fee_min")),
               and(isNotNull(events.vendorFeeMaxCents), uncited("vendor_fee_max")),

@@ -318,9 +318,16 @@ export async function rolloverEventIfRecurring(
     sourceUrl: null,
     sourceId: newEventId,
     syncEnabled: false,
-    vendorFeeMinCents: source.vendorFeeMinCents,
-    vendorFeeMaxCents: source.vendorFeeMaxCents,
-    vendorFeeNotes: source.vendorFeeNotes,
+    // OPE-1680 (option 1, the default taken when the policy ask went unanswered)
+    // — the vendor fee is dropped like the deadline below. Since OPE-1673 a fee
+    // is stored only with an active citation, and a rolled edition has no
+    // source of its own: copying last year's number would publish an uncited,
+    // possibly stale fee that reads as confirmed. The notes go with it because
+    // they usually restate the price ("$75 per 10x10 booth"). The fee returns
+    // when discovery, enrichment or the organizer supplies it with a citation.
+    vendorFeeMinCents: null,
+    vendorFeeMaxCents: null,
+    vendorFeeNotes: null,
     indoorOutdoor: source.indoorOutdoor,
     estimatedAttendance: source.estimatedAttendance,
     eventScale: source.eventScale,
