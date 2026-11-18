@@ -9,7 +9,7 @@
  * nobody notices for months. Sharing `facetConditions` makes the two agree by
  * construction rather than by discipline (`feedback_classifier_window_must_match_display`).
  */
-import { and, count, eq, gte, isNotNull, inArray, lt, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNotNull, inArray, lt, sql } from "drizzle-orm";
 import {
   events,
   venues,
@@ -170,7 +170,7 @@ export async function getFacetSeasonality(
   stateSlug: string,
   facet: ResolvedFacet,
   now: Date
-): Promise<{ total: number; months: number[] }> {
+): Promise<FacetSeasonality> {
   const { start, end } = rollingDepthWindow(now);
   const rows = await db
     .select({
@@ -200,7 +200,50 @@ export async function getFacetSeasonality(
     .map((r) => Number(r.month))
     .filter((m) => Number.isFinite(m) && m >= 1 && m <= 12)
     .sort((a, b) => a - b);
-  return { total, months };
+
+  // OPE-1675 — "plus last season's list" (OPE-470 scope 3). The statement alone
+  // says the place hosts fairs; the list lets a January reader see WHICH ones
+  // and click through to them. Same window lower bound and the same facet
+  // conditions as the count above, so the list can never name an event the
+  // statement did not count; bounded above by `now` because only the past half
+  // of the window is "last season".
+  const recentRows =
+    total === 0
+      ? []
+      : await db
+          .select({ name: events.name, slug: events.slug, startDate: events.startDate })
+          .from(events)
+          .leftJoin(venues, eq(events.venueId, venues.id))
+          .where(
+            and(
+              isPublicEventStatus(),
+              eventInStateWhere(stateCode),
+              isNotNull(events.startDate),
+              gte(events.startDate, start),
+              lt(events.startDate, now),
+              ...facetConditions(stateSlug, facet, now)
+            )
+          )
+          .orderBy(desc(events.startDate), events.id)
+          .limit(LAST_SEASON_LIMIT);
+  // Epoch ms, not Date: this value is cached through a plain JSON round-trip
+  // (getCachedFacetSeasonality), which would turn a Date into a string on a hit.
+  const recent = recentRows
+    .filter((r) => r.startDate)
+    .map((r) => ({ name: r.name, slug: String(r.slug), startMs: r.startDate!.getTime() }));
+  return { total, months, recent };
+}
+
+/** OPE-1675 — how many of last season's events the empty-window branch lists. */
+export const LAST_SEASON_LIMIT = 12;
+
+export interface FacetSeasonality {
+  /** Events in the rolling ±12-month window (= the indexability depth). */
+  total: number;
+  /** Months carrying ≥15% of those events, ascending. */
+  months: number[];
+  /** Last season: the window's past half, newest first, ≤ LAST_SEASON_LIMIT. */
+  recent: Array<{ name: string; slug: string; startMs: number }>;
 }
 
 /**

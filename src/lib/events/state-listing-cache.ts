@@ -39,7 +39,7 @@
  * the crawled shape, and caching it unpaged would be the full events table.
  *
  * TTL 300s — the same staleness the routes already declare (`revalidate = 300`).
- * Fails open to D1 via `kvReadThrough`.
+ * Fails open to D1 via `kvReadThroughSwr` (OPE-1677: stale-while-revalidate).
  */
 import { and, count, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import {
@@ -56,9 +56,15 @@ import { upcomingEndPredicate } from "@/lib/event-dates";
 import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
-import { kvReadThrough, type ReadThroughKv } from "@/lib/kv-read-through";
+import type { ReadThroughKv } from "@/lib/kv-read-through";
+import { kvReadThroughSwr } from "@/lib/kv-swr";
 import { cacheRoundTrip, fromCacheable } from "@/lib/cache-codec";
-import { countFacetDepth, getFacetEventIds, getFacetSeasonality } from "@/lib/events/facet-query";
+import {
+  countFacetDepth,
+  getFacetEventIds,
+  getFacetSeasonality,
+  type FacetSeasonality,
+} from "@/lib/events/facet-query";
 import { facetDepthBasis, type ResolvedFacet } from "@/lib/events/facets";
 
 type ListingDb = ReturnType<typeof getCloudflareDb>;
@@ -200,7 +206,7 @@ export async function getCachedStateUpcomingSet(
   kv: ReadThroughKv | null | undefined,
   stateCode: string
 ): Promise<StateEventCard[]> {
-  const encoded = await kvReadThrough(
+  const encoded = await kvReadThroughSwr(
     kv,
     stateSetCacheKey(stateCode),
     STATE_LISTING_CACHE_TTL_SECONDS,
@@ -224,7 +230,7 @@ export async function getCachedFacetIndex(
   facet: ResolvedFacet,
   now: Date
 ): Promise<FacetIndex> {
-  const encoded = await kvReadThrough(
+  const encoded = await kvReadThroughSwr(
     kv,
     facetIndexCacheKey(stateSlug, facet),
     STATE_LISTING_CACHE_TTL_SECONDS,
@@ -260,10 +266,12 @@ export async function getCachedFacetSeasonality(
   stateSlug: string,
   facet: ResolvedFacet,
   now: Date
-): Promise<{ total: number; months: number[] }> {
-  return kvReadThrough(
+): Promise<FacetSeasonality> {
+  return kvReadThroughSwr(
     kv,
-    `${facetIndexCacheKey(stateSlug, facet)}:season`,
+    // `:season2` — OPE-1675 added `recent`; a `:season` entry cached before
+    // that deploy lacks it, so it must not be read back as the new shape.
+    `${facetIndexCacheKey(stateSlug, facet)}:season2`,
     STATE_LISTING_CACHE_TTL_SECONDS,
     () => getFacetSeasonality(db, stateCode, stateSlug, facet, now)
   );
