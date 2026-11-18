@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { containsCI } from "@takemetothefair/db-schema";
 import { z } from "zod";
+import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
 import { eq, and, desc } from "drizzle-orm";
 import { blogPosts, users } from "../schema.js";
 import {
@@ -18,6 +19,8 @@ import type { AuthContext } from "../auth.js";
 interface Env {
   MAIN_APP_URL: string;
   INTERNAL_API_KEY: string;
+  /** OPE-1684 — the service binding mainAppFetch prefers (OPE-258). */
+  MAIN_APP?: MainAppEnv["MAIN_APP"];
 }
 
 const BLOG_STATUS_ENUM = ["DRAFT", "PUBLISHED"] as const;
@@ -676,16 +679,19 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
  * slug move — the caller sees the error in the response instead).
  */
 async function callRepointBlogLinks(
-  env: { MAIN_APP_URL?: string; INTERNAL_API_KEY?: string } | undefined,
+  env: MainAppEnv | undefined,
   args: { fromSlug: string; toSlug: string; dryRun: boolean }
 ): Promise<Record<string, unknown> & { ok: boolean }> {
-  if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
-    return { ok: false, error: "MAIN_APP_URL and INTERNAL_API_KEY are not configured" };
+  if (!env?.INTERNAL_API_KEY) {
+    return { ok: false, error: "INTERNAL_API_KEY is not configured" };
   }
   try {
-    const res = await fetch(`${env.MAIN_APP_URL}/api/admin/blog-posts/repoint-links`, {
+    // OPE-258 — through mainAppFetch (the MAIN_APP service binding, public URL
+    // as fallback). A raw same-zone fetch() from the legacy fetch handler
+    // returned 522 in prod on this route's first call (2026-11-18).
+    const res = await mainAppFetch(env, "/api/admin/blog-posts/repoint-links", "fetch", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Internal-Key": env.INTERNAL_API_KEY },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(args),
     });
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;

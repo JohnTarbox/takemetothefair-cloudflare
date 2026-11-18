@@ -80,3 +80,37 @@ describe("OPE-1684 — repoint_blog_links", () => {
     expect(r.body.repointLinks.skipped).toMatch(/did not change/);
   });
 });
+
+describe("OPE-1684 — repoint goes through the MAIN_APP service binding (OPE-258)", () => {
+  it("uses env.MAIN_APP when bound, never a public same-zone fetch", async () => {
+    const bound: Array<{ url: string; host: string | null; key: string | null; body: unknown }> =
+      [];
+    const MAIN_APP = {
+      fetch: async (req: Request) => {
+        bound.push({
+          url: req.url,
+          host: req.headers.get("host"),
+          key: req.headers.get("x-internal-key"),
+          body: await req.json(),
+        });
+        return new Response(JSON.stringify({ success: true, dryRun: true }), { status: 200 });
+      },
+    };
+    const { db } = createTestDb();
+    const s2 = new CapturingMcpServer();
+    registerBlogTools(s2 as never, db, ADMIN as never, { ...ENV, MAIN_APP } as never);
+    const r = (await s2.invoke("repoint_blog_links", { from_slug: "a", to_slug: "b" })) as {
+      isError?: boolean;
+    };
+    expect(r.isError).toBeFalsy();
+    expect(bound).toEqual([
+      {
+        url: "https://app.test/api/admin/blog-posts/repoint-links",
+        host: "app.test",
+        key: "k",
+        body: { fromSlug: "a", toSlug: "b", dryRun: true },
+      },
+    ]);
+    expect(calls).toEqual([]); // the stubbed public fetch was never reached
+  });
+});
