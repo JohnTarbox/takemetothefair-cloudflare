@@ -19,18 +19,40 @@ import {
   promoterFeedReads,
   promoters,
 } from "../schema.js";
-import { jsonContent, publicEventWhere } from "../helpers.js";
+import { decodeHtmlEntities, jsonContent, publicEventWhere } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { runFeedRead } from "../feeds/run.js";
 import { checkFeedOwnership } from "../feeds/ownership.js";
 import { normalizeCalendarUrl } from "../feeds/ical.js";
 import { DEFAULT_POLL_HOURS } from "../feeds/fetch-feed.js";
-import { parseInclusionRules } from "../feeds/inclusion.js";
+import {
+  campsWorkshopsOptInActive,
+  isRegisteredPromoter,
+  parseInclusionRules,
+} from "../feeds/inclusion.js";
 import { getEventFieldProvenance } from "../feeds/provenance.js";
 import { recordContactAnswer } from "../feeds/contact-answer.js";
 import { composeFeedDiscrepancyBatch, feedDiscrepancyMetrics } from "../feeds/batch.js";
 import { loadFeedLaneMetrics } from "@takemetothefair/db-schema";
+
+/** OPE-1682 — a promoter row's camps/workshops opt-in, as the feed reader would apply it. */
+const optInView = (x: {
+  includeCampsWorkshops: boolean | null;
+  promoterClaimed: boolean | null;
+  promoterUserId: string | null;
+}) => {
+  const p = {
+    includeCampsWorkshops: x.includeCampsWorkshops,
+    claimed: x.promoterClaimed,
+    userId: x.promoterUserId,
+  };
+  return {
+    setting: x.includeCampsWorkshops === true,
+    promoter_registered: isRegisteredPromoter(p),
+    active: campsWorkshopsOptInActive(p),
+  };
+};
 
 const err = (text: string) => ({ content: [{ type: "text" as const, text }], isError: true });
 const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
@@ -263,7 +285,7 @@ export function registerOrganizerFeedTools(
 
   server.tool(
     "list_promoter_feeds",
-    "OPE-1626 — every registered organizer feed and its scheduled-reader state: id, promoter, url, kind, enabled, disabled_reason / disabled_at (a feed is switched off after 5 consecutive failed reads), questions_hold (while true no question batch is composed for the promoter's contact), poll interval, last_read_at / last_read_status, last_ok_at, next_read_at, consecutive_errors, and the last run's counts from the run log (outcome, trigger, http status, items read / included / linked / awaiting review, discrepancies, third values, error). OPE-1633: open_flags — the feed's open health flags (check: freshness | volume_drop | format_drift | inclusion_swing, observed, baseline, detail, first/last seen); each clears itself when a later read is back within bounds. Optional promoter_id. Read-only.",
+    "OPE-1626 — every registered organizer feed and its scheduled-reader state: id, promoter, url, kind, enabled, disabled_reason / disabled_at (a feed is switched off after 5 consecutive failed reads), questions_hold (while true no question batch is composed for the promoter's contact), poll interval, last_read_at / last_read_status, last_ok_at, next_read_at, consecutive_errors, and the last run's counts from the run log (outcome, trigger, http status, items read / included / linked / awaiting review, discrepancies, third values, error). OPE-1633: open_flags — the feed's open health flags (check: freshness | volume_drop | format_drift | inclusion_swing, observed, baseline, detail, first/last seen); each clears itself when a later read is back within bounds. OPE-1682: camps_workshops_opt_in — the promoter's setting, whether the promoter is registered, and whether the opt-in is active (both). While active, the feed's camp/workshop items are kept for review with inclusion_reason 'camp/workshop opt-in: …'. Optional promoter_id. Read-only.",
     { promoter_id: z.string().min(1).optional() },
     async (p) => {
       const f = promoterEventFeeds;
@@ -272,6 +294,9 @@ export function registerOrganizerFeedTools(
           id: f.id,
           promoterId: f.promoterId,
           promoterName: promoters.companyName,
+          includeCampsWorkshops: promoters.includeCampsWorkshops,
+          promoterClaimed: promoters.claimed,
+          promoterUserId: promoters.userId,
           feedUrl: f.feedUrl,
           kind: f.kind,
           enabled: f.enabled,
@@ -343,6 +368,7 @@ export function registerOrganizerFeedTools(
                 consecutive_errors: x.consecutiveErrors,
                 ping_outstanding_since: iso(x.pingRequestedAt),
                 open_flags: flagsByFeed.get(x.id) ?? [],
+                camps_workshops_opt_in: optInView(x),
                 last_run: run
                   ? {
                       started_at: iso(run.startedAt),
@@ -440,6 +466,73 @@ export function registerOrganizerFeedTools(
             feed_id: feed.id,
             before,
             after: { ...after, next_read_at: after.next_read_at?.toISOString() ?? null },
+          }),
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    "set_promoter_camps_workshops",
+    "OPE-1682 — turn a promoter's camps/workshops feed opt-in on or off. While it is on AND the promoter is registered (claimed by a user account), its feed's items whose title or a category says camp or workshop are kept even when a kids'-program rule or an organizer exclusion (education@) would drop them; they go to awaiting_review like any other item (never auto-approved), with inclusion_reason \"camp/workshop opt-in: …\". Closures and every other program item are still dropped. Turning it ON is REFUSED for an unregistered promoter (John's ruling 2026-11-18); turning it off always works. If the promoter later stops being registered the setting stays stored but stops applying. Audit-logged (promoter.camps_workshops_opt_in). Takes effect from the next read; sends nothing.",
+    {
+      promoter_id: z.string().min(1),
+      enabled: z.boolean(),
+      reason: z.string().max(300).transform(decodeHtmlEntities).optional(),
+    },
+    async (p) => {
+      const [pr] = await db
+        .select({
+          id: promoters.id,
+          name: promoters.companyName,
+          includeCampsWorkshops: promoters.includeCampsWorkshops,
+          claimed: promoters.claimed,
+          userId: promoters.userId,
+        })
+        .from(promoters)
+        .where(eq(promoters.id, p.promoter_id))
+        .limit(1);
+      if (!pr) return err("promoter not found");
+      if (p.enabled && !isRegisteredPromoter(pr)) {
+        return err(
+          `refused: ${pr.name} is not a registered promoter (no claimed account), and the camps/workshops opt-in applies only to registered promoters. Its camp items stay dropped; add them by hand until it claims its page.`
+        );
+      }
+      const t = now();
+      const before = pr.includeCampsWorkshops === true;
+      if (before !== p.enabled) {
+        await db
+          .update(promoters)
+          .set({ includeCampsWorkshops: p.enabled })
+          .where(eq(promoters.id, pr.id));
+      }
+      const [after] = await db
+        .select({
+          includeCampsWorkshops: promoters.includeCampsWorkshops,
+          promoterClaimed: promoters.claimed,
+          promoterUserId: promoters.userId,
+        })
+        .from(promoters)
+        .where(eq(promoters.id, pr.id))
+        .limit(1);
+      const view = optInView(after);
+      await db.insert(adminActions).values({
+        id: crypto.randomUUID(),
+        action: "promoter.camps_workshops_opt_in",
+        actorUserId: actor,
+        targetType: "promoter",
+        targetId: pr.id,
+        payloadJson: JSON.stringify({ requested: p, before, after: view }),
+        createdAt: t,
+      });
+      return {
+        content: [
+          jsonContent({
+            promoter_id: pr.id,
+            promoter: pr.name,
+            changed: before !== p.enabled,
+            before: { setting: before },
+            after: view,
           }),
         ],
       };
