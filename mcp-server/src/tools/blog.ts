@@ -323,6 +323,12 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         .describe(
           "Move the post to this URL slug (normalized). The old slug 301s via blog_slug_history; the response lists published posts still linking the old one."
         ),
+      repoint_links: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1684 — with new_slug: after the move, also repoint every other post's internal links from the old slug to the new one (repoint_blog_links, real run). The response carries repointLinks with the per-post result."
+        ),
       body: z
         .string()
         .min(1)
@@ -455,7 +461,20 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
           };
         }
 
-        const result = await response.json();
+        const result = (await response.json()) as {
+          slugChange?: { old: string; new: string } | null;
+        } & Record<string, unknown>;
+        if (params.repoint_links && result.slugChange?.old && result.slugChange?.new) {
+          result.repointLinks = await callRepointBlogLinks(env, {
+            fromSlug: result.slugChange.old,
+            toSlug: result.slugChange.new,
+            dryRun: false,
+          });
+        } else if (params.repoint_links) {
+          result.repointLinks = {
+            skipped: "the slug did not change, so no links needed repointing",
+          };
+        }
         return { content: [jsonContent(result)] };
       } catch (error) {
         return {
@@ -468,6 +487,36 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
           isError: true,
         };
       }
+    }
+  );
+
+  // ── repoint_blog_links (OPE-1684) ────────────────────────────────
+  server.tool(
+    "repoint_blog_links",
+    "OPE-1684 — after a blog post moves to a new slug, rewrite the internal links to its OLD slug in every other post to the new one, server-side (no body resend). Matches /blog/<from_slug> links — relative or absolute, with any ?query or #fragment kept — boundary-safely (/blog/x never touches /blog/x-2026). Changes only the link target: anchor text and every other byte stay; each post's status, title, tags, categories and faqs are untouched, and updated_at moves as on any edit. Refreshes content_links for the touched posts. Refuses when to_slug is not a blog post's current slug (would create broken links) or when from_slug is still a live post's slug. dry_run (DEFAULT true) writes nothing and returns, per post, the replacement count, a before/after snippet and the length change; run again with dry_run: false to apply.",
+    {
+      from_slug: z.string().min(1).max(200).describe("The OLD slug the links still point at"),
+      to_slug: z.string().min(1).max(200).describe("The post's CURRENT slug"),
+      dry_run: z.boolean().default(true).describe("Default true: report only, write nothing"),
+    },
+    async (params) => {
+      if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "repoint_blog_links requires MAIN_APP_URL and INTERNAL_API_KEY to be configured.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      const r = await callRepointBlogLinks(env, {
+        fromSlug: params.from_slug,
+        toSlug: params.to_slug,
+        dryRun: params.dry_run,
+      });
+      return { content: [jsonContent(r)], isError: r.ok === false };
     }
   );
 
@@ -619,4 +668,29 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
       }
     }
   );
+}
+
+/**
+ * OPE-1684 — call the main app's repoint-links route. Returns the route's JSON
+ * with `ok`; never throws (a failed repoint must not fail an already-applied
+ * slug move — the caller sees the error in the response instead).
+ */
+async function callRepointBlogLinks(
+  env: { MAIN_APP_URL?: string; INTERNAL_API_KEY?: string } | undefined,
+  args: { fromSlug: string; toSlug: string; dryRun: boolean }
+): Promise<Record<string, unknown> & { ok: boolean }> {
+  if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+    return { ok: false, error: "MAIN_APP_URL and INTERNAL_API_KEY are not configured" };
+  }
+  try {
+    const res = await fetch(`${env.MAIN_APP_URL}/api/admin/blog-posts/repoint-links`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Internal-Key": env.INTERNAL_API_KEY },
+      body: JSON.stringify(args),
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    return { ok: res.ok, status: res.status, ...data };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "repoint request failed" };
+  }
 }
