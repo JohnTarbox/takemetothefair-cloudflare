@@ -7,7 +7,7 @@ import { events, venues, eventInStateWhere } from "@/lib/db/schema";
 import { eq, and, isNotNull } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
-import { kvReadThrough } from "@/lib/kv-read-through";
+import { kvReadThroughSwr } from "@/lib/kv-swr";
 import {
   STATE_LISTING_CACHE_TTL_SECONDS,
   countStateEvents,
@@ -82,7 +82,7 @@ async function getStateEvents(
 
 /** OPE-1662 — the year span is a whole-state read too; cache it with the set's TTL. */
 function getCachedYearSpan(stateCode: string) {
-  return kvReadThrough(
+  return kvReadThroughSwr(
     getCloudflareRateLimitKv(),
     `listing:v1:state-span:${stateCode.toUpperCase()}`,
     STATE_LISTING_CACHE_TTL_SECONDS,
@@ -166,7 +166,7 @@ export async function getStateMetadata(stateSlug: string): Promise<Metadata> {
  */
 function getStateInventory(stateCode: string): Promise<StateInventory> {
   // OPE-1662 — a whole-state scan per render; cached per state with the set's TTL.
-  return kvReadThrough(
+  return kvReadThroughSwr(
     getCloudflareRateLimitKv(),
     `listing:v1:state-inventory:${stateCode.toUpperCase()}`,
     STATE_LISTING_CACHE_TTL_SECONDS,
