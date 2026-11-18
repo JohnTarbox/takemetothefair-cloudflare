@@ -292,6 +292,14 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
               "email_submission",
               "vendor_submission",
               "community_suggestion",
+              // OPE-1680 — + the admin writers, now that they cite: admin
+              // create and URL import land as admin_manual, admin create with
+              // a source URL as direct_scrape / aggregator_import. The scraper
+              // import and series occurrences share these methods but store
+              // no fee or deadline.
+              "admin_manual",
+              "direct_scrape",
+              "aggregator_import",
             ]),
             or(
               and(isNotNull(events.vendorFeeMinCents), uncited("vendor_fee_min")),

@@ -52,6 +52,12 @@ export interface SubmissionVendorValues {
   channel?: string;
   /** Overrides the default notes text. */
   notes?: string;
+  /**
+   * Overrides `user_submitted`. OPE-1680: the admin UI and URL import pass
+   * `other` — an operator typing a value, or a page the import read, is not a
+   * submitter's own claim.
+   */
+  sourceType?: NewCitation["sourceType"];
 }
 
 export function submissionCitationSourceUrl(
@@ -91,7 +97,7 @@ export function buildSubmissionVendorCitations(v: SubmissionVendorValues): NewCi
     year: null,
     sourceUrl,
     sourceName: v.sourceName ?? null,
-    sourceType: "user_submitted" as const,
+    sourceType: v.sourceType ?? ("user_submitted" as const),
     state: "active" as const,
     notes,
     createdBy: v.createdBy || null,
