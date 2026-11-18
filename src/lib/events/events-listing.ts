@@ -41,7 +41,7 @@
  * merge inputs SQL keeps apart).
  *
  * TTL 300s — the staleness the route already declares (`revalidate = 300`).
- * Fails open to D1 via `kvReadThrough`.
+ * Fails open to D1 via `kvReadThroughSwr` (OPE-1677: stale-while-revalidate).
  */
 import {
   and,
@@ -87,7 +87,8 @@ import {
   parseDaysFilter,
   type DaysFilter,
 } from "@/lib/events/days-filter";
-import { kvReadThrough, type ReadThroughKv } from "@/lib/kv-read-through";
+import type { ReadThroughKv } from "@/lib/kv-read-through";
+import { kvReadThroughSwr } from "@/lib/kv-swr";
 import { cacheRoundTrip, fromCacheable } from "@/lib/cache-codec";
 import { pageSlice } from "@/lib/events/state-listing-cache";
 
@@ -471,7 +472,7 @@ export async function getCachedEventsUpcomingSet(
   kv: ReadThroughKv | null | undefined,
   now: Date = new Date()
 ): Promise<EventsListingCard[]> {
-  const encoded = await kvReadThrough(
+  const encoded = await kvReadThroughSwr(
     kv,
     EVENTS_UPCOMING_SET_KEY,
     EVENTS_LISTING_CACHE_TTL_SECONDS,
@@ -499,7 +500,7 @@ export async function getCachedPredicateIds(
   predicate: SQL,
   now: Date
 ): Promise<string[]> {
-  return kvReadThrough(
+  return kvReadThroughSwr(
     kv,
     `${KEY_PREFIX}:ids:${keySuffix}`,
     EVENTS_LISTING_CACHE_TTL_SECONDS,
@@ -682,7 +683,7 @@ export async function getCachedEventCategories(
   db: ListingDb,
   kv: ReadThroughKv | null | undefined
 ): Promise<string[]> {
-  return kvReadThrough(
+  return kvReadThroughSwr(
     kv,
     `${KEY_PREFIX}:categories`,
     EVENTS_LISTING_CACHE_TTL_SECONDS,
@@ -711,17 +712,22 @@ export async function getCachedEventStates(
   db: ListingDb,
   kv: ReadThroughKv | null | undefined
 ): Promise<string[]> {
-  return kvReadThrough(kv, `${KEY_PREFIX}:states`, EVENTS_LISTING_CACHE_TTL_SECONDS, async () => {
-    const [venueStates, eventStates] = await Promise.all([
-      db.selectDistinct({ state: venues.state }).from(venues).where(eq(venues.status, "ACTIVE")),
-      db
-        .selectDistinct({ state: events.stateCode })
-        .from(events)
-        .where(and(isPublicEventStatus(), isNotNull(events.stateCode))),
-    ]);
-    const all = new Set<string>();
-    for (const { state } of venueStates) if (state) all.add(state);
-    for (const { state } of eventStates) if (state) all.add(state);
-    return Array.from(all).sort();
-  });
+  return kvReadThroughSwr(
+    kv,
+    `${KEY_PREFIX}:states`,
+    EVENTS_LISTING_CACHE_TTL_SECONDS,
+    async () => {
+      const [venueStates, eventStates] = await Promise.all([
+        db.selectDistinct({ state: venues.state }).from(venues).where(eq(venues.status, "ACTIVE")),
+        db
+          .selectDistinct({ state: events.stateCode })
+          .from(events)
+          .where(and(isPublicEventStatus(), isNotNull(events.stateCode))),
+      ]);
+      const all = new Set<string>();
+      for (const { state } of venueStates) if (state) all.add(state);
+      for (const { state } of eventStates) if (state) all.add(state);
+      return Array.from(all).sort();
+    }
+  );
 }

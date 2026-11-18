@@ -22,7 +22,7 @@
  * (OPE-1028): without a unique key SQLite may order a tie differently for two
  * OFFSET queries, so a row could land on two pages or none.
  *
- * TTL 300s — the routes' own `revalidate`. Fails open via `kvReadThrough`.
+ * TTL 300s — the routes' own `revalidate`. Fails open via `kvReadThroughSwr` (OPE-1677: stale-while-revalidate).
  */
 import { and, count, desc, eq, inArray, isNotNull, like, sql } from "drizzle-orm";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
@@ -33,7 +33,8 @@ import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { containsCI } from "@/lib/db/contains-ci";
-import { kvReadThrough, type ReadThroughKv } from "@/lib/kv-read-through";
+import type { ReadThroughKv } from "@/lib/kv-read-through";
+import { kvReadThroughSwr } from "@/lib/kv-swr";
 import { cacheRoundTrip, fromCacheable } from "@/lib/cache-codec";
 
 type ListingDb = ReturnType<typeof getCloudflareDb>;
@@ -186,7 +187,7 @@ export async function getCachedCategoryUpcomingSet(
   category: string,
   now: Date = new Date()
 ): Promise<CategoryEventCard[]> {
-  const encoded = await kvReadThrough(
+  const encoded = await kvReadThroughSwr(
     kv,
     categorySetCacheKey(category),
     LISTING_FAMILY_CACHE_TTL_SECONDS,
@@ -282,7 +283,7 @@ export async function getCachedPastIndex(
   p: PastListingParams,
   now: Date = new Date()
 ): Promise<string[]> {
-  return kvReadThrough(kv, pastIndexCacheKey(p), LISTING_FAMILY_CACHE_TTL_SECONDS, async () => {
+  return kvReadThroughSwr(kv, pastIndexCacheKey(p), LISTING_FAMILY_CACHE_TTL_SECONDS, async () => {
     const rows = await db
       .select({ id: events.id })
       .from(events)
