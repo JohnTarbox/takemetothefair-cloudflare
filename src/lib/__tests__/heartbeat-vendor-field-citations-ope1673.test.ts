@@ -93,12 +93,18 @@ describe("OPE-1673 vendor-field-citations probe", () => {
     expect(isNow(await probe.lastEvidenceAt(db))).toBe(true);
   });
 
-  it("fully cited, tombstones and out-of-scope lanes (rollover, admin) read healthy — with a landmark row present", async () => {
+  it("OPE-1680 — an uncited fee on a rolled edition (auto_rollover) is in scope and fires it", async () => {
+    event("r", "2026-11-19T00:00:00Z", { min: 4000, method: "auto_rollover" });
+    expect((await probe.lastEvidenceAt(db))?.toISOString()).toBe("2026-11-19T00:00:00.000Z");
+    cite("r", "vendor_fee_min");
+    expect(isNow(await probe.lastEvidenceAt(db))).toBe(true);
+  });
+
+  it("fully cited, tombstones and out-of-scope lanes (admin) read healthy — with a landmark row present", async () => {
     event("d", "2026-11-19T00:00:00Z", { min: 4000, max: 6000 });
     cite("d", "vendor_fee_min");
     cite("d", "vendor_fee_max");
     event("t", "2026-11-19T00:00:00Z", { min: 4000, merged: "d" });
-    event("r", "2026-11-19T00:00:00Z", { min: 4000, method: "auto_rollover" });
     event("adm", "2026-11-19T00:00:00Z", { min: 4000, method: "admin_manual" });
     event("web", "2026-11-19T00:00:00Z", { min: 4000, method: "web_research" });
     cite("web", "vendor_fee_min");
