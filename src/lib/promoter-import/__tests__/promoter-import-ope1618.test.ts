@@ -386,10 +386,12 @@ describe("preview and commit", () => {
       "hours",
       "name",
       "start_date",
-      "vendor_fee_max_cents",
-      "vendor_fee_min_cents",
+      "vendor_fee_max",
+      "vendor_fee_min",
       "venue",
     ]);
+    // OPE-1680 — canonical names, dollar values: the CSV fee column is 60.
+    expect(cites.find((c) => c.field_name === "vendor_fee_min")?.value).toBe("60");
     expect(new Set(cites.map((c) => c.provenance_kind))).toEqual(new Set(["promoter_portal"]));
     expect(cites[0].source_url).toBe("promoter-upload:sha256:h1#row=2");
     expect(JSON.parse(cites[0].notes)).toMatchObject({
