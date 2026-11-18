@@ -259,6 +259,7 @@ import {
   SOURCE_TYPE_VALUES as CITATION_SOURCE_TYPE_VALUES,
 } from "./admin-citations.js";
 import { registerEventNameVariantTools } from "./admin-event-name-variants.js";
+import { updateEventVendorCitationError } from "./vendor-field-citation.js";
 
 /**
  * OPE-1110 — fields `update_event` records a citation for when one is passed.
@@ -1310,8 +1311,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe(
           "Whether commercial vendors are allowed. Pass null to clear it back to unknown (OPE-1606)."
         ),
-      vendor_fee_min: z.number().optional().describe("Minimum vendor/booth fee"),
-      vendor_fee_max: z.number().optional().describe("Maximum vendor/booth fee"),
+      vendor_fee_min: z
+        .number()
+        .optional()
+        .describe(
+          "Minimum vendor/booth fee (dollars). Requires `citation` with the source's wording in citation.notes (OPE-1673)."
+        ),
+      vendor_fee_max: z
+        .number()
+        .optional()
+        .describe(
+          "Maximum vendor/booth fee (dollars). Requires `citation` with the source's wording in citation.notes (OPE-1673)."
+        ),
       vendor_fee_notes: z.string().optional().describe("Details about vendor/booth fees"),
       indoor_outdoor: z
         .enum(["INDOOR", "OUTDOOR", "MIXED"])
@@ -1349,7 +1360,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       application_deadline: z
         .string()
         .optional()
-        .describe("Vendor application deadline (ISO 8601)"),
+        .describe(
+          "Vendor application deadline (ISO 8601). Requires `citation` with the source's wording in citation.notes (OPE-1673)."
+        ),
       application_url: z.string().optional().describe("URL for vendor applications"),
       application_instructions: z.string().optional().describe("How to apply as a vendor"),
       walk_ins_allowed: z.boolean().optional().describe("Whether walk-in vendors are accepted"),
@@ -1464,7 +1477,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         })
         .optional()
         .describe(
-          "Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, vendor_eligibility, vendor_eligibility_org, start_date, end_date, venue_id, name, promoter_id). A changed field that gets NO citation row is named in warnings.citation_ignored_for (OPE-1110) — never report such a field as cited. When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
+          "REQUIRED (with the source's wording in notes) whenever vendor_fee_min, vendor_fee_max or application_deadline is set — the call is refused otherwise (OPE-1673). Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, vendor_eligibility, vendor_eligibility_org, start_date, end_date, venue_id, name, promoter_id). A changed field that gets NO citation row is named in warnings.citation_ignored_for (OPE-1110) — never report such a field as cited. When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
         ),
     },
     async (params) => {
@@ -1498,6 +1511,24 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (petRefusal) {
         return {
           content: [jsonContent({ error: "pet_friendly_evidence_required", message: petRefusal })],
+          isError: true,
+        };
+      }
+
+      // OPE-1673 — a vendor fee or application deadline needs its source and
+      // the source's wording in this same call. Refused before any write.
+      const vendorCitationRefusal = updateEventVendorCitationError(
+        params as Record<string, unknown>,
+        params.citation
+      );
+      if (vendorCitationRefusal) {
+        return {
+          content: [
+            jsonContent({
+              error: "vendor_field_citation_required",
+              message: vendorCitationRefusal,
+            }),
+          ],
           isError: true,
         };
       }

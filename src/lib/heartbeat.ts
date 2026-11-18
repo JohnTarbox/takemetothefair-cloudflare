@@ -252,6 +252,48 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     },
   },
   {
+    // OPE-1673 — a vendor fee or application deadline is never stored without
+    // its source. suggest_event drops an uncited value; update_event refuses
+    // it; email auto-apply cites what it applies. So after arming, NO event
+    // should hold one of these values with no ACTIVE citation for that field.
+    // Demand = the OLDEST armed-window event that does (no evidence can
+    // discharge it except citing or clearing the value), so the probe goes red
+    // 48h after the first uncited value and stays red until it is repaired.
+    // SCOPE: the MCP research lanes (ingestion_method discovery / web_research
+    // — produced only by suggest_event's source_label), which is where the
+    // uncited values were measured and what this guard covers. The admin UI,
+    // URL import, the web form, the promoter portal and rollover write these
+    // fields on other paths, NOT guarded here — widening the scope before they
+    // are would make this probe red for reasons it does not own. Tombstones
+    // (merged_into) are excluded.
+    name: "vendor-field-citations",
+    ownerOpe: "OPE-1673",
+    label: "every new vendor fee / deadline has an active citation",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: async (db) => {
+      const uncited = (field: string) =>
+        sql`not exists (select 1 from ${eventDataCitations} c where c.event_id = ${events.id} and c.state = 'active' and c.field_name = ${field})`;
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${events.createdAt})` })
+        .from(events)
+        .where(
+          and(
+            sql`${events.createdAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'vendor-field-citations'), 4102444800)`,
+            isNull(events.mergedInto),
+            inArray(events.ingestionMethod, ["discovery", "web_research"]),
+            or(
+              and(isNotNull(events.vendorFeeMinCents), uncited("vendor_fee_min")),
+              and(isNotNull(events.vendorFeeMaxCents), uncited("vendor_fee_max")),
+              and(isNotNull(events.applicationDeadline), uncited("application_deadline"))
+            )
+          )
+        );
+      const demand = r?.t != null ? new Date(Number(r.t) * 1000) : null;
+      return demandConditionalEvidence(demand, null, new Date());
+    },
+  },
+  {
     // OPE-1089 — proof the intent classifier is still ANSWERING, not just running.
     //
     // This path has gone fully dark twice and nobody noticed from the inside:
