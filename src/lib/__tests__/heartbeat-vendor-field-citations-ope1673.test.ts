@@ -100,6 +100,19 @@ describe("OPE-1673 vendor-field-citations probe", () => {
     expect(isNow(await probe.lastEvidenceAt(db))).toBe(true);
   });
 
+  it("OPE-1680 — the suggest-event submit route's three methods are in scope", async () => {
+    for (const [id, method] of [
+      ["em", "email_submission"],
+      ["vs", "vendor_submission"],
+      ["cs", "community_suggestion"],
+    ] as const) {
+      event(id, "2026-11-19T00:00:00Z", { deadline: "2026-12-01T12:00:00Z", method });
+      expect((await probe.lastEvidenceAt(db))?.toISOString()).toBe("2026-11-19T00:00:00.000Z");
+      cite(id, "application_deadline");
+      expect(isNow(await probe.lastEvidenceAt(db))).toBe(true);
+    }
+  });
+
   it("fully cited, tombstones and out-of-scope lanes (admin) read healthy — with a landmark row present", async () => {
     event("d", "2026-11-19T00:00:00Z", { min: 4000, max: 6000 });
     cite("d", "vendor_fee_min");

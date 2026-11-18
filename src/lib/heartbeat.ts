@@ -283,7 +283,16 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
           and(
             sql`${events.createdAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'vendor-field-citations'), 4102444800)`,
             isNull(events.mergedInto),
-            inArray(events.ingestionMethod, ["discovery", "web_research", "auto_rollover"]),
+            // OPE-1680 — + the three methods the suggest-event submit route
+            // produces (vendor portal, email, public form), now that it cites.
+            inArray(events.ingestionMethod, [
+              "discovery",
+              "web_research",
+              "auto_rollover",
+              "email_submission",
+              "vendor_submission",
+              "community_suggestion",
+            ]),
             or(
               and(isNotNull(events.vendorFeeMinCents), uncited("vendor_fee_min")),
               and(isNotNull(events.vendorFeeMaxCents), uncited("vendor_fee_max")),
