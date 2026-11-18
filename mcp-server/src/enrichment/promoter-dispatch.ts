@@ -240,6 +240,38 @@ export function socialLinksHaveNameAffinity(
 }
 
 /**
+ * OPE-1686 — a social payload the pipeline has TWO independent reasons to
+ * distrust is dropped, not re-staged.
+ *
+ * The human veto (OPE-964/OPE-249) deliberately still STAGES a vetoed value,
+ * because a human may change their mind. That is right for one signal. When the
+ * same payload ALSO shares nothing with the promoter's name or site
+ * (`social_no_name_affinity`, OPE-963), the human has already said no to a
+ * value the rule itself doubted, and re-staging it only puts the same wrong
+ * answer back in front of them every run. Specimen: SoWa Boston, AncoraThemes'
+ * accounts off a theme footer, re-staged after a revert.
+ *
+ * Narrow on purpose: either flag ALONE still stages. A dropped proposal never
+ * becomes a candidate row, so rule agreement simply excludes it rather than
+ * counting it as an agreement. Mutates in place; exported for tests.
+ */
+export function dropVetoedUnaffineSocials(proposals: { field: string; flags: string[] }[]): number {
+  let dropped = 0;
+  for (let i = proposals.length - 1; i >= 0; i--) {
+    const p = proposals[i];
+    if (
+      p.field === "social_links" &&
+      p.flags.includes("social_no_name_affinity") &&
+      (p.flags.includes("previously_reverted") || p.flags.includes("previously_rejected"))
+    ) {
+      proposals.splice(i, 1);
+      dropped++;
+    }
+  }
+  return dropped;
+}
+
+/**
  * Build the fill-empty-only proposal set from a promoter row + the extraction
  * (og:image already probed into hero/logo). Pure — no DB.
  */
@@ -478,6 +510,7 @@ export async function processPromoterEnrichmentJob(
     .from(promoterEnrichmentCandidates)
     .where(eq(promoterEnrichmentCandidates.promoterId, msg.promoterId));
   applyHumanVeto(proposals, priorCandidates);
+  dropVetoedUnaffineSocials(proposals);
   const newCandidateCount = countNewCandidates(proposals, priorCandidates);
 
   // Idempotent re-run: clear this promoter's still-open proposals, then restage
