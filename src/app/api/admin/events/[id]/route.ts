@@ -43,6 +43,8 @@ import { enqueueSyndicationChange } from "@/lib/queues/producers";
 import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
 import { raiseHoursReviewFlag } from "@/lib/events/hours-review-flag";
 import { loadUnresolvedFlagForEvent } from "@/lib/duplicates/flag-queue";
+import { citeAdminVendorFields } from "@/lib/events/admin-vendor-citations";
+import { changedVendorFields } from "@/lib/events/promoter-vendor-citations";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -179,6 +181,9 @@ export const PATCH = withAuth<{ id: string }>(
           sourceUrl: events.sourceUrl,
           sourceName: events.sourceName,
           applicationDeadline: events.applicationDeadline,
+          // OPE-1680 — to cite only a fee the edit actually changes.
+          vendorFeeMinCents: events.vendorFeeMinCents,
+          vendorFeeMaxCents: events.vendorFeeMaxCents,
           eventScale: events.eventScale,
           discontinuousDates: events.discontinuousDates,
           // OPE-435 — needed to decide whether a CLEAN gate verdict should
@@ -723,6 +728,50 @@ export const PATCH = withAuth<{ id: string }>(
       // rolled-back edit raises nothing) and after the day-write audit above
       // (nothing may sit between that write and its evidence — see OPE-759).
       if (raiseFormerVenueFlag) await raiseEventReviewFlag(db, id, "former_venue");
+
+      // OPE-1680 — a fee or deadline the admin changed is stored with a
+      // citation naming the admin edit as its source. After the batch commits,
+      // so a rolled-back save cites nothing; only fields whose stored value
+      // changed, so the form re-posting unchanged values writes nothing.
+      {
+        const changed = changedVendorFields(
+          (k) => (data as Record<string, unknown>)[k] !== undefined,
+          {
+            vendorFeeMinCents: updateData.vendorFeeMinCents as number | null | undefined,
+            vendorFeeMaxCents: updateData.vendorFeeMaxCents as number | null | undefined,
+            applicationDeadline: updateData.applicationDeadline as Date | null | undefined,
+          },
+          {
+            vendorFeeMinCents: currentEvent.vendorFeeMinCents,
+            vendorFeeMaxCents: currentEvent.vendorFeeMaxCents,
+            applicationDeadline: currentEvent.applicationDeadline,
+          }
+        );
+        await citeAdminVendorFields(db, {
+          eventId: id,
+          writer: "admin-edit",
+          userId: session.user.id,
+          vendorFeeMin: changed.vendorFeeMin
+            ? {
+                submitted: data.vendorFeeMin,
+                storedCents: (updateData.vendorFeeMinCents as number | null) ?? null,
+              }
+            : { submitted: null, storedCents: null },
+          vendorFeeMax: changed.vendorFeeMax
+            ? {
+                submitted: data.vendorFeeMax,
+                storedCents: (updateData.vendorFeeMaxCents as number | null) ?? null,
+              }
+            : { submitted: null, storedCents: null },
+          applicationDeadline: changed.applicationDeadline
+            ? {
+                submitted: data.applicationDeadline,
+                stored: (updateData.applicationDeadline as Date | null) ?? null,
+              }
+            : { submitted: null, stored: null },
+          now: new Date(),
+        });
+      }
 
       // SYN1 — trigger the dispatcher only when an outbox row was actually
       // written (mirrored field changed). Never throws; the durable outbox row

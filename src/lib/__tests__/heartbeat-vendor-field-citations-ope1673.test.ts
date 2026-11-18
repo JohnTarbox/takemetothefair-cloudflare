@@ -113,12 +113,25 @@ describe("OPE-1673 vendor-field-citations probe", () => {
     }
   });
 
-  it("fully cited, tombstones and out-of-scope lanes (admin) read healthy — with a landmark row present", async () => {
+  it("OPE-1680 — the admin writers' three methods are in scope", async () => {
+    for (const [id, method] of [
+      ["am", "admin_manual"],
+      ["ds", "direct_scrape"],
+      ["ag", "aggregator_import"],
+    ] as const) {
+      event(id, "2026-11-19T00:00:00Z", { min: 4000, method });
+      expect((await probe.lastEvidenceAt(db))?.toISOString()).toBe("2026-11-19T00:00:00.000Z");
+      cite(id, "vendor_fee_min");
+      expect(isNow(await probe.lastEvidenceAt(db))).toBe(true);
+    }
+  });
+
+  it("fully cited, tombstones and out-of-scope lanes (offline annual rollover) read healthy — with a landmark row present", async () => {
     event("d", "2026-11-19T00:00:00Z", { min: 4000, max: 6000 });
     cite("d", "vendor_fee_min");
     cite("d", "vendor_fee_max");
     event("t", "2026-11-19T00:00:00Z", { min: 4000, merged: "d" });
-    event("adm", "2026-11-19T00:00:00Z", { min: 4000, method: "admin_manual" });
+    event("adm", "2026-11-19T00:00:00Z", { min: 4000, method: "annual_rollover" });
     event("web", "2026-11-19T00:00:00Z", { min: 4000, method: "web_research" });
     cite("web", "vendor_fee_min");
     event("plain", "2026-11-19T00:00:00Z", {});
