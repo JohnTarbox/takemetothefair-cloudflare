@@ -2,10 +2,11 @@
  * OPE-1680 — the promoter portal stores a vendor fee or application deadline
  * only together with a citation saying where it came from.
  *
- * Two routes write these fields from the organizer's own UI:
- *   - POST /api/promoter/events        (one-shot create)
- *   - POST /api/promoter/events/draft  (wizard: create a DRAFT, then update it
- *                                       on every later save)
+ * Three routes write these fields from the organizer's own UI:
+ *   - POST  /api/promoter/events                 (one-shot create)
+ *   - POST  /api/promoter/events/draft           (wizard: create a DRAFT, then
+ *                                                 update it on every later save)
+ *   - PATCH /api/promoter/events/[id]/vendor-call (OPE-1513 vendor-call editor)
  *
  * The organizer is the source. So the citation is `user_submitted`, named after
  * the promoter, at a synthesized `submission://promoter-portal/<eventId>`: the
@@ -34,7 +35,7 @@ export interface PromoterVendorValues {
   promoterName: string | null | undefined;
   userId: string | null | undefined;
   /** Which route, for the notes text. */
-  route: "events" | "draft";
+  route: "events" | "draft" | "events/[id]/vendor-call";
   vendorFeeMin: { submitted: number | null | undefined; storedCents: number | null };
   vendorFeeMax: { submitted: number | null | undefined; storedCents: number | null };
   applicationDeadline: { submitted: string | null | undefined; stored: Date | null };
