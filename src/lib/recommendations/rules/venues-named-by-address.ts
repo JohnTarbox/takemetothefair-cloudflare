@@ -19,6 +19,7 @@
 
 import { and, or, sql } from "drizzle-orm";
 import { venues } from "@/lib/db/schema";
+import { looksLikeVenueStreetAddress } from "@takemetothefair/utils";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
 export const venuesNamedByAddressRule: RuleDefinition = {
@@ -60,14 +61,14 @@ export const venuesNamedByAddressRule: RuleDefinition = {
         )
       );
 
-    // Post-filter to enforce the exact same regex used by the display
-    // helper. Drops false positives like "10X Studios" that the GLOB
-    // alone would catch but the regex (which requires \s+\S after
-    // the digit run) correctly rejects.
-    const STREET_NUMBER_RE = /^\s*\d+\s+\S/;
+    // Post-filter with the SAME shared predicate the ingest coercion and the
+    // display fallback use (OPE-1688), so the queue only lists rows the site
+    // actually treats as addresses. Drops "10X Studios" (GLOB-only match) and
+    // "450 Banquets" (a leading number with no street-type word).
     return rows
       .filter(
-        (r) => STREET_NUMBER_RE.test(r.name) || (r.address && r.name.trim() === r.address.trim())
+        (r) =>
+          looksLikeVenueStreetAddress(r.name) || (r.address && r.name.trim() === r.address.trim())
       )
       .map((r) => ({
         targetType: "venue",
