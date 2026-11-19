@@ -298,7 +298,15 @@ async function buildProposals(
           // Hero auto-applies only when the full hero rule holds.
           autoApply: probed.heroConfident,
         });
-      } else if (probed.classification === "logo" && isEmpty(row.logoUrl as string | null)) {
+      } else if (
+        probed.classification === "logo" &&
+        isEmpty(row.logoUrl as string | null) &&
+        // OPE-1687 — the image already serving as this promoter's HERO is not
+        // its logo. Mad River Valley Craft Fair's og:image auto-merged as the
+        // hero in September (0.85); on 2026-11-18 the probe could not measure
+        // it, it fell back to "logo", and the identical URL staged as a logo.
+        probed.url.trim() !== ((row.heroImageUrl as string | null) ?? "").trim()
+      ) {
         proposals.push({
           field: "logo",
           proposedValue: probed.url,
