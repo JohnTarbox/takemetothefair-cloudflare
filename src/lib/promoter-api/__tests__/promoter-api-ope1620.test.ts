@@ -250,7 +250,7 @@ const FALL = {
 
 beforeEach(() => {
   ({ raw, db } = createTestDb());
-  raw["exec"](MIGRATION.slice(0, MIGRATION.indexOf("INSERT INTO heartbeat_probes")));
+  // The 0411 DDL is loaded by createTestDb (OPE-1647); 0418 alters it.
   raw["exec"](MIGRATION_0418);
   raw["exec"](
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_event_days_event_date_vendor ON event_days(event_id, date, vendor_only)"

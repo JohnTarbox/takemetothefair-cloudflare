@@ -59,7 +59,6 @@ import { withPromoterApi } from "@/lib/promoter-api/handler";
 import type { CalendarCheckReport, ItemReport } from "../types";
 
 const ROOT = join(__dirname, "../../../..");
-const MIGRATION_0411 = readFileSync(join(ROOT, "drizzle/0411_ope1620_promoter_api.sql"), "utf8");
 const MIGRATION_0418 = readFileSync(join(ROOT, "drizzle/0418_ope1625_test_api_keys.sql"), "utf8");
 const TEC = JSON.parse(readFileSync(join(__dirname, "fixtures/ohtm-like-tec.json"), "utf8"));
 // The real OHTM export the OPE-1617 suite reads, read in place (not copied).
@@ -164,7 +163,7 @@ const previewReq = (body: unknown, ip = "203.0.113.7") =>
 
 beforeEach(() => {
   ({ raw, db } = createTestDb());
-  raw["exec"](MIGRATION_0411.slice(0, MIGRATION_0411.indexOf("INSERT INTO heartbeat_probes")));
+  // The 0411 DDL is loaded by createTestDb (OPE-1647); 0418 alters it.
   raw["exec"](MIGRATION_0418);
   raw["exec"](
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_event_days_event_date_vendor ON event_days(event_id, date, vendor_only)"
