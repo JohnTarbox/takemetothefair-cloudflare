@@ -1919,6 +1919,30 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, promoterEnrichmentCandidates, promoterEnrichmentCandidates.createdAt),
   },
   {
+    // OPE-1689 — the promoter run's one same-site Contact-page hop STAGED a
+    // value. Only that hop writes a candidate whose source_url is not the
+    // promoter's own website (the homepage pass stamps website verbatim), so
+    // this reads the hop's output, not the enrichment cron's. It fires only
+    // when a promoter's email/phone is empty AND its contact page yields one
+    // (2 of 4 in the 11-18 hand check), so the window is two weeks, not one.
+    name: "promoter-contact-page-hop",
+    ownerOpe: "OPE-1689",
+    label: "Promoter enrichment Contact-page hop → candidate",
+    priority: "P1",
+    expectedWindowHours: 14 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        promoterEnrichmentCandidates,
+        promoterEnrichmentCandidates.createdAt,
+        sql`${promoterEnrichmentCandidates.proposedField} IN ('contact_email','contact_phone')
+            AND ${promoterEnrichmentCandidates.sourceUrl} IS NOT NULL
+            AND ${promoterEnrichmentCandidates.sourceUrl} <> COALESCE(
+              (SELECT trim(p.website) FROM promoters p
+                WHERE p.id = ${promoterEnrichmentCandidates.promoterId}), '')`
+      ),
+  },
+  {
     // OPE-1503 — re-measured after gate tuning (OPE-1032 09-15, OPE-815 09-23)
     // cut inflow from tens of rows a day to a few a week. Prod, 09-24 → 10-21:
     // the longest closed gap between new rows was 102h (10-07 → 10-11), next

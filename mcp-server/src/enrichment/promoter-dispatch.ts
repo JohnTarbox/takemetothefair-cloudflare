@@ -31,6 +31,7 @@ import { isCeasedPromoter } from "../promoters/succession.js";
 import { fetchVendorSite } from "./fetch-site.js";
 import { extractPromoterSignals, type PromoterExtraction } from "./promoter-extract.js";
 import { probePromoterImage } from "./promoter-image.js";
+import { contactPageSignals, findContactLink } from "./contact-page.js";
 import { writeGuardedFills, type GuardedFill } from "./guarded-fill.js";
 
 /** One promoter pre-extraction job. */
@@ -133,6 +134,8 @@ interface Proposal {
   flags: string[];
   /** Eligible for high-confidence auto-apply on a live (non-dry-run) run. */
   autoApply: boolean;
+  /** OPE-1689 — the page this value came from, when it is not the homepage. */
+  sourceUrl?: string;
 }
 
 function isEmpty(v: string | null | undefined): boolean {
@@ -393,6 +396,70 @@ export interface PromoterEnrichmentRunSummary {
   socialStagedNotPromotable?: number;
   blockedReason?: BlockedReason;
   fetchMethod?: string;
+  /** OPE-1689 — the same-site Contact page rendered as a second hop, when one was. */
+  contactPageUrl?: string;
+}
+
+/**
+ * OPE-1689 — one same-site hop to the Contact page, before a run can count as
+ * empty. Runs ONLY when contact email or phone is still empty after the
+ * homepage (on the row AND in this run's proposals), follows at most ONE link,
+ * and goes through the same SSRF-guarded fetch — so a promoter costs at most
+ * two renders. A failed or link-less hop adds nothing and is not an error.
+ *
+ * Proposals carry the contact page as their source_url. A value picked out of
+ * a multi-person page is flagged `contact_page_multiple` and never auto-applies
+ * (applyFills skips any flagged candidate). Returns the page URL used, or null.
+ */
+async function addContactPageProposals(
+  row: Record<string, unknown>,
+  homepageHtml: string,
+  homepageUrl: string,
+  env: PromoterEnrichmentEnv,
+  proposals: Proposal[]
+): Promise<string | null> {
+  const needEmail =
+    isEmpty(row.contactEmail as string | null) &&
+    !proposals.some((p) => p.field === "contact_email");
+  const needPhone =
+    isEmpty(row.contactPhone as string | null) &&
+    !proposals.some((p) => p.field === "contact_phone");
+  if (!needEmail && !needPhone) return null;
+
+  const link = findContactLink(homepageHtml, homepageUrl);
+  if (!link) return null;
+  const page = await fetchVendorSite(link, env);
+  if (!page.ok || !page.html) return null;
+  const pageUrl = page.finalUrl ?? link;
+
+  const sig = contactPageSignals(page.html, pageUrl, { email: needEmail, phone: needPhone });
+  if (sig.contactEmail) {
+    proposals.push({
+      field: "contact_email",
+      proposedValue: sig.contactEmail.value,
+      method: sig.contactEmail.method,
+      confidence: sig.contactEmail.confidence,
+      flags: sig.contactEmail.multiple ? ["contact_page_multiple"] : [],
+      autoApply:
+        !sig.contactEmail.multiple &&
+        (sig.contactEmail.method === "mailto" || sig.contactEmail.method === "jsonld"),
+      sourceUrl: pageUrl,
+    });
+  }
+  if (sig.contactPhone) {
+    proposals.push({
+      field: "contact_phone",
+      proposedValue: sig.contactPhone.value,
+      method: sig.contactPhone.method,
+      confidence: sig.contactPhone.confidence,
+      flags: sig.contactPhone.multiple ? ["contact_page_multiple"] : [],
+      autoApply:
+        !sig.contactPhone.multiple &&
+        (sig.contactPhone.method === "tel" || sig.contactPhone.method === "jsonld"),
+      sourceUrl: pageUrl,
+    });
+  }
+  return pageUrl;
 }
 
 /**
@@ -483,6 +550,13 @@ export async function processPromoterEnrichmentJob(
 
   const extraction = extractPromoterSignals(fetched.html, sourceUrl);
   const proposals = await buildProposals(row as Record<string, unknown>, extraction);
+  const contactPageUrl = await addContactPageProposals(
+    row as Record<string, unknown>,
+    fetched.html,
+    fetched.finalUrl ?? sourceUrl,
+    env,
+    proposals
+  );
 
   // OPE-964 — a value a human REVERTED is never auto-applied again. Under
   // fill-empty-only the revert leaves the field empty, so without this the next
@@ -539,7 +613,7 @@ export async function processPromoterEnrichmentJob(
             ? ((row as Record<string, unknown>)[FIELD_TO_COLUMN[p.field]] ?? null)
             : null) as string | null,
           proposedValue: p.proposedValue,
-          sourceUrl,
+          sourceUrl: p.sourceUrl ?? sourceUrl,
           extractionMethod: p.method,
           fetchMethod: fetched.fetchMethod,
           confidence: p.confidence,
@@ -580,6 +654,7 @@ export async function processPromoterEnrichmentJob(
       candidateCount: proposals.length,
       newCandidateCount,
       fetchMethod: fetched.fetchMethod,
+      ...(contactPageUrl ? { contactPageUrl } : {}),
     };
   }
 
@@ -633,6 +708,7 @@ export async function processPromoterEnrichmentJob(
     appliedFields: applied,
     socialStagedNotPromotable,
     fetchMethod: fetched.fetchMethod,
+    ...(contactPageUrl ? { contactPageUrl } : {}),
   };
 }
 
