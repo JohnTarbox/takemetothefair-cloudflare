@@ -119,6 +119,8 @@ import {
   normalizeEventDate,
   reclassifySourceOnEdit,
   assertIngestionMethod,
+  INGESTION_METHODS,
+  type IngestionMethod,
   nextGateFlags,
   freePlaceholderEmail,
   validateVenueLifecycle,
@@ -261,6 +263,7 @@ import {
   SOURCE_TYPE_VALUES as CITATION_SOURCE_TYPE_VALUES,
 } from "./admin-citations.js";
 import { registerEventNameVariantTools } from "./admin-event-name-variants.js";
+import { updateEventVendorCitationError } from "./vendor-field-citation.js";
 
 /**
  * OPE-1110 — fields `update_event` records a citation for when one is passed.
@@ -1312,8 +1315,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe(
           "Whether commercial vendors are allowed. Pass null to clear it back to unknown (OPE-1606)."
         ),
-      vendor_fee_min: z.number().optional().describe("Minimum vendor/booth fee"),
-      vendor_fee_max: z.number().optional().describe("Maximum vendor/booth fee"),
+      vendor_fee_min: z
+        .number()
+        .optional()
+        .describe(
+          "Minimum vendor/booth fee (dollars). Requires `citation` with the source's wording in citation.notes (OPE-1673)."
+        ),
+      vendor_fee_max: z
+        .number()
+        .optional()
+        .describe(
+          "Maximum vendor/booth fee (dollars). Requires `citation` with the source's wording in citation.notes (OPE-1673)."
+        ),
       vendor_fee_notes: z.string().optional().describe("Details about vendor/booth fees"),
       indoor_outdoor: z
         .enum(["INDOOR", "OUTDOOR", "MIXED"])
@@ -1351,7 +1364,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       application_deadline: z
         .string()
         .optional()
-        .describe("Vendor application deadline (ISO 8601)"),
+        .describe(
+          "Vendor application deadline (ISO 8601). Requires `citation` with the source's wording in citation.notes (OPE-1673)."
+        ),
       application_url: z.string().optional().describe("URL for vendor applications"),
       application_instructions: z.string().optional().describe("How to apply as a vendor"),
       walk_ins_allowed: z.boolean().optional().describe("Whether walk-in vendors are accepted"),
@@ -1397,7 +1412,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       source_name: z
         .string()
         .optional()
-        .describe("Name of the source (e.g. 'facebook', 'eventbrite')"),
+        .describe(
+          "Name of the source we cite (e.g. 'facebook', 'eventbrite'). Editing it (or source_url) refreshes source_domain but NEVER changes ingestion_method — how the row was collected is written once, at creation (OPE-1642). To reclassify deliberately, pass ingestion_method."
+        ),
+      ingestion_method: z
+        .enum(INGESTION_METHODS as unknown as [IngestionMethod, ...IngestionMethod[]])
+        .optional()
+        .describe(
+          "Deliberate reclassification of HOW the row was collected (OPE-1642). Never inferred from source_name/source_url on an edit. Reported in previousValues/newValues like any field."
+        ),
       recurrence_rule: z.string().optional().describe("iCal RRULE recurrence string"),
       discontinuous_dates: z
         .boolean()
@@ -1458,7 +1481,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         })
         .optional()
         .describe(
-          "Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, vendor_eligibility, vendor_eligibility_org, start_date, end_date, venue_id, name, promoter_id). A changed field that gets NO citation row is named in warnings.citation_ignored_for (OPE-1110) — never report such a field as cited. When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
+          "REQUIRED (with the source's wording in notes) whenever vendor_fee_min, vendor_fee_max or application_deadline is set — the call is refused otherwise (OPE-1673). Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, vendor_eligibility, vendor_eligibility_org, start_date, end_date, venue_id, name, promoter_id). A changed field that gets NO citation row is named in warnings.citation_ignored_for (OPE-1110) — never report such a field as cited. When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
         ),
     },
     async (params) => {
@@ -1492,6 +1515,24 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (petRefusal) {
         return {
           content: [jsonContent({ error: "pet_friendly_evidence_required", message: petRefusal })],
+          isError: true,
+        };
+      }
+
+      // OPE-1673 — a vendor fee or application deadline needs its source and
+      // the source's wording in this same call. Refused before any write.
+      const vendorCitationRefusal = updateEventVendorCitationError(
+        params as Record<string, unknown>,
+        params.citation
+      );
+      if (vendorCitationRefusal) {
+        return {
+          content: [
+            jsonContent({
+              error: "vendor_field_citation_required",
+              message: vendorCitationRefusal,
+            }),
+          ],
           isError: true,
         };
       }
@@ -1606,6 +1647,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "source_url", column: "sourceUrl" },
         { param: "source_id", column: "sourceId" },
         { param: "source_name", column: "sourceName" },
+        { param: "ingestion_method", column: "ingestionMethod" },
         { param: "recurrence_rule", column: "recurrenceRule" },
         { param: "discontinuous_dates", column: "discontinuousDates" },
         { param: "sync_enabled", column: "syncEnabled" },
@@ -2104,17 +2146,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           // OPE-491 rework — the domain refreshes; HOW the row was collected is
           // kept unless the edit states a new collection label, or the old
           // value was itself domain-derived (see reclassifySourceOnEdit).
+          // OPE-1642 — write-once: a valid stored method is kept whatever the new
+          // label says; only a blank one is filled. An explicit
+          // `ingestion_method` param (a fieldMap entry) is the reclassify path.
           const reclassified = reclassifySourceOnEdit({
             currentMethod: evRow.ingestionMethod as string | null | undefined,
-            suggesterEmail: evRow.suggesterEmail as string | null | undefined,
             sourceName: mergedSourceName,
             sourceUrl: mergedSourceUrl,
           });
           updates.sourceDomain = reclassified.sourceDomain;
-          updates.ingestionMethod = assertIngestionMethod(
-            reclassified.ingestionMethod,
-            "update_event"
-          );
+          if (params.ingestion_method === undefined && !reclassified.preservedMethod) {
+            updates.ingestionMethod = assertIngestionMethod(
+              reclassified.ingestionMethod,
+              "update_event"
+            );
+          }
         }
 
         const gateResult = evaluateGates({
@@ -2583,6 +2629,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.name !== undefined && updates.slug) {
         newValues.slug = updates.slug;
       }
+      // OPE-1642 — a column the write DERIVED (not passed) is reported too, so
+      // no change is invisible. This echo is the only record (OPE-505).
+      const derivedFieldsUpdated: string[] = [];
+      const evStored = event as Record<string, unknown>;
+      for (const [field, column] of [
+        ["source_domain", "sourceDomain"],
+        ["ingestion_method", "ingestionMethod"],
+      ] as const) {
+        if (requestedFields.includes(field)) continue;
+        if (updates[column] === undefined) continue;
+        const before = evStored[column] ?? null;
+        if (updates[column] === before) continue;
+        previousValues[field] = before;
+        newValues[field] = updates[column];
+        derivedFieldsUpdated.push(field);
+      }
 
       // Handle inline venue field updates
       let venueUpdateResult: Record<string, unknown> | null = null;
@@ -2716,6 +2778,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (requestedFields.length > 0) {
         result.fieldsUpdated = requestedFields;
+        result.previousValues = previousValues;
+        result.newValues = newValues;
+      }
+      if (derivedFieldsUpdated.length > 0) {
+        result.derivedFieldsUpdated = derivedFieldsUpdated;
         result.previousValues = previousValues;
         result.newValues = newValues;
       }

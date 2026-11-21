@@ -25,6 +25,10 @@ const FILES: { file: string; minLinks: number }[] = [
   // OPE-1602: the back-links added with the IndexNow and Stuck URLs moves.
   { file: "src/app/admin/diagnostics/page.tsx", minLinks: 1 },
   { file: "src/app/admin/stuck-urls/page.tsx", minLinks: 1 },
+  // OPE-1630: the feed review queue (state filter, feed filter, paging).
+  { file: "src/app/admin/feed-review/page.tsx", minLinks: 4 },
+  // OPE-1630: the dashboard's Organizer feeds tile now links to that queue.
+  { file: "src/app/admin/page.tsx", minLinks: 2 },
 ];
 
 function linkOpenings(source: string): string[] {

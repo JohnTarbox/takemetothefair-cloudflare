@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 /**
  * OPE-420 — bogus slugs must return HTTP 404, not a 200 carrying the 404 page.

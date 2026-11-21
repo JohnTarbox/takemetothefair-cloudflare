@@ -19,6 +19,7 @@ import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { UNCATEGORIZED_EVENT_CATEGORY, partitionEventCategories } from "@takemetothefair/constants";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
+import { citeAdminVendorFields } from "@/lib/events/admin-vendor-citations";
 import { logEnrichment } from "@/lib/enrichment-log";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { areDatesContiguous } from "@takemetothefair/utils";
@@ -39,7 +40,7 @@ interface ImportRequest {
   jsonLd?: Record<string, unknown>; // JSON-LD from the source page for schema.org storage
 }
 
-export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   try {
     const body = (await request.json()) as ImportRequest;
     const { event, venueOption, promoterId, sourceUrl, jsonLd } = body;
@@ -355,6 +356,33 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     });
 
     await recomputeEventCompleteness(db, newEventId);
+
+    // OPE-1680 — a fee or deadline the import extracted is stored with a
+    // citation to the page it came from. The raw URL, even when it is an
+    // unfetchable one kept out of events.source_url (OPE-297): it is still
+    // where the value was read.
+    {
+      const importedDeadline = event.applicationDeadline
+        ? normalizeEventDate(event.applicationDeadline)
+        : null;
+      await citeAdminVendorFields(db, {
+        eventId: newEventId,
+        writer: "import-url",
+        userId: session.user.id,
+        importedUrl: sourceUrl ?? null,
+        sourceName: classifySource("url-import", sourceUrl).sourceDomain ?? null,
+        vendorFeeMin: {
+          submitted: event.vendorFeeMin,
+          storedCents: dollarsToCents(event.vendorFeeMin),
+        },
+        vendorFeeMax: {
+          submitted: event.vendorFeeMax,
+          storedCents: dollarsToCents(event.vendorFeeMax),
+        },
+        applicationDeadline: { submitted: event.applicationDeadline, stored: importedDeadline },
+        now: new Date(),
+      });
+    }
 
     await logEnrichment(db, {
       targetType: "event",

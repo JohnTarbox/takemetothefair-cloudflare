@@ -19,6 +19,9 @@
 import { errorLogs } from "@/lib/db/schema";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { errorCauseMessages } from "@takemetothefair/utils";
+import { getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { bufferFailedErrorLog, type ErrorLogRow } from "@/lib/observability/error-log-buffer";
+import { isReadOnlyDb } from "@/lib/test-submission/read-only-db";
 
 /** Truncation caps — keep a single row bounded even for pathological errors. */
 const MAX_MESSAGE_CHARS = 4_000;
@@ -58,6 +61,7 @@ export async function captureServerRenderError(
   db: DrizzleD1Database<Record<string, unknown>> | null,
   args: CaptureServerRenderErrorArgs
 ): Promise<void> {
+  let row: ErrorLogRow | null = null;
   try {
     const { error, request, context } = args;
 
@@ -104,7 +108,7 @@ export async function captureServerRenderError(
 
     if (!db) return;
 
-    await db.insert(errorLogs).values({
+    row = {
       id: crypto.randomUUID(),
       timestamp: new Date(),
       level: "error",
@@ -122,9 +126,14 @@ export async function captureServerRenderError(
         routeType: context?.routeType ?? null,
         routePath: context?.routePath ?? null,
       }),
-    });
+    };
+    await db.insert(errorLogs).values(row as typeof errorLogs.$inferInsert);
   } catch (captureErr) {
     // A logging failure must never compound the render failure that caused it.
     console.error("[captureServerRenderError] failed to persist render error:", captureErr);
+    // OPE-1664 — the row was built and only the D1 write failed (usually an
+    // overload): keep it in KV for the */10 replay cron. Never throws.
+    // Not for a dry-run (OPE-1625 readOnlyDb) handle, which refuses on purpose.
+    if (row && !isReadOnlyDb(db)) await bufferFailedErrorLog(getCloudflareRateLimitKv, row);
   }
 }

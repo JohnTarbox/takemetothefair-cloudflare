@@ -4,22 +4,16 @@ import { eq } from "drizzle-orm";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { faultSignatures, type FaultSignatureRow } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
-import {
-  classifyNoise,
-  computeSignature,
-  normalizeErrorClass,
-  normalizeFaultRoute,
-} from "@/lib/faults/signature";
-import {
-  reconcileFaults,
-  type FaultLedgerRow,
-  type FaultStatus,
-  type GroupedFault,
-} from "@/lib/faults/reconcile";
+import { reconcileFaults, type FaultLedgerRow, type FaultStatus } from "@/lib/faults/reconcile";
 import { buildRailHealth } from "@/lib/faults/status";
 import { classifyFault } from "@/lib/faults/family-registry";
-import { RENDER_FAULT_SOURCES } from "@/lib/faults/render-sources";
 import { scanErrorLogPages } from "@/lib/faults/scan-error-logs";
+import { createFaultRowGrouper } from "@/lib/faults/group-rows";
+import {
+  groupPlatformIncidents,
+  isPlatformSignature,
+  reconcilePlatformIncidents,
+} from "@/lib/faults/platform-incidents";
 
 /**
  * POST /api/internal/faults/candidates  (OPE-81 — render-fault rail)
@@ -80,53 +74,6 @@ const EMIT_HEARTBEAT_SOURCE = EMIT_HEARTBEAT_SOURCE_NAME;
 
 const toMs = (d: Date | null): number | null => (d ? d.getTime() : null);
 
-/**
- * Best-effort session key for distinct-session counting. Null when the row
- * carries nothing that actually identifies a SESSION.
- *
- * OPE-488 — this deliberately no longer falls back to `pathname` / `path` /
- * `url`. Those are ROUTE identity, and the signature is already route-scoped
- * (`route#errorClass`), so every row in a group shared one value and
- * `distinctSessions` was structurally 1 for the entire client-error lane.
- *
- * That silently killed the escape hatch it feeds. `reconcileFaults` gates on
- * `count >= minCount || distinctSessions >= minSessions`; the second clause
- * exists to catch a fault that is LOW-VOLUME PER ROUTE BUT WIDESPREAD — which is
- * precisely the shape of a chunk/bundle fault hitting 49 routes once each. A
- * constant 1 meant it could never fire, so eligibility silently collapsed to the
- * count gate alone.
- *
- * Returning null is the honest answer: the caller already degrades to the
- * occurrence count when a group has no usable session key, which is the
- * documented intent. Client rows in prod carry only `errorType` / `pathname` /
- * `reportedUrl`, so today this returns null for that lane — a real measurement
- * of "we cannot distinguish sessions", not a fabricated 1.
- */
-function sessionKeyFor(contextJson: string | null, url: string | null): string | null {
-  if (contextJson) {
-    try {
-      const ctx = JSON.parse(contextJson) as Record<string, unknown>;
-      const candidate = ctx.sessionId ?? ctx.session ?? ctx.sid;
-      if (typeof candidate === "string" && candidate) return candidate;
-    } catch {
-      // Malformed context JSON → no session key.
-    }
-  }
-  // `url` is the INGEST endpoint for client reports (every row reads
-  // ".../api/client-errors"), so it never distinguished sessions either.
-  void url;
-  return null;
-}
-
-interface Accum {
-  route: string | null;
-  errorClass: string;
-  count: number;
-  firstSeen: number;
-  lastSeen: number;
-  sessions: Set<string>;
-}
-
 export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db, request }) => {
   try {
     const now = new Date();
@@ -173,94 +120,18 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
     // Suppressed hits are COUNTED, never silently dropped: a denylist that
     // hides a volume anomaly just moves the blindness somewhere else. The
     // per-reason tallies ride out in the response and are logged once per run.
-    const groups = new Map<string, Accum>();
-    const suppressed: Record<string, number> = {};
-    let suppressedTotal = 0;
+    // The per-row step (noise → platform cause → signature) lives in
+    // src/lib/faults/group-rows.ts so tests exercise this exact code.
+    const grouper = createFaultRowGrouper(now.getTime());
     let scanned = 0;
     for await (const page of scanErrorLogPages(db, since, NEVER_INGEST_SOURCES)) {
       scanned += page.length;
-      for (const r of page) {
-        // OPE-577 — classify on PROVENANCE (where the code came from) as well as
-        // message text. `context.thirdParty` is set by the client reporter and
-        // the stack shape identifies extension injection; neither can be defeated
-        // by a third party changing its wording.
-        const verdict = classifyNoise({
-          message: r.message,
-          route: r.route,
-          context: r.context,
-          stackTrace: r.stackTrace,
-          userAgent: r.userAgent,
-        });
-        if (verdict.noise) {
-          const key = `${verdict.reason}:${verdict.matched}`;
-          suppressed[key] = (suppressed[key] ?? 0) + 1;
-          suppressedTotal += 1;
-          continue;
-        }
-        // OPE-615 — server rows key on `source`, not on `route`.
-        //
-        // `computeSignature` falls back to the literal "unknown" when route is
-        // null, and route IS null on every server row — so widening the scan
-        // without this would collapse every backend fault in the system into one
-        // signature per error class. `source` is a stable, high-quality grouping
-        // key and is strictly better than the route key the render lane uses.
-        const isRenderLane = RENDER_FAULT_SOURCES.includes(r.source ?? "");
-        // OPE-1081 — normalized HERE as well as inside computeSignature, because
-        // this value is also what the ledger stores as `route`: a key built from
-        // the path beside a `route` column still holding the attacker's payload
-        // would keep echoing it into tickets and dashboards.
-        const groupKey = normalizeFaultRoute(isRenderLane ? r.route : (r.source ?? r.route));
-        const signature = computeSignature({
-          route: groupKey,
-          message: r.message,
-          digest: r.digest,
-        });
-        const tsMs = r.timestamp ? r.timestamp.getTime() : now.getTime();
-        // OPE-615 scope 2 — for a server fault, a distinct DAY is the analogue of
-        // a distinct session.
-        //
-        // The `minSessions` gate was tuned against burst-prone browser noise, and
-        // on server rows there is no session key at all, so `distinctSessions`
-        // degrades to the raw count — which ranks a 3-second loop-burst ABOVE a
-        // cron that fails once a day. That is backwards: the burst is one event,
-        // the cron is a standing fault.
-        //
-        // Keying the session dimension on the UTC day inverts it with no new
-        // threshold: five errors inside one burst count as ONE, and three days of
-        // a failing cron count as THREE.
-        const sessionKey = isRenderLane
-          ? sessionKeyFor(r.context, r.url)
-          : new Date(tsMs).toISOString().slice(0, 10);
-        const acc = groups.get(signature);
-        if (!acc) {
-          groups.set(signature, {
-            route: groupKey ?? null,
-            errorClass: normalizeErrorClass(r.message),
-            count: 1,
-            firstSeen: tsMs,
-            lastSeen: tsMs,
-            sessions: sessionKey ? new Set([sessionKey]) : new Set(),
-          });
-        } else {
-          acc.count += 1;
-          if (tsMs < acc.firstSeen) acc.firstSeen = tsMs;
-          if (tsMs > acc.lastSeen) acc.lastSeen = tsMs;
-          if (sessionKey) acc.sessions.add(sessionKey);
-        }
-      }
+      for (const r of page) grouper.add(r);
     }
-
-    const grouped: GroupedFault[] = Array.from(groups.entries()).map(([signature, a]) => ({
-      signature,
-      route: a.route,
-      errorClass: a.errorClass,
-      count: a.count,
-      // No usable session key on any row → sessions can't disambiguate; fall back
-      // to the occurrence count so the sessions gate degrades gracefully.
-      distinctSessions: a.sessions.size > 0 ? a.sessions.size : a.count,
-      firstSeen: a.firstSeen,
-      lastSeen: a.lastSeen,
-    }));
+    const { total: suppressedTotal, byPattern: suppressed } = grouper.suppressed();
+    const grouped = grouper.grouped();
+    // OPE-1665 — D1 platform-cause rows, collapsed into one incident per burst.
+    const platformIncidents = groupPlatformIncidents(grouper.platformHits());
 
     const ledgerRows = await db
       .select({
@@ -275,6 +146,8 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         filedAt: faultSignatures.filedAt,
         resolvedAt: faultSignatures.resolvedAt,
         createdAt: faultSignatures.createdAt,
+        incidentRoutes: faultSignatures.incidentRoutes,
+        incidentSources: faultSignatures.incidentSources,
       })
       .from(faultSignatures);
     const ledger: FaultLedgerRow[] = ledgerRows.map((r) => ({
@@ -292,6 +165,19 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
     }));
 
     const result = reconcileFaults(grouped, ledger, now);
+    const platformOps = reconcilePlatformIncidents(
+      platformIncidents,
+      ledgerRows
+        .filter((r) => isPlatformSignature(r.signature))
+        .map((r) => ({
+          signature: r.signature,
+          firstSeen: r.firstSeen.getTime(),
+          lastSeen: r.lastSeen.getTime(),
+          count: r.count,
+          incidentRoutes: r.incidentRoutes,
+          incidentSources: r.incidentSources,
+        }))
+    );
 
     // Apply the ledger mutations. Sequential + defensive: a single row failure
     // must not abort the scan or drop the response.
@@ -413,6 +299,69 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
       }
     }
 
+    // OPE-1665 — platform incident rows. Minted `watch` (ruled and collapsed,
+    // never filed per signature); a merge widens span/counts and never touches
+    // status, ope_id or resolved_at, so a person's later ruling stands.
+    for (const op of platformOps) {
+      const write = () =>
+        op.op === "insert"
+          ? db
+              .insert(faultSignatures)
+              .values({
+                signature: op.signature,
+                route: null,
+                errorClass: op.errorClass,
+                firstSeen: new Date(op.firstSeen),
+                lastSeen: new Date(op.lastSeen),
+                count: op.count,
+                // `watch` is an agent status OPE-811 kept (src/lib/faults/status.ts).
+                status: "watch" as FaultSignatureRow["status"],
+                opeId: null,
+                filedAt: null,
+                resolvedAt: null,
+                createdAt: now,
+                incidentRoutes: op.routes,
+                incidentSources: op.sources,
+                // Machine-ruled, not ruled by a person (drizzle/0426).
+                inheritedFrom: "platform",
+              })
+              .onConflictDoUpdate({
+                target: faultSignatures.signature,
+                set: {
+                  lastSeen: new Date(op.lastSeen),
+                  count: op.count,
+                  incidentRoutes: op.routes,
+                  incidentSources: op.sources,
+                },
+              })
+          : db
+              .update(faultSignatures)
+              .set({
+                firstSeen: new Date(op.firstSeen),
+                lastSeen: new Date(op.lastSeen),
+                count: op.count,
+                incidentRoutes: op.routes,
+                incidentSources: op.sources,
+              })
+              .where(eq(faultSignatures.signature, op.signature));
+      try {
+        await write();
+      } catch {
+        try {
+          await write();
+        } catch (err) {
+          ledgerWriteFailures += 1;
+          await logError(db, {
+            level: "error",
+            source: "faults:candidates",
+            message: "platform incident write failed after one retry; this scan is NOT a success",
+            error: err,
+            context: { op: op.op, signature: op.signature },
+          });
+        }
+      }
+    }
+
     // OPE-93 — emitter heartbeat. One info row per run so the operator (and the
     // OPE-83 dashboard) can answer "when did the emitter last run, and what did it
     // do?" — the empty-ledger ambiguity that prompted this audit. Best-effort;
@@ -433,6 +382,7 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         `deferred=${result.deferred.length} subThreshold=${result.subThreshold.length} ` +
         `linked=${result.linked.length} heldForSibling=${result.heldForSibling.length} ` +
         `inheritedNoise=${result.inheritedNoise.length} ` +
+        `platformIncidents=${platformIncidents.length} ` +
         `ledgerWriteFailures=${ledgerWriteFailures}`,
       context: {
         ledgerWriteFailures,
@@ -447,6 +397,8 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         linked: result.linked.length,
         heldForSibling: result.heldForSibling.length,
         inheritedNoise: result.inheritedNoise.length,
+        platformIncidents: platformIncidents.length,
+        platformHits: grouper.platformHits().length,
       },
     });
 
@@ -526,6 +478,9 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         heldForSibling: result.heldForSibling,
         // OPE-1174 — minted as `noise` by class inheritance, never proposed.
         inheritedNoise: result.inheritedNoise,
+        // OPE-1665 — one row per D1 platform burst, minted `watch`. Not work for
+        // the rail; reported so a human sees each incident once.
+        platformIncidents,
         // OPE-488 — the discarded-but-real groups, so a consumer can tell "quiet
         // traffic" from "everything fell just under the gate". Capped: this is a
         // diagnostic tally, not a work queue.

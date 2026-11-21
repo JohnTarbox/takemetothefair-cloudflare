@@ -36,7 +36,7 @@
  * verification. An upload once returned 200, set the DB field, and 404'd on the
  * CDN. Requires PLAYWRIGHT_BASE_URL to be set to the production origin.
  */
-import { test, expect, type Page, type Locator } from "@playwright/test";
+import { test, expect, type Page, type Locator } from "./fixtures";
 import { SYNTHETIC_COOKIE, SYNTHETIC_SOURCES } from "../src/lib/analytics/synthetic-traffic";
 
 /** Widths that matter in the field: iPhone SE, iPhone 12/13/14, Pro Max. */

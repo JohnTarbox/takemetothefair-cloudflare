@@ -27,12 +27,21 @@ describe("classifyKpi", () => {
     expect(classifyKpi("site_ctr", 0, FRESH)).toBe("RED");
   });
 
-  it("higher_better: covers conversion_rate and sitemap_quality", () => {
-    // OPE-265 — green 4.5%, red 3%. The measured 3.5–4.4% range reads amber.
-    expect(classifyKpi("conversion_rate", 0.045, FRESH)).toBe("GREEN");
-    expect(classifyKpi("conversion_rate", 0.04, FRESH)).toBe("YELLOW");
-    expect(classifyKpi("conversion_rate", 0.035, FRESH)).toBe("YELLOW");
-    expect(classifyKpi("conversion_rate", 0.029, FRESH)).toBe("RED");
+  it("OPE-1658 — conversion_rate is held INDETERMINATE while its target is re-baselined", () => {
+    // The numerator changed (ticket + application only); the old 4.5%/3%
+    // pair must not grade it — not GREEN off the old target, and not RED
+    // (which would alert) on the true ~1–1.5%. Value-agnostic until re-ruled.
+    expect(KPI_THRESHOLDS.conversion_rate.awaitingRebaseline).toMatch(/OPE-1658/);
+    for (const v of [0.07, 0.045, 0.04, 0.012, 0.001]) {
+      expect(classifyKpi("conversion_rate", v, FRESH)).toBe("INDETERMINATE");
+    }
+    // No other KPI is held.
+    for (const k of Object.keys(KPI_THRESHOLDS) as (keyof typeof KPI_THRESHOLDS)[]) {
+      if (k !== "conversion_rate") expect(KPI_THRESHOLDS[k].awaitingRebaseline).toBeUndefined();
+    }
+  });
+
+  it("higher_better: covers sitemap_quality", () => {
     expect(classifyKpi("sitemap_quality", 0.9, FRESH)).toBe("GREEN");
     expect(classifyKpi("sitemap_quality", 0.7, FRESH)).toBe("YELLOW");
     expect(classifyKpi("sitemap_quality", 0.5, FRESH)).toBe("RED");
@@ -70,7 +79,8 @@ describe("classifyKpi", () => {
     });
 
     it("conversion_rate has 96h SLA (GA4 finalization lag + grace)", () => {
-      expect(classifyKpi("conversion_rate", 0.09, STALE_HOURS(95))).toBe("GREEN");
+      // Held INDETERMINATE (OPE-1658) inside the SLA; STALE still wins past it.
+      expect(classifyKpi("conversion_rate", 0.09, STALE_HOURS(95))).toBe("INDETERMINATE");
       expect(classifyKpi("conversion_rate", 0.09, STALE_HOURS(97))).toBe("STALE");
     });
 

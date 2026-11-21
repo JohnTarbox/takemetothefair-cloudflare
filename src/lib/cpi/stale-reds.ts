@@ -13,6 +13,7 @@
 import type { ActionQueueEntry } from "@/lib/analytics-overview/types";
 import { escapeHtml, resolveDigestHref } from "@takemetothefair/utils";
 import { isParked, isTerminalStatus } from "@/lib/faults/status";
+import { isPlatformSignature } from "@/lib/faults/platform-incidents";
 
 export interface StaleRed {
   priority: "P0" | "P1";
@@ -178,7 +179,15 @@ export function selectStaleFaultReds(
   const stale: StaleRed[] = [];
 
   for (const row of rows) {
-    if (!isStaleEligible(row.status)) continue; // settled or parked → not stale
+    // OPE-1665 — a D1 platform incident row is minted `watch` by the emitter
+    // (one row per burst, src/lib/faults/platform-incidents.ts), not parked by a
+    // person, and the ticket that introduced it asks that a human still see
+    // each incident ONCE. So it is the one parked shape admitted here — as P1
+    // (a platform condition, not our outage), under the same 7-day recurrence
+    // window, and grouped by its `d1-platform:<cause>` class so the digest
+    // shows one line per cause however many bursts there were.
+    const platformIncident = isPlatformSignature(row.signature) && row.status === "watch";
+    if (!platformIncident && !isStaleEligible(row.status)) continue; // settled or parked → not stale
     if (Number.isNaN(row.firstSeen)) continue; // guard bad stamp, never throw
 
     // OPE-1096 — has it actually recurred lately? A NaN `lastSeen` is treated
@@ -193,8 +202,10 @@ export function selectStaleFaultReds(
     if (hoursInRed > thresholdHours) {
       const hoursSinceSeen = daysSinceSeen * 24;
       stale.push({
-        priority: hoursSinceSeen <= FAULT_P0_RECENCY_HOURS ? "P0" : "P1",
-        title: `Render fault: ${row.route ?? row.signature}`,
+        priority: !platformIncident && hoursSinceSeen <= FAULT_P0_RECENCY_HOURS ? "P0" : "P1",
+        title: platformIncident
+          ? `D1 platform incident: ${row.signature}`
+          : `Render fault: ${row.route ?? row.signature}`,
         refKey: row.signature,
         // Deep-link to the OPE-83 tile anchor on the analytics overview.
         href: "/admin/analytics#render-fault-health",
@@ -244,6 +255,16 @@ function formatAge(hoursInRed: number): string {
  * grouped under the FAMILY instead: one line per platform incident.
  */
 export const DIGEST_INCIDENT_FAMILIES: ReadonlyArray<{ pattern: RegExp; label: string }> = [
+  {
+    // OPE-1655 rework — must precede the deploy-lag pattern below (it also matches it).
+    pattern: /deploy-lag-watch-blind/i,
+    label: "Deploy-lag watch can't read main (alarm blind)",
+  },
+  {
+    // OPE-1655 — the deploy-lag watch's hourly fault, as one plain digest line.
+    pattern: /deploy-lag|production is behind main/i,
+    label: "Production behind main (deploys not landing)",
+  },
   {
     pattern: /d1 db is overloaded|too many resources consumed/i,
     label: "D1 overloaded (platform incident)",

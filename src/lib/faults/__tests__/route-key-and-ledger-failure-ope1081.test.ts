@@ -46,7 +46,8 @@ const SCHEMA_SQL = `
     signature TEXT PRIMARY KEY, route TEXT, error_class TEXT NOT NULL,
     first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL, count INTEGER NOT NULL,
     status TEXT NOT NULL, ope_id TEXT, filed_at INTEGER, resolved_at INTEGER,
-    created_at INTEGER NOT NULL, inherited_from TEXT
+    created_at INTEGER NOT NULL, inherited_from TEXT,
+    incident_routes INTEGER, incident_sources INTEGER
   );
 `;
 
@@ -221,5 +222,47 @@ describe("normalizeFaultRoute / computeSignature", () => {
     expect(computeSignature({ route: "/vendors/lainverse", message: msg, digest: null })).toBe(
       `/vendors/lainverse#${msg.toLowerCase()}`
     );
+  });
+});
+
+describe("OPE-1665 — the shipped route writes ONE watch row for a D1 platform burst", () => {
+  it("60 overload rows on 60 routes and 2 sources → one d1-platform row, plus a run that is ok", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const ins = sqlite.prepare(
+      `INSERT INTO error_logs (id, timestamp, level, message, source, route)
+       VALUES (?, ?, 'error', ?, ?, ?)`
+    );
+    for (let i = 0; i < 60; i++) {
+      const server = i % 2 === 1;
+      ins.run(
+        `p${i}`,
+        now - 120 + Math.floor(i / 6), // ten seconds, one burst
+        `Failed query: select "c${i}" from "t${i}" params: ${i}\ncause: D1_ERROR: D1 DB is overloaded. Too many resources consumed within a 10 second window.`,
+        server ? "app/vendors/page.tsx:getVendors" : "server-render",
+        server ? null : `/events/route-${i}?page=${i}`
+      );
+    }
+    const { status, body } = await run();
+    expect(status).toBe(200);
+    const rows = sqlite
+      .prepare(
+        "SELECT signature, status, count, error_class, incident_routes, incident_sources, inherited_from FROM fault_signatures"
+      )
+      .all() as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      status: "watch",
+      count: 60,
+      error_class: "d1-platform:overloaded",
+      incident_routes: 30,
+      incident_sources: 2,
+      inherited_from: "platform",
+    });
+    expect(String(rows[0].signature)).toMatch(/^d1-platform:overloaded@/);
+    expect(body.platformIncidents).toHaveLength(1);
+
+    // A second hourly scan over the same rows merges — still one row.
+    await run();
+    expect(sqlite.prepare("SELECT count(*) n FROM fault_signatures").get()).toEqual({ n: 1 });
   });
 });

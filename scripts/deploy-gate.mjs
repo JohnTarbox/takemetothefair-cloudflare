@@ -19,7 +19,15 @@
  */
 
 /**
- * @typedef {{ decision: "deploy" | "skip", sha: string | null, reason: string }} GateDecision
+ * `loud` (OPE-1655): a skip that must FAIL the deploy run instead of ending
+ * green. A red main CI used to skip all three deploy jobs while the run read
+ * "success", and prod sat on one commit from 11-13 to 11-16 with nothing alerted.
+ * Loud = this repository's own push-to-main CI run, for main's CURRENT HEAD, that
+ * did not succeed — or a HEAD we could not resolve. Everything else stays quiet:
+ * a stale run (a newer commit's run deploys, or fails loudly itself), a PR run,
+ * a fork, a non-main dispatch.
+ *
+ * @typedef {{ decision: "deploy" | "skip", sha: string | null, reason: string, loud: boolean }} GateDecision
  */
 
 /**
@@ -41,11 +49,13 @@ export function decide({
   mainHeadSha,
   mainHeadCiConclusion = null,
 }) {
-  const skip = (reason) => ({ decision: "skip", sha: null, reason });
+  const skip = (reason, loud = false) => ({ decision: "skip", sha: null, reason, loud });
+  const deploy = (sha, reason) => ({ decision: "deploy", sha, reason, loud: false });
 
   if (!mainHeadSha || !/^[0-9a-f]{40}$/.test(mainHeadSha)) {
-    // Every path below needs main's HEAD. Not knowing it is not permission.
-    return skip(`could not resolve main's HEAD (got ${JSON.stringify(mainHeadSha)})`);
+    // Every path below needs main's HEAD. Not knowing it is not permission —
+    // and not knowing it means no deploy will happen, so it is loud (OPE-1655).
+    return skip(`could not resolve main's HEAD (got ${JSON.stringify(mainHeadSha)})`, true);
   }
 
   if (eventName === "workflow_dispatch") {
@@ -54,7 +64,7 @@ export function decide({
     }
     // Deploy main's HEAD — the ref the operator dispatched on, pinned to a SHA
     // so every job in the run checks out the same commit.
-    return { decision: "deploy", sha: mainHeadSha, reason: "manual dispatch on main" };
+    return deploy(mainHeadSha, "manual dispatch on main");
   }
 
   if (eventName !== "workflow_run") {
@@ -64,8 +74,16 @@ export function decide({
   const run = event && event.workflow_run;
   if (!run) return skip("workflow_run event carries no workflow_run object");
 
+  // OPE-1655 — a red skip is loud only for OUR push-to-main run on main's
+  // current HEAD: that is the commit production should be on, and nothing else
+  // will deploy it.
+  const ownMainPush =
+    run.event === "push" &&
+    run.head_branch === "main" &&
+    (run.head_repository && run.head_repository.full_name) === repository &&
+    run.head_sha === mainHeadSha;
   if (run.conclusion !== "success") {
-    return skip(`CI concluded ${run.conclusion}`);
+    return skip(`CI concluded ${run.conclusion}`, ownMainPush);
   }
   if (run.event !== "push") {
     return skip(`CI was triggered by ${run.event}, not a push`);
@@ -90,21 +108,16 @@ export function decide({
     // batch-merge incident where an older commit survived as the deploy. So if
     // main's HEAD already has a green push CI run, deploy THAT commit here.
     if (mainHeadCiConclusion === "success") {
-      return {
-        decision: "deploy",
-        sha: mainHeadSha,
-        reason: `CI tested ${run.head_sha.slice(0, 8)}, but main is now ${mainHeadSha.slice(0, 8)} and its CI is already green; deploying main`,
-      };
+      return deploy(
+        mainHeadSha,
+        `CI tested ${run.head_sha.slice(0, 8)}, but main is now ${mainHeadSha.slice(0, 8)} and its CI is already green; deploying main`
+      );
     }
     return skip(
       `CI tested ${run.head_sha.slice(0, 8)} but main is now ${mainHeadSha.slice(0, 8)} (its CI: ${mainHeadCiConclusion ?? "not finished"}); the newer run deploys`
     );
   }
-  return {
-    decision: "deploy",
-    sha: run.head_sha,
-    reason: "green push-to-main CI run on main's HEAD",
-  };
+  return deploy(run.head_sha, "green push-to-main CI run on main's HEAD");
 }
 
 // ── CLI: `node scripts/deploy-gate.mjs` inside the gate job. ──────────────────
@@ -123,11 +136,11 @@ if (isMain) {
     mainHeadSha: (env.MAIN_HEAD_SHA ?? "").trim() || null,
     mainHeadCiConclusion: (env.MAIN_HEAD_CI_CONCLUSION ?? "").trim() || null,
   });
-  console.log(`[deploy-gate] ${result.decision}: ${result.reason}`);
+  console.log(`[deploy-gate] ${result.decision}${result.loud ? " (LOUD)" : ""}: ${result.reason}`);
   if (env.GITHUB_OUTPUT) {
     fs.appendFileSync(
       env.GITHUB_OUTPUT,
-      `decision=${result.decision}\nsha=${result.sha ?? ""}\nreason=${result.reason.replace(/\n/g, " ")}\n`
+      `decision=${result.decision}\nsha=${result.sha ?? ""}\nloud=${result.loud}\nreason=${result.reason.replace(/\n/g, " ")}\n`
     );
   }
 }

@@ -55,15 +55,25 @@ export const OVERVIEW_KPI_TILES = {
   },
   "overview.conversion-rate": {
     measures:
-      "outbound_ticket_click plus outbound_application_click events from organic search visitors, divided by GA4 sessions whose medium is organic, over 7 days.",
+      "Ticket and application clicks — outbound_ticket_click (excluding the 'Official Event Website' fallback, ctaSource=source_url) plus outbound_application_click — from organic search visitors, divided by GA4 sessions whose medium is organic, over 7 days.",
     source:
       "D1 `analytics_events` (numerator; the click's trafficMedium, recorded GA4-style at landing) and the GA4 Data API (organic sessions).",
     window:
       "Fixed 7 days ending 48h ago (GA4 finalization lag); ignores the window selector. GA4 cached 10 min.",
     caveats:
-      "OPE-1165: clicks record their traffic source from the day it shipped. Until 21 days of attributed clicks exist the rate shows 'not measured' and the badge is INDETERMINATE (out of the action queue); the footer then counts clicks from all sources. Attribution is per browser tab (utm → referrer → direct), close to but not identical with GA4's 30-minute session. No bot filter on clicks. Thresholds reset 2026-09-30 (OPE-265, John) from 8%/5% to 4.5%/3%: no 28- or 90-day window had reached 8%. Since OPE-265 the event-page button also falls back to the organizer source page when there is no ticket URL; those clicks count here and carry ctaSource=source_url.",
+      "OPE-1165: clicks record their traffic source from the day it shipped. Until 21 days of attributed clicks exist the rate shows 'not measured' and the badge is INDETERMINATE (out of the action queue); the footer then counts clicks from all sources. Attribution is per browser tab (utm → referrer → direct), close to but not identical with GA4's 30-minute session. No bot filter on clicks. Thresholds reset 2026-09-30 (OPE-265, John) from 8%/5% to 4.5%/3%: no 28- or 90-day window had reached 8%. Since OPE-265 the event-page button also falls back to the organizer source page when there is no ticket URL; from 2026-10-01 to 2026-11-16 those clicks were counted here (~85% of the numerator by mid-November). OPE-1658 split them out to the Official-site click rate tile; clicks before 10-01 carry no ctaSource and count here.",
     thresholds:
-      "Badge: green at 4.5% or more, red below 3%, amber between. STALE if GA4 data is over 96h old, or if the badge recompute stopped over 1h ago. Red or stale enters the action queue as P0.",
+      "Held INDETERMINATE (value shown, no alert, out of the action queue) while the target is re-baselined (OPE-1658): the old 4.5%/3% pair was ruled on the combined numerator. STALE still applies if GA4 data is over 96h old or the badge recompute stopped over 1h ago.",
+  },
+  "overview.official-site-click-rate": {
+    measures:
+      "outbound_ticket_click events with ctaSource=source_url — the 'Official Event Website' fallback button shown when an event has no ticket URL — from organic search visitors, divided by the same GA4 organic sessions as the conversion rate, over 7 days.",
+    source:
+      "D1 `analytics_events` (numerator, trafficMedium=organic) and the GA4 Data API (organic sessions).",
+    window: "Same fixed 7 days ending 48h ago as the conversion rate; ignores the window selector.",
+    caveats:
+      "Split out of the conversion rate on 2026-11-16 (OPE-1658); it and the conversion rate sum to the old combined rate. The button links only to source URLs that pass the url_domain_classifications ticket gate, so third-party directory pages are excluded.",
+    thresholds: "None — value only until there is a baseline (OPE-1658).",
   },
   "overview.account-engagement": {
     measures:

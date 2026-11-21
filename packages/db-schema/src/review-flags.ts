@@ -58,6 +58,14 @@ export const EVENT_REVIEW_FLAG_REASONS = [
    * (outcome `cancel_staged`) for an operator.
    */
   "promoter_cancel_request",
+  /**
+   * OPE-1586 — the TENTATIVE → SCHEDULED auto-promotion rule promoted this
+   * event, and a later read of the same organizer page no longer agreed with
+   * our start date, so the rule demoted it back to TENTATIVE. A judgement axis:
+   * a person decides which is right. While active, the rule will not promote
+   * the event again (no promote/demote flapping on a page that changes).
+   */
+  "auto_promotion_reversed",
 ] as const;
 export type EventReviewFlagReason = (typeof EVENT_REVIEW_FLAG_REASONS)[number];
 

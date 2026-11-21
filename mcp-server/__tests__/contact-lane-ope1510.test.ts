@@ -575,3 +575,100 @@ describe("the workflow wiring", () => {
     expect(wf).toContain("if (!caughtError && needsAdminDecision && !contactLaneFired) {");
   });
 });
+
+describe("OPE-1681 — a known contact's live conversation gets no auto-ack of any kind", () => {
+  const OUR_SEND = "<invite-1@meetmeatthefair.com>";
+  const ourSend = () =>
+    db
+      .insert(emailSendLedger)
+      .values({
+        messageId: "claim-invite-1",
+        sentAt: T,
+        recipient: DEBRA,
+        source: "email:claim-invite",
+        providerMessageId: OUR_SEND,
+        status: "sent",
+      } as never)
+      .run();
+
+  it("ACCEPTANCE (OHTM 2026-11-17 shape): a split reply sends nothing and owes one contact reply", async () => {
+    promoter();
+    contact("validated");
+    ourSend();
+    inbound("parent", { intent: "multi", classifiedIntent: "multi", inReplyTo: OUR_SEND });
+    inbound("c-event", {
+      parentEmailId: "parent",
+      intent: "new_event",
+      classifiedIntent: "new_event",
+      inReplyTo: OUR_SEND,
+    });
+    inbound("c-corr", { parentEmailId: "parent", inReplyTo: OUR_SEND });
+    // The fan-out winner carries the family's ok-multi; the correction child lost.
+    const winner = await lane("c-event", "ok-multi");
+    const loser = await runContactLane(db as never, {
+      messageRowId: "c-corr",
+      replyKind: "correction-ack",
+      replyAlreadySuppressed: true,
+      closedBySender: false,
+      isNewsletter: false,
+      now: T,
+    });
+    expect(winner.fired).toBe(true);
+    expect(loser.fired).toBe(true);
+    const open = obligations().filter((o) => o.status === "open");
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ inboundEmailId: "parent", kind: "contact" });
+    expect(drafts()).toHaveLength(1);
+    // Zero sends: the only reply row is the withheld ok-multi, ledgered stubbed.
+    const replies = ledger().filter((l) => l.source.startsWith("reply:"));
+    expect(replies.map((l) => [l.source, l.status])).toEqual([["reply:ok-multi", "stubbed"]]);
+  });
+
+  it.each([
+    ["new_event", "ok-multi"],
+    ["new_event", "ok"],
+    ["new_event", "already-exists"],
+    ["correction", "correction-ack"],
+    ["photo_intake", "photo-intake-resolved"],
+    ["support", "support-ack"],
+  ] as const)(
+    "a split child (%s → %s) from a known contact fires the lane",
+    async (intent, kind) => {
+      promoter();
+      contact("validated");
+      inbound("parent", { intent: "multi", classifiedIntent: "multi" });
+      inbound("child", { parentEmailId: "parent", intent, classifiedIntent: intent });
+      expect((await lane("child", kind as never)).fired).toBe(true);
+    }
+  );
+
+  it("a standalone reply to one of our own sends withholds even an ok", async () => {
+    promoter();
+    contact("validated");
+    ourSend();
+    inbound("m1", { intent: "new_event", inReplyTo: OUR_SEND });
+    expect((await lane("m1", "ok")).fired).toBe(true);
+  });
+
+  it("a References chain naming our send counts too", async () => {
+    promoter();
+    contact("validated");
+    ourSend();
+    inbound("m1", { emailReferences: `<other@gmail.example> ${OUR_SEND}` });
+    expect((await lane("m1", "ok")).fired).toBe(true);
+  });
+
+  it("a reply to a message we never sent keeps Decision 1 (A): the ok still goes", async () => {
+    promoter();
+    contact("validated");
+    ourSend();
+    inbound("m1", { inReplyTo: "<abc@gmail.example>" });
+    expect(await lane("m1", "ok")).toMatchObject({ fired: false, skip: "not-a-generic-ack" });
+  });
+
+  it("an unknown sender's split child is untouched", async () => {
+    inbound("parent", { intent: "multi" });
+    inbound("child", { parentEmailId: "parent" });
+    expect(await lane("child", "ok-multi")).toMatchObject({ fired: false, skip: "unknown-sender" });
+  });
+});

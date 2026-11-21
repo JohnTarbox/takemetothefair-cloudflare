@@ -45,6 +45,10 @@ import {
   type ApplicationPatchInput,
 } from "@takemetothefair/utils";
 import type { PromoterVendorCallInput } from "@/lib/validations";
+import {
+  changedVendorFields,
+  citePromoterVendorFields,
+} from "@/lib/events/promoter-vendor-citations";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -70,7 +74,7 @@ const dollars = (cents: number | null | undefined) => (cents == null ? null : ce
 
 async function loadOwned(db: Db, userId: string, eventId: string) {
   const [promoter] = await db
-    .select({ id: promoters.id })
+    .select({ id: promoters.id, companyName: promoters.companyName })
     .from(promoters)
     .where(eq(promoters.userId, userId))
     .limit(1);
@@ -104,7 +108,7 @@ async function loadOwned(db: Db, userId: string, eventId: string) {
       )
     )
     .limit(1);
-  return { event, app: app ?? null };
+  return { event, app: app ?? null, promoterName: promoter.companyName };
 }
 
 function present(loaded: NonNullable<Awaited<ReturnType<typeof loadOwned>>>): VendorCallState {
@@ -267,6 +271,32 @@ export async function applyPromoterVendorCall(
   );
   // One atomic batch: the event columns, the route row and the audit row.
   await db.batch(stmts as unknown as Parameters<typeof db.batch>[0]);
+
+  // OPE-1680 — a fee or deadline the organizer changed here is stored with a
+  // `user_submitted` citation naming the promoter, like the portal's create and
+  // draft routes. After the batch commits, and only for a stored value that
+  // actually changed. Best-effort: a failure is logged, the save stands.
+  const changed = changedVendorFields(
+    (k) => (input as Record<string, unknown>)[k] !== undefined,
+    eventPatch,
+    event
+  );
+  await citePromoterVendorFields(db as Parameters<typeof citePromoterVendorFields>[0], {
+    eventId: event.id,
+    promoterName: loaded.promoterName,
+    userId,
+    route: "events/[id]/vendor-call",
+    vendorFeeMin: changed.vendorFeeMin
+      ? { submitted: input.vendorFeeMin, storedCents: eventPatch.vendorFeeMinCents ?? null }
+      : { submitted: null, storedCents: null },
+    vendorFeeMax: changed.vendorFeeMax
+      ? { submitted: input.vendorFeeMax, storedCents: eventPatch.vendorFeeMaxCents ?? null }
+      : { submitted: null, storedCents: null },
+    applicationDeadline: changed.applicationDeadline
+      ? { submitted: input.applicationDeadline, stored: eventPatch.applicationDeadline ?? null }
+      : { submitted: null, stored: null },
+    now,
+  });
 
   const after = await loadOwned(db, userId, eventId);
   return { ok: true, state: present(after!), fieldsWritten };
