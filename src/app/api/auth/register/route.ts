@@ -23,6 +23,7 @@ import {
   type ResolveClaimAtSignupResult,
 } from "@/lib/claims/resolve-claim-at-signup";
 import { recordClaimEvidence } from "@/lib/claims/claim-evidence";
+import { redeemInviteAtSignup } from "@/lib/claims/redeem-invite-at-signup";
 import {
   findNameCollision,
   nameCollisionMessage,
@@ -86,6 +87,9 @@ const registerSchema = z.object({
   // (never an unverified auto-transfer). See @/lib/claims/resolve-claim-at-signup.
   claimSlug: z.string().optional(),
   claimVendorSlug: z.string().optional(),
+  // OPE-1692 — the raw `invite=` token from a create_claim_invite magic link.
+  // Redeemed by redeemInviteAtSignup BEFORE the contact-email resolver runs.
+  inviteToken: z.string().max(200).optional(),
   turnstileToken: z.string().optional(), // Turnstile verification token
 });
 
@@ -190,6 +194,7 @@ export async function POST(request: NextRequest) {
       website: rawWebsite,
       claimSlug: claimSlugField,
       claimVendorSlug,
+      inviteToken,
       turnstileToken,
     } = validation.data;
     // Canonical claim slug — accept the new `claimSlug` field, fall back to the
@@ -312,6 +317,44 @@ export async function POST(request: NextRequest) {
     // below, once, for either role branch).
     let claimResult: ResolveClaimAtSignupResult | undefined;
 
+    // OPE-1692 — a create_claim_invite link carries `invite=<token>`. Try it
+    // first: an exact invited-address match approves now; a colleague on the
+    // same organization domain is approved when they verify their email. Any
+    // other result falls through to resolveClaimAtSignup below, as before, and
+    // is logged so a dead invite is visible rather than silent.
+    let inviteHandled = false;
+    if (inviteToken && (role === "PROMOTER" || role === "VENDOR")) {
+      try {
+        const inv = await redeemInviteAtSignup(db, {
+          rawToken: inviteToken,
+          userId,
+          userEmail: email,
+          role,
+        });
+        if (inv.kind === "redeemed") {
+          claim = { outcome: "approved", entityType: inv.entityType };
+          inviteHandled = true;
+        } else if (inv.kind === "pending_verification") {
+          claim = { outcome: "pending_verification", entityType: inv.entityType };
+          inviteHandled = true;
+        } else {
+          await logError(db, {
+            level: "warn",
+            message: `OPE-1692 claim invite not redeemed at signup: ${inv.reason}`,
+            source: "api/auth/register:claim-invite",
+            context: { reason: inv.reason, claimSlug: claimSlug ?? null, role, userId },
+          });
+        }
+      } catch (inviteErr) {
+        await logError(db, {
+          message: "OPE-1692 claim invite redemption threw at signup",
+          error: inviteErr,
+          source: "api/auth/register:claim-invite",
+          context: { claimSlug: claimSlug ?? null, role, userId },
+        });
+      }
+    }
+
     // Two distinct signup shapes per entity role:
     //  (a) claim funnel (claimSlug present): resolve the claim SAFELY against an
     //      EXISTING listing. resolveClaimAtSignup transfers ownership ONLY on a
@@ -322,7 +365,7 @@ export async function POST(request: NextRequest) {
     //  (b) plain signup (no claimSlug): the user is creating THEIR OWN new
     //      listing, so we mint + mark it claimed (they are the author; this is
     //      not claiming someone else's listing).
-    if (role === "PROMOTER") {
+    if (role === "PROMOTER" && !inviteHandled) {
       if (claimSlug) {
         const res = await resolveClaimAtSignup(db, {
           entityType: "PROMOTER",
@@ -365,7 +408,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (role === "VENDOR") {
+    if (role === "VENDOR" && !inviteHandled) {
       if (claimSlug) {
         const res = await resolveClaimAtSignup(db, {
           entityType: "VENDOR",

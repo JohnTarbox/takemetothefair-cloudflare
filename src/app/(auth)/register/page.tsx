@@ -121,6 +121,9 @@ function RegisterForm() {
   const prefilledBusinessName = searchParams.get("businessName") || "";
   const prefilledCompanyName = searchParams.get("companyName") || "";
   const claimSlug = searchParams.get("claim") || "";
+  // OPE-1692 — the raw token from a create_claim_invite link. Forwarded to the
+  // register API, which redeems it; also used to name the listing up front.
+  const inviteToken = searchParams.get("invite") || "";
 
   const [formData, setFormData] = useState({
     email: "",
@@ -140,6 +143,38 @@ function RegisterForm() {
     claimUrl: string;
   } | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [invite, setInvite] = useState<{
+    valid: boolean;
+    reason?: "expired" | "claimed" | "invalid";
+    entityType?: "VENDOR" | "PROMOTER";
+    entityName?: string;
+  } | null>(null);
+
+  // OPE-1692 — say which listing the invite is for, and pre-fill its name.
+  useEffect(() => {
+    if (!inviteToken) return;
+    let cancelled = false;
+    fetch(`/api/claim/invite?token=${encodeURIComponent(inviteToken)}`)
+      .then((r) => r.json() as Promise<NonNullable<typeof invite>>)
+      .then((data) => {
+        if (cancelled || !data) return;
+        setInvite(data);
+        const name = data.entityName;
+        if (name && data.reason !== "claimed") {
+          setFormData((prev) =>
+            data.entityType === "VENDOR"
+              ? { ...prev, businessName: prev.businessName || name }
+              : { ...prev, companyName: prev.companyName || name }
+          );
+        }
+      })
+      .catch(() => {
+        // Banner is a convenience; the server still redeems the token.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [inviteToken]);
   const [isLoading, setIsLoading] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
 
@@ -339,6 +374,7 @@ function RegisterForm() {
           businessName: formData.businessName,
           website: formData.website?.trim() || undefined,
           claimSlug: claimSlug || undefined,
+          inviteToken: inviteToken || undefined,
           turnstileToken: turnstileToken || undefined,
         }),
       });
@@ -467,6 +503,24 @@ function RegisterForm() {
         <CardHeader>
           <h1 className="text-2xl font-bold text-center text-foreground">Create an Account</h1>
           <p className="text-center text-muted-foreground mt-2">Create your free account</p>
+          {invite?.entityName && invite.valid && (
+            <div
+              data-testid="claim-invite-banner"
+              className="mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-900 text-sm"
+            >
+              You&apos;re claiming <strong>{invite.entityName}</strong>. Sign up with your work
+              email and we&apos;ll link the listing to your account.
+            </div>
+          )}
+          {invite?.entityName && !invite.valid && invite.reason === "expired" && (
+            <div
+              data-testid="claim-invite-banner"
+              className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-sm"
+            >
+              This invite for <strong>{invite.entityName}</strong> has expired. You can still sign
+              up, and we&apos;ll review your claim.
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
