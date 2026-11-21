@@ -22,6 +22,7 @@
  * ever confirms a subscription we asked for, and a notification only marks a
  * feed due — the read is gated by FEED_POLLING_ENABLED).
  */
+import { guardedFetch } from "@takemetothefair/site-fetch";
 import { and, eq, isNotNull, lte, or } from "drizzle-orm";
 import {
   countPingOutcome,
@@ -180,7 +181,10 @@ async function sendSubscribe(
     .where(eq(feedWebsubSubscriptions.id, sub.id));
   let error: string | null = null;
   try {
-    const res = await fetchImpl(sub.hubUrl, {
+    // OPE-1648 — the hub URL comes from feed content, so the POST is guarded:
+    // host-checked, no redirects (a hub that redirects a subscribe request is
+    // refused, not followed), a timeout, and a small cap on the reply we discard.
+    const res = await guardedFetch(sub.hubUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -193,8 +197,12 @@ async function sendSubscribe(
         "hub.secret": sub.secret,
         "hub.lease_seconds": String(WEBSUB_LEASE_SECONDS),
       }).toString(),
-      signal: AbortSignal.timeout(20_000),
+      maxBytes: 64 * 1024,
+      maxRedirects: 0,
+      timeoutMs: 20_000,
+      fetchImpl,
     });
+    res.cancel();
     if (!res.ok) error = `hub answered HTTP ${res.status}`;
   } catch (e) {
     error = `hub request failed: ${(e as Error).message}`.slice(0, 300);

@@ -8,8 +8,21 @@
  *
  * TEC's `start_date` / `end_date` are the organizer's LOCAL wall time; we keep
  * them as local strings (feed-event.ts says why).
+ *
+ * OPE-1648 — every page goes through `guardedFetch` (each redirect hop
+ * re-checked, the body streamed under a cap, a timeout through the body), and
+ * `next_rest_url` comes from the response BODY, so it is followed only while
+ * it stays on the feed's own host. A page that points elsewhere ends the read
+ * there, and the read is reported partial so drop detection does not mistake
+ * the unread pages for removed events.
  */
+import { guardedFetch } from "@takemetothefair/site-fetch";
 import { parseTecPage, tecEventsUrl, type FeedEvent } from "@takemetothefair/utils/feeds";
+import { FEED_USER_AGENT } from "./fetch-feed.js";
+
+/** Same 5 MB cap as the calendar read in fetch-feed.ts. */
+const TEC_PAGE_MAX_BYTES = 5 * 1024 * 1024;
+const TEC_PAGE_TIMEOUT_MS = 20_000;
 
 export {
   htmlToText,
@@ -24,6 +37,17 @@ export interface TecReadResult {
   pages: number;
   /** Items the mapper could not use (no id or no title). */
   skipped: number;
+  /**
+   * OPE-1648 — set when a page's `next_rest_url` pointed off the feed's host
+   * and paging stopped there. The read is then partial.
+   */
+  refusedNextHost: string | null;
+}
+
+/** Same host, ignoring a leading `www.` (WordPress sites commonly bounce between the two). */
+function sameSite(a: URL, b: URL): boolean {
+  const h = (u: URL) => u.hostname.toLowerCase().replace(/^www\./, "");
+  return h(a) === h(b);
 }
 
 /**
@@ -39,26 +63,49 @@ export async function readTecFeed(
     maxPages?: number;
   }
 ): Promise<TecReadResult> {
-  const doFetch = opts.fetchImpl ?? fetch;
   const maxPages = opts.maxPages ?? 10;
 
   const out: FeedEvent[] = [];
   let skipped = 0;
   let pages = 0;
-  let next: string | null = tecEventsUrl(feedUrl, opts.startDate, opts.endDate);
+  let refusedNextHost: string | null = null;
+  const first = tecEventsUrl(feedUrl, opts.startDate, opts.endDate);
+  const home = new URL(first);
+  let next: string | null = first;
   while (next && pages < maxPages) {
-    const res = await doFetch(next, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "MeetMeAtTheFair-FeedReader/1.0 (+https://meetmeatthefair.com)",
-      },
+    const res = await guardedFetch(next, {
+      accept: "application/json",
+      headers: { "User-Agent": FEED_USER_AGENT },
+      maxBytes: TEC_PAGE_MAX_BYTES,
+      timeoutMs: TEC_PAGE_TIMEOUT_MS,
+      fetchImpl: opts.fetchImpl,
     });
     pages++;
-    if (!res.ok) throw new Error(`feed HTTP ${res.status} on page ${pages}`);
+    if (!res.ok) {
+      res.cancel();
+      throw new Error(`feed HTTP ${res.status} on page ${pages}`);
+    }
     const page = parseTecPage(await res.json());
     out.push(...page.events);
     skipped += page.skipped;
     next = page.next;
+    if (next) {
+      let target: URL | null = null;
+      try {
+        target = new URL(next, home);
+      } catch {
+        target = null;
+      }
+      if (!target || !sameSite(target, home)) {
+        refusedNextHost = target ? target.hostname : String(next).slice(0, 200);
+        console.warn(
+          `[feeds/tec] refused next_rest_url off the feed host: feed=${home.hostname} next_host=${refusedNextHost} after_page=${pages}`
+        );
+        next = null;
+      } else {
+        next = target.href;
+      }
+    }
   }
-  return { events: out, pages, skipped };
+  return { events: out, pages, skipped, refusedNextHost };
 }

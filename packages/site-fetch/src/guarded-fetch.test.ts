@@ -226,3 +226,65 @@ describe("ordinary pages still work", () => {
     expect(await res.text()).toBe("gone");
   });
 });
+
+describe("OPE-1648 — injected fetchImpl and POST", () => {
+  it("an injected fetchImpl is used instead of the global, with every hop still checked", async () => {
+    const global = stubFetch(() => html());
+    const calls: string[] = [];
+    const impl = (async (u: RequestInfo | URL) => {
+      calls.push(String(u));
+      return redirect("http://127.0.0.1/");
+    }) as typeof fetch;
+    const err = await guardedFetch("https://fair.example.org/", {
+      maxBytes: 1024,
+      fetchImpl: impl,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(GuardedFetchError);
+    expect((err as GuardedFetchError).code).toBe("blocked_host");
+    expect(calls).toEqual(["https://fair.example.org/"]);
+    expect(global).not.toHaveBeenCalled();
+  });
+
+  it("POST sends its body; a 303 continues as a GET without it", async () => {
+    const seen: Array<{ url: string; method?: string; body?: unknown }> = [];
+    stubFetch((url, init) => {
+      seen.push({ url, method: init?.method, body: init?.body });
+      return seen.length === 1 ? redirect("https://hub.example.org/done", 303) : html("ok");
+    });
+    const res = await guardedFetch("https://hub.example.org/sub", {
+      method: "POST",
+      body: "hub.mode=subscribe",
+      maxBytes: 1024,
+    });
+    expect(await res.text()).toBe("ok");
+    expect(seen).toEqual([
+      { url: "https://hub.example.org/sub", method: "POST", body: "hub.mode=subscribe" },
+      { url: "https://hub.example.org/done", method: "GET", body: undefined },
+    ]);
+  });
+
+  it("a 307 resends the POST and its body", async () => {
+    const seen: Array<{ method?: string; body?: unknown }> = [];
+    stubFetch((_url, init) => {
+      seen.push({ method: init?.method, body: init?.body });
+      return seen.length === 1 ? redirect("https://hub.example.org/v2", 307) : html("ok");
+    });
+    await guardedFetch("https://hub.example.org/sub", {
+      method: "POST",
+      body: "x=1",
+      maxBytes: 1024,
+    }).then((r) => r.cancel());
+    expect(seen).toEqual([
+      { method: "POST", body: "x=1" },
+      { method: "POST", body: "x=1" },
+    ]);
+  });
+
+  it("a GET never sends a body even if one is passed", async () => {
+    const spy = stubFetch(() => html());
+    await guardedFetch("https://fair.example.org/", { body: "nope", maxBytes: 1024 }).then((r) =>
+      r.cancel()
+    );
+    expect(spy.mock.calls[0][1]?.body).toBeUndefined();
+  });
+});

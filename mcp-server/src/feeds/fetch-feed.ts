@@ -8,7 +8,15 @@
  *     read), so an unchanged feed costs the organizer a 304 and us no work;
  *   - a timeout and a body-size cap, so a slow or huge site cannot hold a run;
  *   - per-feed backoff on errors (`nextReadDelayMs`), applied by the scheduler.
+ *
+ * OPE-1648 — and the OPE-1370 guard: the organizer controls both the content
+ * and the redirects on their own domain, and this runs on a cron with nobody
+ * watching. So the read goes through `guardedFetch`: every redirect hop is
+ * re-checked against the SSRF host list, the body is STREAMED and aborted at
+ * the cap (a chunked body with no Content-Length can no longer be read whole
+ * first), and the timeout stays armed through the body read.
  */
+import { guardedFetch } from "@takemetothefair/site-fetch";
 
 export const FEED_USER_AGENT = "MeetMeAtTheFair-FeedReader/1.0 (+https://meetmeatthefair.com)";
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -36,32 +44,34 @@ export async function fetchConditional(
     accept?: string;
   } = {}
 ): Promise<ConditionalResult> {
-  const doFetch = opts.fetchImpl ?? fetch;
   const headers: Record<string, string> = {
     "User-Agent": FEED_USER_AGENT,
     Accept: opts.accept ?? "text/calendar, application/xml, text/html;q=0.9, */*;q=0.5",
   };
   if (opts.etag) headers["If-None-Match"] = opts.etag;
   if (opts.lastModified) headers["If-Modified-Since"] = opts.lastModified;
-  const res = await doFetch(url, {
+  const res = await guardedFetch(url, {
     headers,
-    redirect: "follow",
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    maxBytes: MAX_BYTES,
+    timeoutMs: TIMEOUT_MS,
+    fetchImpl: opts.fetchImpl,
   });
   const etag = res.headers.get("etag");
   const lastModified = res.headers.get("last-modified");
   if (res.status === 304) {
+    res.cancel();
     return {
       status: "not_modified",
       etag: etag ?? opts.etag ?? null,
       lastModified: lastModified ?? opts.lastModified ?? null,
     };
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > MAX_BYTES) throw new Error(`body is ${declared} bytes, over the ${MAX_BYTES} cap`);
+  if (!res.ok) {
+    res.cancel();
+    throw new Error(`HTTP ${res.status}`);
+  }
+  // Streams, and throws GuardedFetchError("too_large") the moment it passes the cap.
   const body = await res.text();
-  if (body.length > MAX_BYTES) throw new Error(`body is over the ${MAX_BYTES}-byte cap`);
   return {
     status: "ok",
     body,
