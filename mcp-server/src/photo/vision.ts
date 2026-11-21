@@ -29,6 +29,7 @@
  */
 
 import { extractJsonObject, extractJsonValue } from "../model-json.js";
+import { isGenericSignName, isProductEcho } from "./sign-words.js";
 
 /**
  * Vision model. Kept as a constant (not inlined) so it is swappable in one
@@ -600,6 +601,14 @@ export type StageKind =
   | "booth_identifiable_minor"
   | "booth_roster_check_failed"
   | "booth_not_at_a_stall"
+  /** OPE-1695 — the "name" is only sign words ("Welcome", "Cash Only"). */
+  | "booth_name_generic"
+  /** OPE-1695 — the products list just repeats the name (["Welcome","Welcome"]). */
+  | "booth_name_echo"
+  /** OPE-1695 — a brand-new vendor with nothing beyond its name to back it. */
+  | "booth_new_vendor_uncorroborated"
+  /** OPE-1695 — the existing-vendor name lookup threw; not written unchecked. */
+  | "booth_vendor_check_failed"
   /** OPE-1694 — the sign's domain is on more than one vendor; a person picks. */
   | "booth_domain_ambiguous"
   /** OPE-1694 — the domain lookup threw; never written on the strength of an unrun check. */
@@ -673,6 +682,24 @@ export function disposition(id: BoothIdentification): Disposition {
       identification: id,
       reason: "a booth, but its name is not legible",
       stageKind: "booth_name_unreadable",
+    };
+  }
+  // OPE-1695 — is what the model READ a business name at all? Confidence
+  // cannot answer that: "Welcome" was read correctly, at 1.0.
+  if (isGenericSignName(id.businessName)) {
+    return {
+      action: "stage",
+      identification: id,
+      reason: `generic sign text, not a business name: "${id.businessName}"`,
+      stageKind: "booth_name_generic",
+    };
+  }
+  if (isProductEcho(id.businessName, id.products)) {
+    return {
+      action: "stage",
+      identification: id,
+      reason: `the products list only repeats the name "${id.businessName}" — likely sign text`,
+      stageKind: "booth_name_echo",
     };
   }
   if (id.confidence < AUTO_WRITE_CONFIDENCE) {

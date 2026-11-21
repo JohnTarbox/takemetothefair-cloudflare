@@ -45,8 +45,10 @@ import {
 import { attachGeneralPhotos } from "./general-photos.js";
 import { autoWriteBooths, type AutoWriteOutcome } from "./auto-write.js";
 import { matchRosterPerformer, resolvePerformerPhoto } from "./performer-photos.js";
+import { hasIndependentProducts } from "./sign-words.js";
 import {
   extractSignDomain,
+  findFuzzyMatch,
   resolveVendorBySignDomain,
   type DomainVendorMatch,
   type VendorLinkDb,
@@ -359,6 +361,40 @@ export async function runBoothPipeline(
               stageKind: "booth_domain_check_failed",
             };
           }
+        }
+      }
+
+      // OPE-1695 — a would-write that CREATES a vendor needs evidence beyond
+      // the name: a web address, or products that are not an echo of it. A
+      // link to an existing vendor (by domain or by name) is unaffected. The
+      // name lookup is the same fuzzy match createOrLinkVendor will run, on the
+      // same domain-cleaned name, so "would create" here means create there.
+      if (d.action === "write" && domainMatches.get(r.photo.key)?.kind !== "one") {
+        const id = d.identification;
+        const name = sd.cleanedName ?? id.businessName ?? "";
+        try {
+          const existing = await findFuzzyMatch(db as unknown as VendorLinkDb, name, null);
+          const corroborated =
+            (sd.domain !== null && !sd.nonOwnable) || hasIndependentProducts(name, id.products);
+          if (!existing && !corroborated) {
+            d = {
+              action: "stage",
+              identification: id,
+              reason: `would create new vendor "${name}" with nothing but its name to back it (no web address, no products)`,
+              stageKind: "booth_new_vendor_uncorroborated",
+            };
+          }
+        } catch (e) {
+          d = {
+            action: "stage",
+            identification: id,
+            reason:
+              `vendor lookup failed — not auto-written: ${e instanceof Error ? e.message : String(e)}`.slice(
+                0,
+                200
+              ),
+            stageKind: "booth_vendor_check_failed",
+          };
         }
       }
     }
