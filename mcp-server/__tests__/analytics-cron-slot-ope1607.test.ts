@@ -50,7 +50,7 @@ describe("analytics cron slot (OPE-1607)", () => {
 
   it("registers the trigger in wrangler.toml", () => {
     const crons = WRANGLER.match(/^crons = \[(.*)\]$/m)?.[1] ?? "";
-    expect(crons).toContain(`"0 6 * * *"`);
+    expect(crons).toContain(`"5 6 * * *"`); // OPE-1690 — the daily batch moved off 06:00
     expect(crons).toContain(`"${SLOT}"`);
   });
 });

@@ -10,6 +10,9 @@ import * as schema from "@/lib/db/schema";
 import { HEARTBEAT_PROBES } from "@/lib/heartbeat";
 import {
   blockKey,
+  INSERT_OVERLOAD_RETRY_MS,
+  INSERT_YIELD_MS,
+  isD1OverloadError,
   loadStoredDuplicates,
   planBlockedPairs,
   runFullDuplicateSweep,
@@ -164,6 +167,88 @@ describe("runFullDuplicateSweep (vendors)", () => {
     await expect(
       runFullDuplicateSweep(db, "vendors", { now: new Date(1_800_000_000_000) })
     ).rejects.toThrow(/run not published/);
+    expect(raw.prepare("SELECT COUNT(*) n FROM entity_duplicate_sweep_runs").get()).toEqual({
+      n: 0,
+    });
+  });
+});
+
+describe("runFullDuplicateSweep — D1 load (OPE-1690)", () => {
+  let raw: Database.Database;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let db: any;
+  const overload = () =>
+    new Error("Failed query: insert into entity_duplicate_sweep_pairs ...", {
+      cause: new Error(
+        "D1_ERROR: D1 DB is overloaded. Too many resources consumed within a 10 second window."
+      ),
+    });
+
+  beforeEach(() => {
+    raw = new Database(":memory:");
+    raw.exec(DDL);
+    db = drizzle(raw, { schema });
+    // 8 identical names → 28 pairs → two insert chunks of ≤20.
+    for (let i = 0; i < 8; i++)
+      raw
+        .prepare("INSERT INTO vendors (id, business_name) VALUES (?, ?)")
+        .run(`v${i}`, "Willow Press");
+  });
+
+  it("recognises an overload in the cause chain, and nothing else", () => {
+    expect(isD1OverloadError(overload())).toBe(true);
+    expect(isD1OverloadError(new Error("UNIQUE constraint failed"))).toBe(false);
+  });
+
+  it("yields between chunks and retries an overloaded chunk, then publishes", async () => {
+    const real = db.insert.bind(db);
+    let pairInserts = 0;
+    db.insert = (table: unknown) => {
+      if (table === schema.entityDuplicateSweepPairs && pairInserts++ === 0) {
+        return { values: async () => Promise.reject(overload()) };
+      }
+      return real(table);
+    };
+    const slept: number[] = [];
+    const res = await runFullDuplicateSweep(db, "vendors", {
+      now: new Date(1_800_000_000_000),
+      sleep: async (ms) => void slept.push(ms),
+    });
+    expect(res.storedPairCount).toBe(28);
+    // One backoff for the overloaded first chunk, one yield before chunk two.
+    expect(slept).toEqual([INSERT_OVERLOAD_RETRY_MS[0], INSERT_YIELD_MS]);
+    expect(raw.prepare("SELECT COUNT(*) n FROM entity_duplicate_sweep_pairs").get()).toEqual({
+      n: 28,
+    });
+  });
+
+  it("gives up after the last backoff, and a non-overload error is not retried", async () => {
+    const real = db.insert.bind(db);
+    db.insert = (table: unknown) =>
+      table === schema.entityDuplicateSweepPairs
+        ? { values: async () => Promise.reject(overload()) }
+        : real(table);
+    const slept: number[] = [];
+    await expect(
+      runFullDuplicateSweep(db, "vendors", {
+        now: new Date(1_800_000_000_000),
+        sleep: async (ms) => void slept.push(ms),
+      })
+    ).rejects.toThrow(/Failed query/);
+    expect(slept).toEqual(INSERT_OVERLOAD_RETRY_MS);
+
+    db.insert = (table: unknown) =>
+      table === schema.entityDuplicateSweepPairs
+        ? { values: async () => Promise.reject(new Error("UNIQUE constraint failed")) }
+        : real(table);
+    slept.length = 0;
+    await expect(
+      runFullDuplicateSweep(db, "vendors", {
+        now: new Date(1_800_000_000_000),
+        sleep: async (ms) => void slept.push(ms),
+      })
+    ).rejects.toThrow(/UNIQUE/);
+    expect(slept).toEqual([]);
     expect(raw.prepare("SELECT COUNT(*) n FROM entity_duplicate_sweep_runs").get()).toEqual({
       n: 0,
     });

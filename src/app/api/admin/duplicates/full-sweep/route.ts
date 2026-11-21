@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { logError } from "@/lib/logger";
-import { runFullDuplicateSweep } from "@/lib/duplicates/full-sweep";
+import { isD1OverloadError, runFullDuplicateSweep } from "@/lib/duplicates/full-sweep";
 import { FULL_SWEEP_TYPES } from "@/lib/duplicates/full-sweep-types";
 import type { DuplicateEntityType } from "@/lib/duplicates/types";
 
@@ -32,14 +32,20 @@ export const POST = withAuthorized(async ({ request, db }) => {
     });
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
+    // OPE-1690 — a D1 overload is load, not a bug: 503 + retryable tells the
+    // cron to back off and re-run this type rather than give up for the day.
+    const overloaded = isD1OverloadError(error);
     await logError(db, {
       message: "Full duplicate sweep failed",
       error,
       source: "api/admin/duplicates/full-sweep",
       request,
-      context: { type },
-      statusCode: 500,
+      context: { type, overloaded },
+      statusCode: overloaded ? 503 : 500,
     });
-    return NextResponse.json({ error: "Full duplicate sweep failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Full duplicate sweep failed", ...(overloaded ? { retryable: true } : {}) },
+      { status: overloaded ? 503 : 500 }
+    );
   }
 });
