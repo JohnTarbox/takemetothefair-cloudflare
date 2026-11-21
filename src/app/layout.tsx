@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { Providers } from "@/components/layout/providers";
+import { RenderNowProvider } from "@/lib/hooks/render-now";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
 import { UnverifiedBanner } from "@/components/layout/unverified-banner";
@@ -147,15 +148,18 @@ export default function RootLayout({
       <body className="antialiased min-h-screen flex flex-col">
         <OrganizationSchema />
         <Providers>
-          <WebVitals />
-          <ErrorAnalyticsBridge />
-          <TrafficAttributionCapture />
-          <Header />
-          <UnverifiedBanner />
-          <main id="main-content" className="flex-1">
-            {children}
-          </main>
-          <Footer />
+          {/* OPE-1691 — hydration reads the server's render time (see render-now). */}
+          <RenderNowProvider now={Date.now()}>
+            <WebVitals />
+            <ErrorAnalyticsBridge />
+            <TrafficAttributionCapture />
+            <Header />
+            <UnverifiedBanner />
+            <main id="main-content" className="flex-1">
+              {children}
+            </main>
+            <Footer />
+          </RenderNowProvider>
         </Providers>
         {/*
         GA4 install — plain <script> elements, NOT next/script's <Script>.
