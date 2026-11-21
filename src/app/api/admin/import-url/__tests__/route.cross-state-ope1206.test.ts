@@ -18,9 +18,12 @@ let db: TestDb;
 
 vi.mock("@/lib/api/with-auth", () => ({
   withAuth:
-    (_opts: unknown, handler: (c: { request: NextRequest; db: unknown }) => unknown) =>
+    (
+      _opts: unknown,
+      handler: (c: { request: NextRequest; db: unknown; session: unknown }) => unknown
+    ) =>
     (request: NextRequest) =>
-      handler({ request, db }),
+      handler({ request, db, session: { user: { id: "admin-1", role: "ADMIN" } } }),
 }));
 vi.mock("@/lib/cloudflare", () => ({ getCloudflareEnv: () => ({}), getCloudflareDb: () => db }));
 vi.mock("@/lib/audit/record-mutation", () => ({ recordMutation: vi.fn(async () => {}) }));

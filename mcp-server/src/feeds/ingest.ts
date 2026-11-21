@@ -27,6 +27,7 @@ import {
   events,
   promoterEventFeeds,
   promoterFeedItems,
+  promoters,
 } from "../schema.js";
 import { chunkIds, createSlug } from "@takemetothefair/utils";
 import { isPubliclyVisible } from "@takemetothefair/constants";
@@ -36,7 +37,12 @@ import {
   detectSelfContradictions as sharedSelfContradictions,
   to12h,
 } from "@takemetothefair/utils/feeds";
-import { decideInclusion, parseInclusionRules } from "./inclusion.js";
+import {
+  campsWorkshopsOptInActive,
+  decideInclusion,
+  isRegisteredPromoter,
+  parseInclusionRules,
+} from "./inclusion.js";
 import {
   FEED_FIELDS,
   FIELD_CLASS,
@@ -137,6 +143,12 @@ export interface IngestReport {
   feed_id: string;
   dry_run: boolean;
   items_read: number;
+  /**
+   * OPE-1682 — the promoter's camps/workshops opt-in as this read applied it:
+   * `setting` is the stored value, `active` is whether it took effect (it
+   * needs the promoter to be registered at read time).
+   */
+  camps_workshops_opt_in: { setting: boolean; promoter_registered: boolean; active: boolean };
   included: number;
   linked: number;
   awaiting_review: number;
@@ -332,11 +344,28 @@ export async function ingestFeedItems(
     .limit(1);
   if (!feed) throw new Error(`feed ${feedId} not found`);
   const rules = parseInclusionRules(feed.inclusionRules);
+  // OPE-1682 — read the promoter's registration state on EVERY read, so an
+  // opt-in stops applying the moment the promoter is no longer registered.
+  const [owner] = await db
+    .select({
+      includeCampsWorkshops: promoters.includeCampsWorkshops,
+      claimed: promoters.claimed,
+      userId: promoters.userId,
+    })
+    .from(promoters)
+    .where(eq(promoters.id, feed.promoterId))
+    .limit(1);
+  const campsWorkshopsOptIn = campsWorkshopsOptInActive(owner);
 
   const report: IngestReport = {
     feed_id: feedId,
     dry_run: dryRun,
     items_read: items.length,
+    camps_workshops_opt_in: {
+      setting: owner?.includeCampsWorkshops === true,
+      promoter_registered: !!owner && isRegisteredPromoter(owner),
+      active: campsWorkshopsOptIn,
+    },
     included: 0,
     linked: 0,
     awaiting_review: 0,
@@ -351,7 +380,7 @@ export async function ingestFeedItems(
   };
 
   for (const ev of items) {
-    const verdict = decideInclusion(ev, rules);
+    const verdict = decideInclusion(ev, rules, { campsWorkshopsOptIn });
     const [prior] = await db
       .select({
         id: promoterFeedItems.id,

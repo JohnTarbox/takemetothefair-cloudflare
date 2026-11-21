@@ -3,7 +3,7 @@ import { z } from "zod";
 import { eq, and, desc, or } from "drizzle-orm";
 import { events, adminActions, eventSlugHistory } from "../schema.js";
 import { EVENT_LIFECYCLE_VALUES, type EventLifecycle } from "@takemetothefair/constants";
-import { decodeHtmlEntities } from "@takemetothefair/utils";
+import { decodeHtmlEntities, normalizeEventDate } from "@takemetothefair/utils";
 import { jsonContent, publicUrlFor, triggerIndexNow } from "../helpers.js";
 import {
   validateLifecycleTransition,
@@ -233,8 +233,12 @@ export function registerEventLifecycleTools(
         ? new Date(previous_end_date ?? previous_start_date)
         : (current.endDate ?? null);
       if (to === "RESCHEDULED") {
-        dateUpdate.startDate = new Date(new_start_date!);
-        dateUpdate.endDate = new Date(new_end_date!);
+        // OPE-1685 — through the shared noon anchor, like every other event-date
+        // writer. `.datetime()` forces a full ISO string, so a caller moving an
+        // event to a DAY sends `…T00:00:00Z`; raw `new Date()` stored that at
+        // midnight UTC and the public page showed the day before.
+        dateUpdate.startDate = normalizeEventDate(new_start_date!);
+        dateUpdate.endDate = normalizeEventDate(new_end_date!);
         dateUpdate.previousStartDate = prevStart;
         dateUpdate.previousEndDate = prevEnd;
         dateUpdate.datesConfirmed = true;

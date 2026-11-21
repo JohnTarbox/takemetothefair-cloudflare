@@ -5,7 +5,9 @@ import Image from "@/components/ui/responsive-image";
 import { Calendar, ArrowLeft, Tag, User, Pencil, Link2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { kvReadThrough } from "@/lib/kv-read-through";
+import { cacheRoundTrip, fromCacheable } from "@/lib/cache-codec";
 import { blogPosts, users, events, venues } from "@/lib/db/schema";
 import { eq, and, ne, desc, or, sql } from "drizzle-orm";
 import { containsCI } from "@/lib/db/contains-ci";
@@ -95,6 +97,26 @@ async function getRecentPosts(excludeId: string) {
     .limit(3);
 }
 
+/**
+ * OPE-1668 — the related-events block was a scan of every upcoming public event
+ * with up to 80 `instr()` predicates, on every render of every post (the holiday
+ * guides were in flight when D1 hit its CPU limit on 11-17). Its answer depends
+ * only on the post's own terms and the clock, so it is KV-cached for the route's
+ * own staleness (300s), keyed on the terms — an edit moves the key. The SQL is
+ * unchanged; the codec keeps `startDate`/`endDate` Dates on a hit.
+ */
+const RELATED_EVENTS_TTL_SECONDS = 300;
+
+function relatedEventsCacheKey(searchTerms: string[]): string {
+  // FNV-1a over the terms, so the key stays short for a post with 40 tags.
+  let h = 0x811c9dc5;
+  for (const ch of JSON.stringify(searchTerms)) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `blog:related-events:v1:${h.toString(36)}:${searchTerms.length}`;
+}
+
 async function getRelatedEvents(tags: string[], categories: string[]) {
   try {
     const db = getCloudflareDb();
@@ -102,36 +124,13 @@ async function getRelatedEvents(tags: string[], categories: string[]) {
     // params each) so the statement stays under D1's 100-param cap (OPE-1376).
     const searchTerms = [...tags, ...categories].filter(Boolean).slice(0, 40);
     if (searchTerms.length === 0) return [];
-
-    // Match events whose name or categories overlap with blog tags.
-    // OPE-1376: containsCI (instr), not LIKE — a tag over ~48 chars tripped
-    // D1's 50-char LIKE-pattern cap and silently emptied this block.
-    const searchConditions = searchTerms.map((term) =>
-      or(containsCI(events.name, term), containsCI(events.categories, term))
+    const encoded = await kvReadThrough(
+      getCloudflareRateLimitKv(),
+      relatedEventsCacheKey(searchTerms),
+      RELATED_EVENTS_TTL_SECONDS,
+      async () => cacheRoundTrip(await queryRelatedEvents(db, searchTerms))
     );
-
-    const results = await db
-      .select({
-        id: events.id,
-        name: events.name,
-        slug: events.slug,
-        startDate: events.startDate,
-        endDate: events.endDate,
-        imageUrl: events.imageUrl,
-        venueName: venues.name,
-        venueCity: venues.city,
-        venueState: venues.state,
-      })
-      .from(events)
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      // U11 (2026-06-21): use the canonical upcoming predicate (24h end-of-day
-      // grace) instead of a strict gte(endDate, now) so a same-day event whose
-      // stored end sits at noon UTC isn't dropped at 8am EDT.
-      .where(and(isPublicEventStatus(), upcomingEndPredicate(new Date()), or(...searchConditions)))
-      .orderBy(events.startDate)
-      .limit(3);
-
-    return results;
+    return fromCacheable<Awaited<ReturnType<typeof queryRelatedEvents>>>(encoded);
   } catch (e) {
     await logError(getCloudflareDb(), {
       message: "Error fetching related events for blog post",
@@ -141,6 +140,38 @@ async function getRelatedEvents(tags: string[], categories: string[]) {
     });
     return [];
   }
+}
+
+async function queryRelatedEvents(db: ReturnType<typeof getCloudflareDb>, searchTerms: string[]) {
+  // Match events whose name or categories overlap with blog tags.
+  // OPE-1376: containsCI (instr), not LIKE — a tag over ~48 chars tripped
+  // D1's 50-char LIKE-pattern cap and silently emptied this block.
+  const searchConditions = searchTerms.map((term) =>
+    or(containsCI(events.name, term), containsCI(events.categories, term))
+  );
+
+  const results = await db
+    .select({
+      id: events.id,
+      name: events.name,
+      slug: events.slug,
+      startDate: events.startDate,
+      endDate: events.endDate,
+      imageUrl: events.imageUrl,
+      venueName: venues.name,
+      venueCity: venues.city,
+      venueState: venues.state,
+    })
+    .from(events)
+    .leftJoin(venues, eq(events.venueId, venues.id))
+    // U11 (2026-06-21): use the canonical upcoming predicate (24h end-of-day
+    // grace) instead of a strict gte(endDate, now) so a same-day event whose
+    // stored end sits at noon UTC isn't dropped at 8am EDT.
+    .where(and(isPublicEventStatus(), upcomingEndPredicate(new Date()), or(...searchConditions)))
+    .orderBy(events.startDate)
+    .limit(3);
+
+  return results;
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {

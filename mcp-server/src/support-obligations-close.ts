@@ -12,8 +12,14 @@
  * same person can be about a different conversation. Those rows stay open, and
  * that listing still flags them `answered_not_closed`.
  */
-import { and, eq, inArray, or } from "drizzle-orm";
-import { inboundEmails, supportObligations, SUPPORT_OBLIGATION_STATUS } from "./schema.js";
+import { and, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { extractEmailAddress } from "@takemetothefair/utils";
+import {
+  inboundEmails,
+  supportObligations,
+  SUPPORT_OBLIGATION_KIND,
+  SUPPORT_OBLIGATION_STATUS,
+} from "./schema.js";
 import type { Db } from "./db.js";
 
 export const AUTO_CLOSED_BY = "auto:reply-manual";
@@ -112,4 +118,91 @@ export async function closeObligationsAnsweredBy(
     .where(and(eq(supportObligations.status, SUPPORT_OBLIGATION_STATUS.OPEN), onThisConversation))
     .returning({ id: supportObligations.id });
   return closed.length;
+}
+
+// ── OPE-1683: an operator draft composed by hand answers its recipient ──────
+
+export const AUTO_CLOSED_BY_DRAFT = "auto:operator-draft";
+
+/**
+ * A draft John composed himself (`compose_operator_email`) carries no
+ * `inboundEmailId`, so `shouldCloseOnSend` never fires for it. Both live
+ * specimens (Harvard Square 11-15, OHTM 11-18) were answered that way and had
+ * to be closed by hand as `not_needed`.
+ */
+export function shouldCloseByAddressOnSend(job: {
+  source?: string;
+  inboundEmailId?: string | null;
+  operatorDraftId?: string | null;
+}): boolean {
+  return job.source === OPERATOR_DRAFT_SOURCE && !job.inboundEmailId && !!job.operatorDraftId;
+}
+
+/** Bare, lower-cased addresses from a `to` header that may list several. */
+export function recipientAddresses(to: string | null | undefined): string[] {
+  return [
+    ...new Set(
+      (to ?? "")
+        .split(",")
+        .map((part) => extractEmailAddress(part.trim()).trim().toLowerCase())
+        .filter((a) => a.includes("@"))
+    ),
+  ];
+}
+
+/**
+ * Close every OPEN **contact** obligation from one of these addresses that was
+ * opened at or before the send. Matched on the address, not the subject:
+ * contacts reply under changed subjects (ticket note).
+ *
+ * Narrower than "any obligation for this address" on purpose: OPE-1226 kept
+ * SUPPORT obligations off address matching because a reply to the same person
+ * can be about a different conversation. A contact obligation is owed to the
+ * person (OPE-1510: one reply per contact), so an approved draft to them is the
+ * answer. Support obligations still close only on their own message or thread.
+ */
+export async function closeContactObligationsByAddress(
+  db: Db,
+  addresses: string[],
+  sentAt: Date,
+  note: string
+): Promise<number> {
+  if (addresses.length === 0) return 0;
+  const fromLower = sql<string>`lower(${supportObligations.fromAddress})`;
+  const addressMatch = or(
+    inArray(fromLower, addresses),
+    ...addresses.map((a) => sql`${fromLower} like ${"%<" + a + ">"}`)
+  );
+  const closed = await db
+    .update(supportObligations)
+    .set({
+      status: SUPPORT_OBLIGATION_STATUS.ANSWERED,
+      closedAt: sentAt,
+      closedBy: AUTO_CLOSED_BY_DRAFT,
+      closeNote: note,
+    })
+    .where(
+      and(
+        eq(supportObligations.status, SUPPORT_OBLIGATION_STATUS.OPEN),
+        eq(supportObligations.kind, SUPPORT_OBLIGATION_KIND.CONTACT),
+        lte(supportObligations.openedAt, sentAt),
+        addressMatch
+      )
+    )
+    .returning({ id: supportObligations.id });
+  return closed.length;
+}
+
+export function closeNoteForDraftSend(
+  draftId: string,
+  ledgerMessageId: string,
+  providerMessageId?: string | null
+): string {
+  return (
+    `Answered by approved operator draft ${draftId} via review_operator_draft ` +
+    `(${OPERATOR_DRAFT_SOURCE}), matched on the recipient address; ` +
+    `email_send_ledger.message_id=${ledgerMessageId}` +
+    (providerMessageId ? `, provider id ${providerMessageId}` : "") +
+    "."
+  );
 }

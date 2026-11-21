@@ -34,6 +34,7 @@ import {
   type ConditionalEntityType,
 } from "@/lib/conditional-get";
 import { getHelpArticle } from "@/lib/help-articles";
+import { parseListingPage } from "@/lib/listing-page-param";
 import { unsafeSlug } from "@/lib/utils";
 import { shouldSample, writeRequestSample } from "@/lib/request-sampling";
 import { generateNonce, isNonceCspPath, nonceContentSecurityPolicy } from "@/lib/csp";
@@ -93,6 +94,10 @@ export const config = {
     // pages like /events/maine, not category pages, not /events/past, etc.
     // Those are handled by their own static routes — see app/events/).
     "/events/:slug",
+    // OPE-1573 — the /events listing itself, ONLY for the strict `?page=` 404
+    // (/events/past is already covered by /events/:slug above). Middleware
+    // passes a valid /events straight through; see `LISTING_PAGE_PATHS`.
+    "/events",
     // OPE-1188 — the OCCURRENCE form, /events/<series>/<4-digit year>. Without
     // this matcher the OPE-471 walker below (series_slug_history for the year
     // form) never ran: `/events/fryeburg-fair-me` 301'd while
@@ -302,8 +307,7 @@ async function handleRouting(request: NextRequest) {
       const cfCtx = getCloudflareContext();
       const d1 = cfCtx.env.DB;
       const cf = cfCtx.cf as
-        | { asn?: number; asOrganization?: string; country?: string }
-        | undefined;
+        { asn?: number; asOrganization?: string; country?: string } | undefined;
       if (d1) {
         cfCtx.ctx.waitUntil(
           writeRequestSample(drizzle(d1), {
@@ -945,6 +949,13 @@ async function handleRouting(request: NextRequest) {
  */
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  if (LISTING_PAGE_PATHS.has(pathname)) {
+    const rejected = rejectMalformedListingPage(request);
+    if (rejected) return rejected;
+    // `/events` was never matched before OPE-1573; keep it a bare pass-through
+    // so request sampling and conditional-GET stay off it, as they always were.
+    if (pathname === "/events") return NextResponse.next();
+  }
   if (isNonceCspPath(pathname)) {
     // Only /admin, /vendor/<x> and /promoter/<x> have routing work to do (the
     // read-only Bearer gate, the singular→plural typo redirect). The other
@@ -963,6 +974,30 @@ export async function middleware(request: NextRequest) {
 }
 
 const NONCE_ROUTING_PREFIXES = ["/admin", "/vendor", "/promoter"];
+
+/**
+ * OPE-1573 — the paginated public listings whose `?page=` is parsed strictly.
+ * The pages themselves call `notFound()` on a malformed value (#1800), which
+ * skips the D1 work — but `(listing)/loading.tsx` puts them in a Suspense
+ * boundary, so the 200 and the shell are already streamed by then and the
+ * scanner gets a soft 404 (measured on prod 2026-11-16: `?page=2'%20UNION`
+ * → 200). Only code that runs before render can set the status, so the
+ * real 404 is here. Same parser as the pages, so the two can never disagree.
+ */
+const LISTING_PAGE_PATHS = new Set(["/events", "/events/past"]);
+
+function rejectMalformedListingPage(request: NextRequest): NextResponse | null {
+  const values = request.nextUrl.searchParams.getAll("page");
+  const raw = values.length === 0 ? undefined : values.length === 1 ? values[0] : values;
+  if (parseListingPage(raw) !== null) return null;
+  return new NextResponse("Not found", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "X-Robots-Tag": "noindex",
+    },
+  });
+}
 
 /**
  * OPE-1380 — stamp a fresh nonce CSP on a protected route.

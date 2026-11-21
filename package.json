@@ -8,6 +8,7 @@
     "packages/*"
   ],
   "scripts": {
+    "postinstall": "node scripts/patch-react-render-phase-ping.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

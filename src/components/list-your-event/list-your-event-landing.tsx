@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { ListEventForm } from "@/app/list-your-event/list-event-form";
 import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
-import { LIST_YOUR_EVENT_FAQ } from "@/lib/list-your-event/landing-content";
+import {
+  LIST_YOUR_EVENT_FAQ,
+  PROMOTER_GUIDE_LINK_TEXT,
+  PROMOTER_GUIDE_POST_PATH,
+} from "@/lib/list-your-event/landing-content";
 
 /**
  * OPE-1558 form + OPE-1559 landing: shared by /list-your-event and the six
@@ -25,6 +29,11 @@ export function ListYourEventLanding({
       <p className="mt-2 text-foreground">
         Fairs, festivals, craft shows, school and church fairs — if it&apos;s in New England and
         open to the public, it belongs here. Fill in what you know; we&apos;ll do the rest.
+      </p>
+      <p className="mt-2 text-sm">
+        <Link href={PROMOTER_GUIDE_POST_PATH} className="text-royal hover:underline">
+          {PROMOTER_GUIDE_LINK_TEXT}
+        </Link>
       </p>
       <div className="mt-6">
         <ListEventForm defaultState={stateCode} />

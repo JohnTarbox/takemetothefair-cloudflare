@@ -15,11 +15,14 @@ describe("looksLikeStreetAddress", () => {
     expect(looksLikeStreetAddress("Building 5")).toBe(false); // letters before digits
     expect(looksLikeStreetAddress("10X Studios")).toBe(false); // no whitespace after digits
     expect(looksLikeStreetAddress("21st Century Concert Hall")).toBe(false); // no whitespace after digits
+    // OPE-1688 — a leading number with no street-type word is a real name.
+    expect(looksLikeStreetAddress("450 Banquets")).toBe(false);
+    expect(looksLikeStreetAddress("3 Rivers Fairgrounds")).toBe(false);
   });
 
   it("handles empty/null gracefully", () => {
     expect(looksLikeStreetAddress("")).toBe(false);
-    // @ts-expect-error - testing runtime null handling
+    // OPE-1688 — the shared predicate accepts null/undefined in its signature.
     expect(looksLikeStreetAddress(null)).toBe(false);
   });
 });

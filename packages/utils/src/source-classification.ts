@@ -284,55 +284,37 @@ export function classifySource(
 }
 
 /**
- * OPE-491 rework — `ingestion_method` records HOW A ROW WAS COLLECTED, and
- * adding or correcting a citation URL does not change that.
+ * `ingestion_method` records HOW A ROW WAS COLLECTED. It is written once, at
+ * insert; an edit to the row's source never rewrites it (OPE-1642).
  *
- * `update_event` re-ran `classifySource` whenever `source_url`/`source_name`
- * changed. `inferIngestionMethod` falls through to the domain branch for any
- * label that is not a map key, so a repair that only pointed `source_url` at an
- * organizer's Facebook page flipped a correct `email_submission` row to
- * `direct_scrape` (event 13f7f7a4, 2026-08-21) — silently, since
- * `fieldsUpdated` never mentioned it. `email_submission` is the one clean bucket
- * in the table (57/57 carry `suggester_email`), and recompute-on-write would
- * erode exactly it.
+ * History. OPE-491 made `update_event` recompute it on every source edit;
+ * its rework (2026-09-16) kept a collection method against a domain-only edit,
+ * but still let a new `source_name` that is a `METHOD_BY_NAME` key WIN. That
+ * rule relabeled Pine State Expo 2027 (`3b7ddadb`, a daily-discovery row,
+ * `web_research`) as `community_suggestion` when its citation was repointed at
+ * the organizer's Facebook page with `source_name="facebook"` — silently, and
+ * irreversibly, since setting the label back yields `discovery`. `source_name`
+ * names the source we CITE now; it is not evidence of how the row arrived.
  *
- * The rule, in precedence order:
- *  1. A new `source_name` that is a recognised collection LABEL is an explicit
- *     statement about how the row was collected — it wins.
- *  2. Otherwise, a current value that records a COLLECTION method (anything the
- *     domain branch cannot produce), or a row carrying `suggester_email`, is
- *     kept: a hostname does not outrank evidence about where the row came from.
- *  3. Otherwise the value was domain-derived to begin with, so re-deriving it
- *     from the new URL is correct.
- * `source_domain` is always refreshed — it IS a property of the URL.
+ * The rule now:
+ *  - `source_domain` is always refreshed — it IS a property of the URL;
+ *  - a current `ingestion_method` that is a valid value is KEPT, whatever the
+ *    new label or URL;
+ *  - only a row with no (or an invalid) value gets one derived from the new
+ *    source — filling a blank, not overwriting a fact.
+ * Changing how a row was collected is a deliberate act: `update_event`'s
+ * explicit `ingestion_method` parameter.
  */
-const DOMAIN_DERIVED_METHODS: ReadonlySet<IngestionMethod> = new Set([
-  "direct_scrape",
-  "aggregator_import",
-  "admin_manual",
-]);
-
 export function reclassifySourceOnEdit(args: {
   currentMethod: string | null | undefined;
-  suggesterEmail: string | null | undefined;
   sourceName: string | null | undefined;
   sourceUrl: string | null | undefined;
 }): SourceClassification & { preservedMethod: boolean } {
   const recomputed = classifySource(args.sourceName, args.sourceUrl);
-  const label = args.sourceName ? METHOD_BY_NAME[args.sourceName.trim().toLowerCase()] : undefined;
-  if (label) {
+  if (isIngestionMethod(args.currentMethod)) {
     return {
       sourceDomain: recomputed.sourceDomain,
-      ingestionMethod: label,
-      preservedMethod: false,
-    };
-  }
-  const current = isIngestionMethod(args.currentMethod) ? args.currentMethod : null;
-  const hasSubmitter = typeof args.suggesterEmail === "string" && args.suggesterEmail.trim() !== "";
-  if (current && (!DOMAIN_DERIVED_METHODS.has(current) || hasSubmitter)) {
-    return {
-      sourceDomain: recomputed.sourceDomain,
-      ingestionMethod: current,
+      ingestionMethod: args.currentMethod,
       preservedMethod: true,
     };
   }
