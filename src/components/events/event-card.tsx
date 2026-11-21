@@ -21,6 +21,7 @@ import { FavoriteButton } from "@/components/FavoriteButton";
 import { getCategoryColors, getCategoryBadgeClass, getCategoryImage } from "@/lib/category-colors";
 import { getStateName } from "@/lib/states";
 import { formatDateMedium, formatDateShort, formatMonthShort } from "@/lib/datetime";
+import { useRenderNow } from "@/lib/hooks/render-now";
 import { DERIVED_DATE_SHORT, shouldShowProjectedDateCopy } from "@/lib/events/derived-date";
 
 // OPE-1387 — public allow-listed shape; never the full events row.
@@ -111,6 +112,11 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
     }
   }, [event.applicationDeadline]);
 
+  // OPE-1691 — every clock-dependent label below reads this, not `new Date()`:
+  // during hydration it is the server's render time (the HTML may be cached
+  // for hours), so the client's first render matches the server's.
+  const now = useRenderNow();
+
   // Use public dates for display (falls back to full dates if not set)
   const displayStartDate = event.publicStartDate ?? event.startDate;
   const displayEndDate = event.publicEndDate ?? event.endDate;
@@ -128,7 +134,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
       discontinuousDates: event.discontinuousDates,
       eventDayDates: event.eventDayDates,
     },
-    new Date()
+    now
   );
   const badgeDate = occurrence?.date ?? (displayStartDate ? new Date(displayStartDate) : null);
   const monthAbbr = badgeDate ? formatMonthShort(badgeDate).toUpperCase() : null;
@@ -151,7 +157,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
     a.getUTCFullYear() === b.getUTCFullYear() &&
     a.getUTCMonth() === b.getUTCMonth() &&
     a.getUTCDate() === b.getUTCDate();
-  const endsToday = displayEndDate ? sameUTCDay(new Date(displayEndDate), new Date()) : false;
+  const endsToday = displayEndDate ? sameUTCDay(new Date(displayEndDate), now) : false;
   // OPE-396 — relative-time freshness label. Computed from the same
   // publicStart/publicEnd + event_days the date line uses, so the pill and the
   // date underneath it can never disagree.
@@ -159,12 +165,15 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
   // Rendered as part of the server output (this is a client component, but Next
   // still server-renders it), so it is crawlable — the acceptance requires the
   // label not be JS-only.
-  const freshness = relativeTimeLabel({
-    startDate: displayStartDate,
-    endDate: displayEndDate,
-    datesConfirmed: event.datesConfirmed,
-    eventDayDates: event.eventDayDates,
-  });
+  const freshness = relativeTimeLabel(
+    {
+      startDate: displayStartDate,
+      endDate: displayEndDate,
+      datesConfirmed: event.datesConfirmed,
+      eventDayDates: event.eventDayDates,
+    },
+    now
+  );
   // OPE-740 — shared with the detail page so both cohorts are covered by one
   // definition: the 121-row offline cohort recorded no lineage, so
   // `ingestion_method` is its only tell; the live path sets `rolled_from_event_id`.
@@ -452,7 +461,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
               )}
               {event.estimatedAttendance && (
                 <span title="Estimated attendance">
-                  ~{event.estimatedAttendance.toLocaleString()}
+                  ~{event.estimatedAttendance.toLocaleString("en-US")}
                 </span>
               )}
             </div>
