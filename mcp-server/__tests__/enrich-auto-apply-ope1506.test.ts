@@ -17,6 +17,7 @@ import {
   adminActions,
   eventDataCitations,
   eventDays,
+  entityFieldHistory,
   events,
   inboundEmails,
   inboundEmailSenders,
@@ -454,6 +455,51 @@ describe("OPE-1506 — the predicate's other guards", () => {
     expect(staged).toHaveLength(1);
     expect(JSON.parse(staged[0].payloadJson!).autoApply.basis).toBe("trusted");
     expect(staged[0].createdAt.getTime()).toBe(applied[0].createdAt.getTime());
+  });
+});
+
+describe("OPE-1651 — an auto-applied field writes field history", () => {
+  it("one row per applied events column, attributed to the pipeline and its email", async () => {
+    const { applyEmptyFields } = await import("../src/email-handlers/enrich-auto-apply.js");
+    seedPromoter("ng", null);
+    seedEvent("ev", "ng", {});
+    seedInbound("in-1", "carolyn@example.com", "pass");
+    const r = await applyEmptyFields(db as never, {
+      eventId: "ev",
+      proposals: { estimated_attendance: 2000 },
+      inboundEmailId: "in-1",
+      receivedAt: NOW,
+    });
+    // Positive landmark: the field really was applied.
+    expect(r.applied.map((a) => a.field)).toEqual(["estimated_attendance"]);
+    const rows = db.select().from(entityFieldHistory).all();
+    expect(rows).toEqual([
+      expect.objectContaining({
+        entityType: "event",
+        entityId: "ev",
+        field: "estimated_attendance",
+        oldValue: null,
+        newValue: "2000",
+        actor: "system:enrich-auto-apply",
+        source: "mcp:enrich-auto-apply",
+        requestId: "inbound:in-1",
+      }),
+    ]);
+  });
+
+  it("a refused (non-empty) field writes no history", async () => {
+    const { applyEmptyFields } = await import("../src/email-handlers/enrich-auto-apply.js");
+    seedPromoter("ng", null);
+    seedEvent("ev", "ng", { estimatedAttendance: 900 });
+    seedInbound("in-1", "carolyn@example.com", "pass");
+    const r = await applyEmptyFields(db as never, {
+      eventId: "ev",
+      proposals: { estimated_attendance: 2000 },
+      inboundEmailId: "in-1",
+      receivedAt: NOW,
+    });
+    expect(r.applied).toEqual([]);
+    expect(db.select().from(entityFieldHistory).all()).toHaveLength(0);
   });
 });
 

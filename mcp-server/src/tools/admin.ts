@@ -162,6 +162,10 @@ import {
 import { registerCreateSeriesTool } from "./admin-create-series.js";
 import { dollarsToCents } from "../helpers.js";
 import { recordMutation } from "../audit/record-mutation.js";
+import {
+  buildFieldHistoryRows,
+  fieldHistoryInserts,
+} from "@takemetothefair/db-schema/field-history";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
 import {
@@ -202,6 +206,7 @@ import { registerPerformerHealthTool } from "./admin-performer-health.js";
 import { registerRequestIndexingTool } from "./admin-request-indexing.js";
 import { registerAdminClaimApprovalTool } from "./admin-claim-approval.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
+import { registerFieldHistoryTools } from "./admin-field-history.js";
 import { registerSeriesBackfillTools } from "./admin-series-backfill.js";
 import { registerCreateOccurrenceTool } from "./admin-create-occurrence.js";
 import { registerSeriesEditionModeTool } from "./admin-series-edition-mode.js";
@@ -487,6 +492,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // with transition validation, date-swap for RESCHEDULED/POSTPONED,
   // admin_actions audit logging, and IndexNow on visibility crossings.
   registerEventLifecycleTools(server, db, auth, env);
+  // OPE-1651 — per-field edit history reader.
+  registerFieldHistoryTools(server, db, auth);
 
   // EH3 P1 — backfill_event_series (dry-run proposal only; commit gated).
   registerSeriesBackfillTools(server, auth, env);
@@ -2306,10 +2313,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             ? (updates.venueId as string | null)
             : event.venueId) as string | null,
         });
+        // OPE-1651 — one history row per changed field, in the same batch as
+        // the UPDATE so the edit and its record land (or fail) together.
+        const historyStmts = fieldHistoryInserts(
+          db,
+          buildFieldHistoryRows({
+            table: events,
+            entityType: "event",
+            entityId: event.id,
+            before: event as unknown as Record<string, unknown>,
+            patch: updates,
+            actor: auth.userId,
+            source: "mcp:update_event",
+          })
+        );
         // OPE-1390 — the slug-history INSERT rides in this batch too.
         const eventWriteStmts = [
           ...(slugRename ? [slugRename.historyInsert] : []),
           ...syndicationStmts,
+          ...historyStmts,
         ];
         if (eventWriteStmts.length > 0) {
           await db.batch([
@@ -4389,19 +4411,34 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           zip: (updates.zip as string) ?? venue.zip,
         },
       });
+      // OPE-1651 — per-field history, committed in the same batch as the UPDATE.
+      const venueHistoryStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: venues,
+          entityType: "venue",
+          entityId: venue.id,
+          before: venue as unknown as Record<string, unknown>,
+          patch: updates,
+          actor: auth.userId,
+          source: "mcp:update_venue",
+        })
+      );
       if (venueSyndicationStmts.length > 0) {
         await db.batch([
           db.update(venues).set(updates).where(eq(venues.id, venue.id)),
           ...(slugRename ? [slugRename.historyInsert] : []),
           ...venueSyndicationStmts,
+          ...venueHistoryStmts,
         ] as unknown as Parameters<typeof db.batch>[0]);
         await enqueueSyndicationChange(env, { entityType: "venue", entityId: venue.id });
-      } else if (slugRename) {
+      } else if (slugRename || venueHistoryStmts.length > 0) {
         // OPE-495/OPE-1373 — the venue_slug_history row commits WITH the rename.
         await db.batch([
           db.update(venues).set(updates).where(eq(venues.id, venue.id)),
-          slugRename.historyInsert,
-        ]);
+          ...(slugRename ? [slugRename.historyInsert] : []),
+          ...venueHistoryStmts,
+        ] as unknown as Parameters<typeof db.batch>[0]);
       } else {
         await db.update(venues).set(updates).where(eq(venues.id, venue.id));
       }
@@ -5380,11 +5417,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       // Slug change: the old→new vendor_slug_history row (301s on /vendors/[slug])
       // commits in the same batch as the rename.
-      if (slugRename) {
+      // OPE-1651 — per-field history, committed in the same batch as the UPDATE.
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: vendors,
+          entityType: "vendor",
+          entityId: vendor.id,
+          before: vendor as unknown as Record<string, unknown>,
+          patch: updates,
+          actor: auth.userId,
+          source: "mcp:update_vendor",
+        })
+      );
+      if (slugRename || historyStmts.length > 0) {
         await db.batch([
           db.update(vendors).set(updates).where(eq(vendors.id, vendor.id)),
-          slugRename.historyInsert,
-        ]);
+          ...(slugRename ? [slugRename.historyInsert] : []),
+          ...historyStmts,
+        ] as unknown as Parameters<typeof db.batch>[0]);
       } else {
         await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
       }
@@ -5538,11 +5589,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         ? { from: slugRename.previousSlug, to: slugRename.nextSlug }
         : null;
 
-      if (slugRename) {
+      // OPE-1651 — per-field history, committed in the same batch as the UPDATE.
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: vendors,
+          entityType: "vendor",
+          entityId: vendor.id,
+          before: vendor as unknown as Record<string, unknown>,
+          patch: updates,
+          actor: auth.userId,
+          source: "mcp:set_enhanced_profile",
+        })
+      );
+      if (slugRename || historyStmts.length > 0) {
         await db.batch([
           db.update(vendors).set(updates).where(eq(vendors.id, vendor.id)),
-          slugRename.historyInsert,
-        ]);
+          ...(slugRename ? [slugRename.historyInsert] : []),
+          ...historyStmts,
+        ] as unknown as Parameters<typeof db.batch>[0]);
       } else {
         await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
       }
@@ -6142,11 +6207,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // OPE-1373 — the promoter_slug_history row now commits in the SAME batch
       // as the rename (was a fail-soft insert after it), so a rename can no
       // longer land without its redirect.
-      if (slugRename) {
+      // OPE-1651 — per-field history, committed in the same batch as the UPDATE.
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: promoters,
+          entityType: "promoter",
+          entityId: promoter.id,
+          before: promoter as unknown as Record<string, unknown>,
+          patch: updates,
+          actor: auth.userId,
+          source: "mcp:update_promoter",
+        })
+      );
+      if (slugRename || historyStmts.length > 0) {
         await db.batch([
           db.update(promoters).set(updates).where(eq(promoters.id, promoter.id)),
-          slugRename.historyInsert,
-        ]);
+          ...(slugRename ? [slugRename.historyInsert] : []),
+          ...historyStmts,
+        ] as unknown as Parameters<typeof db.batch>[0]);
       } else {
         await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
       }

@@ -17,6 +17,11 @@ import { normalizeEventDate } from "@/lib/event-dates";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 import {
+  buildFieldHistoryRows,
+  fieldHistoryBeforeSelect,
+  fieldHistoryInserts,
+} from "@takemetothefair/db-schema/field-history";
+import {
   changedVendorFields,
   citePromoterVendorFields,
 } from "@/lib/events/promoter-vendor-citations";
@@ -212,7 +217,31 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: formerVenue.message }, { status: 409 });
       }
 
-      await db.update(events).set(set).where(eq(events.id, existingId));
+      // OPE-1651 — a promoter editing their own event: per-field history,
+      // attributed to their user, in the same batch as the UPDATE.
+      const [historyBefore] = await db
+        .select(fieldHistoryBeforeSelect(events, set))
+        .from(events)
+        .where(eq(events.id, existingId))
+        .limit(1);
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: events,
+          entityType: "event",
+          entityId: existingId,
+          before: historyBefore,
+          patch: set,
+          actor: session.user.id,
+          source: "api:POST /api/promoter/events/draft",
+        })
+      );
+      const eventUpdate = db.update(events).set(set).where(eq(events.id, existingId));
+      if (historyStmts.length > 0) {
+        await db.batch([eventUpdate, ...historyStmts] as unknown as Parameters<typeof db.batch>[0]);
+      } else {
+        await eventUpdate;
+      }
       // OPE-767 — recorded as a reason, so it can be discharged on its own.
       if (formerVenue.kind === "flag") {
         await raiseEventReviewFlag(db, existingId, "former_venue");

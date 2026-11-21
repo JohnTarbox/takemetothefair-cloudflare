@@ -23,6 +23,7 @@ import {
   entityDuplicateSweepRuns,
   analyticsEvents,
   entityWriteLog,
+  entityFieldHistory,
   adminActions,
   bingLivenessLog,
   eventDataCitations,
@@ -156,6 +157,20 @@ async function maxTs(
  * DORMANT via a null `enabled_at` — it can't false-fire until John flips the flag.
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
+  {
+    // OPE-1651 — every wired event/vendor/venue/promoter edit (MCP update_*
+    // tools, admin UI PATCHes, vendor + promoter self-edit, image uploads)
+    // writes one entity_field_history row per changed field. The analyst and
+    // discovery lanes edit events daily, so a week of silence means the
+    // writer is dead on every path at once (the shared helper is the one thing
+    // they have in common). Seeded ENABLED in drizzle/0420.
+    name: "entity-field-history",
+    ownerOpe: "OPE-1651",
+    label: "Entity edits write field-level history",
+    priority: "P1",
+    expectedWindowHours: 7 * 24,
+    lastEvidenceAt: (db) => maxTs(db, entityFieldHistory, entityFieldHistory.changedAt),
+  },
   {
     // OPE-1496 — the `/go/<kind>/<slug>` newsletter click redirect writes one
     // analytics_events row (source='redirect') per hit, human or scanner. Mail

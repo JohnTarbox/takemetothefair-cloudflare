@@ -78,6 +78,16 @@ beforeEach(() => {
   }
   raw.exec("CREATE UNIQUE INDEX ux_days ON event_days (event_id, date, vendor_only)");
   db = drizzle(raw, { schema });
+  // OPE-1651 — the draft route batches its UPDATE with the field-history rows.
+  // D1 has `db.batch`; better-sqlite3 doesn't — same shim as partial-save-ope1393.
+  (db as unknown as { batch: (s: unknown[]) => Promise<unknown[]> }).batch = async (stmts) => {
+    const out: unknown[] = [];
+    for (const st of stmts) {
+      const x = st as { run?: () => unknown };
+      out.push(typeof x.run === "function" ? x.run() : await (st as Promise<unknown>));
+    }
+    return out;
+  };
   db.insert(schema.promoters)
     .values({ id: "p1", userId: "u-promo", companyName: "Harvest Fair Assoc", slug: "p" } as never)
     .run();

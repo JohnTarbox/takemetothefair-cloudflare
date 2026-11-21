@@ -2007,6 +2007,19 @@ const FEED_REVIEW_SQL = (() => {
   return sql;
 })();
 
+// OPE-1651 — entity_field_history, loaded from the migration itself (DDL only:
+// the heartbeat_probes seed row is cut off, as for 0406).
+const FIELD_HISTORY_SQL = (() => {
+  const sql = readFileSync(
+    join(__dirname, "../../drizzle/0420_ope1651_entity_field_history.sql"),
+    "utf8"
+  );
+  const end = sql.indexOf("INSERT INTO heartbeat_probes");
+  if (end < 0 || !sql.includes("CREATE TABLE entity_field_history"))
+    throw new Error("0420 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
 // OPE-1633 — fill-count columns on the run log and the feed_health_flags
 // table, loaded from the migration itself (DDL only: the probe seed is cut).
 const FEED_HEALTH_SQL = (() => {
@@ -2034,6 +2047,7 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   raw["exec"](CHANGE_PING_SQL);
   raw["exec"](FEED_READER_SQL);
   raw["exec"](FEED_REVIEW_SQL);
+  raw["exec"](FIELD_HISTORY_SQL);
   raw["exec"](FEED_HEALTH_SQL);
   const db = drizzle(raw, { schema });
   // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.

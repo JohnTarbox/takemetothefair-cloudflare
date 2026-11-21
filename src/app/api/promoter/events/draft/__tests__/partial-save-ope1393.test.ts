@@ -64,6 +64,16 @@ beforeEach(() => {
   // insertEventDaysBatched upserts on (event_id, date, vendor_only).
   raw.exec("CREATE UNIQUE INDEX ux_days ON event_days (event_id, date, vendor_only)");
   db = drizzle(raw, { schema });
+  // OPE-1651 — the route now batches its UPDATE with the field-history rows.
+  // D1 has `db.batch`; better-sqlite3 doesn't — same shim as mcp-server's harness.
+  (db as unknown as { batch: (s: unknown[]) => Promise<unknown[]> }).batch = async (stmts) => {
+    const out: unknown[] = [];
+    for (const st of stmts) {
+      const x = st as { run?: () => unknown };
+      out.push(typeof x.run === "function" ? x.run() : await (st as Promise<unknown>));
+    }
+    return out;
+  };
   db.insert(schema.promoters)
     .values({ id: "p1", userId: "u-promo", companyName: "P", slug: "p" } as never)
     .run();

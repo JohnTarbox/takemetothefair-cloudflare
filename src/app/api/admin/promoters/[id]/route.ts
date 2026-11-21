@@ -11,6 +11,11 @@ import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { computePromoterEnrichment } from "@takemetothefair/constants";
 import { deletePromoterChildren, planSlugRename } from "@takemetothefair/db-schema";
 import { logAuditWriteFailure } from "@/lib/audit/log-audit-failure";
+import {
+  buildFieldHistoryRows,
+  fieldHistoryBeforeSelect,
+  fieldHistoryInserts,
+} from "@takemetothefair/db-schema/field-history";
 
 export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
   const { id } = params;
@@ -126,8 +131,31 @@ export const PATCH = withAuth<{ id: string }>(
       }
 
       const promoterUpdate = db.update(promoters).set(updateData).where(eq(promoters.id, id));
-      if (slugRename) {
-        await db.batch([promoterUpdate, slugRename.historyInsert]);
+      // OPE-1651 — per-field history, in the same batch as the UPDATE. Reads
+      // exactly the patched columns so the diff never sees a partial row.
+      const [historyBefore] = await db
+        .select(fieldHistoryBeforeSelect(promoters, updateData))
+        .from(promoters)
+        .where(eq(promoters.id, id))
+        .limit(1);
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: promoters,
+          entityType: "promoter",
+          entityId: id,
+          before: historyBefore,
+          patch: updateData,
+          actor: session.user.id,
+          source: "api:PATCH /api/admin/promoters/[id]",
+        })
+      );
+      if (slugRename || historyStmts.length > 0) {
+        await db.batch([
+          promoterUpdate,
+          ...(slugRename ? [slugRename.historyInsert] : []),
+          ...historyStmts,
+        ] as unknown as Parameters<typeof db.batch>[0]);
       } else {
         await promoterUpdate;
       }

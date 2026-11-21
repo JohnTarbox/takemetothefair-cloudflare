@@ -1930,6 +1930,40 @@ export const adminActions = sqliteTable(
   })
 );
 
+// OPE-1651 — field-level edit history (drizzle/0420). Append-only: one row per
+// field whose value actually changed, written by the shared
+// `buildFieldHistoryRows` helper (./field-history) from every wired write path.
+// Not provenance — `event_data_citations` says WHY we believe a value; this says
+// WHAT changed, WHO changed it, and THROUGH WHICH tool/route.
+export const entityFieldHistory = sqliteTable(
+  "entity_field_history",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    entityType: text("entity_type", {
+      enum: ["event", "vendor", "venue", "promoter"],
+    }).notNull(),
+    entityId: text("entity_id").notNull(),
+    // The DB column name (snake_case), so it matches the MCP parameter names.
+    field: text("field").notNull(),
+    // Normalized text forms, stored in FULL — truncated history defeats the purpose.
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    // A user id, or `system:<name>` for a cron / pipeline with no user.
+    actor: text("actor").notNull(),
+    // The tool or route that wrote it: `mcp:update_event`, `api:PATCH /api/vendor/profile`.
+    source: text("source").notNull(),
+    // One id per write call, so the fields one call changed group together.
+    requestId: text("request_id"),
+    changedAt: integer("changed_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => ({
+    entityIdx: index("idx_entity_field_history_entity").on(t.entityType, t.entityId, t.changedAt),
+    changedAtIdx: index("idx_entity_field_history_changed_at").on(t.changedAt),
+  })
+);
+
 // Event Vendors junction table
 export const eventVendors = sqliteTable(
   "event_vendors",
