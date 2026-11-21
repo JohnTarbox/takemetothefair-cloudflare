@@ -6,6 +6,7 @@ import {
   type ClaimEntityType,
 } from "@/lib/claims/resolve-claim-at-signup";
 import { approvePendingDomainMatchClaims } from "@/lib/claims/resolve-claim-in-wizard";
+import { approvePendingInviteDomainClaims } from "@/lib/claims/redeem-invite-at-signup";
 import { rescoreEvidenceAfterVerification } from "@/lib/claims/claim-evidence";
 import type { Database } from "@/lib/db";
 import { logError } from "@/lib/logger";
@@ -19,7 +20,7 @@ export const VERIFY_TOKEN_LOG_SOURCE = "email-verify-token";
  */
 async function logClaimApprovalFailure(
   db: ReturnType<typeof getCloudflareDb>,
-  stage: "user-lookup" | "email-match" | "domain-match",
+  stage: "user-lookup" | "email-match" | "domain-match" | "invite-domain",
   userId: string | undefined,
   error: unknown
 ): Promise<void> {
@@ -131,6 +132,21 @@ export async function validateAndConsumeVerificationToken(
       approvedClaims.push(...domainRes.approvedClaims);
     } catch (error) {
       await logClaimApprovalFailure(db, "domain-match", userId, error);
+    }
+
+    // OPE-1692 — a claim-invite link forwarded to a colleague on the same
+    // organization domain. Verifying proves control of an inbox on that
+    // domain; approvePendingInviteDomainClaims re-checks the live token and
+    // the entity before transferring ownership. Best-effort.
+    try {
+      const inviteRes = await approvePendingInviteDomainClaims(
+        db as unknown as Database,
+        userId,
+        record.identifier
+      );
+      approvedClaims.push(...inviteRes.approvedClaims);
+    } catch (error) {
+      await logClaimApprovalFailure(db, "invite-domain", userId, error);
     }
   }
 
