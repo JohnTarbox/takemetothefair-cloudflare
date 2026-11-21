@@ -96,7 +96,7 @@ describe("every public surface reads the one predicate (source)", () => {
       "src/components/events/event-card.tsx",
       "src/components/events/events-view.tsx",
     ]) {
-      expect(read(f)).toMatch(/isPastUnconfirmed\(event\) \?/);
+      expect(read(f)).toMatch(/isPastUnconfirmed\(event(, renderNow)?\) \?/);
     }
     expect(PAST_UNCONFIRMED_LABEL).toBe("Past event — never confirmed");
   });
