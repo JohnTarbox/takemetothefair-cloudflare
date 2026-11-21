@@ -105,10 +105,7 @@ export interface ResolveSeriesInput {
  * from outside. A fail-soft reason that nothing reads is not an explanation.
  */
 export type SeriesSkipReason =
-  | "no usable name"
-  | "no venue"
-  | "series resolve failed"
-  | "attach failed";
+  "no usable name" | "no venue" | "series resolve failed" | "attach failed";
 
 export interface ResolveSeriesResult {
   seriesId: string | null;
@@ -218,3 +215,4 @@ export async function attachEventToSeries(
 export function orphanEventCondition() {
   return sql`series_id IS NULL AND status IN ('APPROVED','TENTATIVE') AND merged_into IS NULL`;
 }
+export * from "./promoter-propagation";

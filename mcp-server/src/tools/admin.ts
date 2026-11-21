@@ -154,7 +154,11 @@ import {
   hasPerformersWhere,
   performerRosterStatusWhere,
 } from "./performer-selection.js";
-import { attachEventToSeries } from "@takemetothefair/event-series";
+import {
+  attachEventToSeries,
+  propagatePromoterToSeries,
+  type SeriesPromoterPropagation,
+} from "@takemetothefair/event-series";
 import { registerCreateSeriesTool } from "./admin-create-series.js";
 import { dollarsToCents } from "../helpers.js";
 import { recordMutation } from "../audit/record-mutation.js";
@@ -2281,6 +2285,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       });
       if (syncDisabledByEdit) updates.syncEnabled = false;
 
+      // OPE-1649 — set when a promoter change was carried (or refused) to the series.
+      let seriesPromoterSync: SeriesPromoterPropagation | null = null;
+
       // Execute event update (skip if only venue fields provided)
       if (requestedFields.length > 0) {
         // SYN1 — outbox row + version bump in the SAME batch as the UPDATE so a
@@ -2368,6 +2375,38 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             }
           } catch (err) {
             console.error("[series] late attach threw", err);
+          }
+        }
+
+        // OPE-1649 — a promoter reassignment follows the event into its series
+        // (the landing's JSON-LD organizer and the next occurrence both read
+        // `event_series.promoter_id`). Rule + reasons: promoter-propagation.ts.
+        // Best-effort like the late attach above: the event edit already landed.
+        if (
+          typeof updates.promoterId === "string" &&
+          updates.promoterId !== event.promoterId &&
+          event.seriesId
+        ) {
+          try {
+            seriesPromoterSync = await propagatePromoterToSeries(db, {
+              eventId: event.id,
+              seriesId: event.seriesId,
+              eventStartDate:
+                updates.startDate !== undefined
+                  ? (updates.startDate as Date | null)
+                  : (event.startDate ?? null),
+              oldPromoterId: event.promoterId ?? null,
+              newPromoterId: updates.promoterId,
+            });
+          } catch (err) {
+            console.error("[series] promoter propagation threw", err);
+            seriesPromoterSync = {
+              seriesId: event.seriesId,
+              outcome: "skipped",
+              reason: "propagation_failed",
+              from: null,
+              to: null,
+            };
           }
         }
 
@@ -2864,6 +2903,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           }
         } catch {
           // Advisory only: a failed read must not turn a successful update into an error.
+        }
+      }
+      if (seriesPromoterSync) {
+        result.series_promoter = seriesPromoterSync;
+        if (seriesPromoterSync.outcome === "skipped") {
+          warnings.series_promoter_not_updated =
+            `The event's promoter changed but its series ${seriesPromoterSync.seriesId} still has ` +
+            `promoter ${seriesPromoterSync.from ?? "(none)"} (${seriesPromoterSync.reason}). The series ` +
+            `landing page and the next occurrence read the series' promoter; if it should follow, ` +
+            `set it with update_series(promoter_id).`;
         }
       }
       if (Object.keys(warnings).length > 0) {
