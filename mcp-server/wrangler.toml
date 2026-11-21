@@ -328,8 +328,14 @@ new_sqlite_classes = ["BurstCounter"]
 # additional crons here as confidence in the pattern builds; the scheduled
 # handler in src/index.ts dispatches based on which cron expression fires.
 [triggers]
-# "0 6 * * *"     → daily heavy: recommendations scan + GSC URL Inspection sweep
-#                   + time-to-index reconcile (06:00 UTC, overnight NA)
+# "5 6 * * *"     → daily heavy: recommendations scan + GSC URL Inspection sweep
+#                   + time-to-index reconcile (06:05 UTC, overnight NA).
+#                   OPE-1690: was "0 6 * * *", the same second as the */10 and
+#                   hourly fires, and D1 overloaded at 06:00 on 11-16/18/19.
+#                   Its ~30 tasks now START 3 s apart (staggerCronTasks).
+# "45 6 * * *"    → OPE-1690 full duplicate sweep (OPE-1597), alone. It was
+#                   the largest single job in the 06:00 batch. 06:45 is clear
+#                   of the */10 fires (06:40, 06:50) and the 06:25 sequence.
 # "10 6 * * *"    → GW1.3 holdout-sampling cron — 10 min after the 06:00
 #                   batch so the heavy work doesn't contend (added 2026-06-03).
 #                   See src/goodwill/holdout-sampling.ts for the per-event
@@ -371,7 +377,7 @@ new_sqlite_classes = ["BurstCounter"]
 #                   staggered 1h after the vendor sweep to space Browser-Rendering.
 # "30 8 * * *"   → OPE-408 venue-geocode safety net (missing_only, <=25/run).
 #                  After the 08:00 promoter sweep so the two do not contend.
-crons = ["0 6 * * *", "10 6 * * *", "25 6 * * *", "*/10 * * * *", "0 * * * *", "0 7 * * *", "0 8 * * *", "30 8 * * *"]
+crons = ["5 6 * * *", "10 6 * * *", "25 6 * * *", "45 6 * * *", "*/10 * * * *", "0 * * * *", "0 7 * * *", "0 8 * * *", "30 8 * * *"]
 
 # Cloudflare Email Service — outbound sending binding (public beta).
 # Replaced Resend HTTP integration in the EMAIL_JOBS consumer. Without

@@ -47,6 +47,27 @@ const MAX_DISPLAY_PAIRS = 200;
 const INSERT_CHUNK = 20;
 /** Ids per `inArray`, against the same cap. */
 const ID_CHUNK = 90;
+/**
+ * OPE-1690 — pause between pair-insert chunks. 1,000 pairs is 50 statements;
+ * written back to back they were the statement D1 rejected at 06:00 on 11-16,
+ * 11-18 and 11-19. 100 ms × 50 spreads them over ~5 s.
+ */
+export const INSERT_YIELD_MS = 100;
+/** OPE-1690 — backoff before retrying one chunk that hit a D1 overload. */
+export const INSERT_OVERLOAD_RETRY_MS = [2000, 5000];
+
+/** True when an error (or any `cause` beneath it) is D1 refusing for load. */
+export function isD1OverloadError(error: unknown): boolean {
+  for (let e: unknown = error, depth = 0; e && depth < 5; depth++) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/D1 DB is overloaded|too many resources consumed|queued for too long/i.test(msg))
+      return true;
+    e = e instanceof Error ? (e as Error & { cause?: unknown }).cause : undefined;
+  }
+  return false;
+}
+
+const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 const LEADING_ARTICLES = new Set(["the", "a", "an"]);
 
@@ -228,8 +249,9 @@ export interface FullSweepResult {
 export async function runFullDuplicateSweep(
   db: Database,
   type: DuplicateEntityType,
-  opts: { now: Date }
+  opts: { now: Date; sleep?: (ms: number) => Promise<void> }
 ): Promise<FullSweepResult> {
+  const sleep = opts.sleep ?? realSleep;
   const rows = await loadSweepRows(db, type);
   const liveCount = await countLive(db, type);
   const { pairs, comparisons } = planBlockedPairs(rows, STORED_MIN_SIMILARITY);
@@ -237,9 +259,19 @@ export async function runFullDuplicateSweep(
   const runId = crypto.randomUUID();
 
   for (let i = 0; i < stored.length; i += INSERT_CHUNK) {
-    await db
-      .insert(entityDuplicateSweepPairs)
-      .values(stored.slice(i, i + INSERT_CHUNK).map((p) => ({ ...p, runId, entityType: type })));
+    if (i > 0) await sleep(INSERT_YIELD_MS);
+    const values = stored
+      .slice(i, i + INSERT_CHUNK)
+      .map((p) => ({ ...p, runId, entityType: type }));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await db.insert(entityDuplicateSweepPairs).values(values);
+        break;
+      } catch (error) {
+        if (!isD1OverloadError(error) || attempt >= INSERT_OVERLOAD_RETRY_MS.length) throw error;
+        await sleep(INSERT_OVERLOAD_RETRY_MS[attempt]);
+      }
+    }
   }
 
   // Read back before the cut-over: until the run row moves, readers keep the

@@ -268,7 +268,7 @@ Vendor application statuses follow a lifecycle with valid transitions. You can't
 Same pattern — event lifecycle follows a state machine. For example, OCCURRED → SCHEDULED is rejected (an OCCURRED event can only flip to NO_SHOW, as an admin correction). The error response includes the list of `allowed_targets` from the event's current lifecycle state.
 
 **Recommendation count looks frozen (last_scanned_at is hours old):**
-The recommendations engine scans on a `0 6 * * *` daily cron. Counts in `get_recommendations` reflect the last scan's output. Check `last_scan_error` on the rule — if non-null, that rule's scan failed and the displayed count is stale.
+The recommendations engine scans on a `5 6 * * *` daily cron (06:00 until OPE-1690). Counts in `get_recommendations` reflect the last scan's output. Check `last_scan_error` on the rule — if non-null, that rule's scan failed and the displayed count is stale.
 
 **Analytics tool returns "MAIN_APP_URL and INTERNAL_API_KEY must be configured":**
 The analytics tools proxy to the main Pages app. If either secret is missing in the MCP worker environment, analytics is unreachable. This is a deploy-time configuration issue — contact the platform owner.
