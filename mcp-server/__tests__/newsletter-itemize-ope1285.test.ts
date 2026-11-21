@@ -18,9 +18,14 @@ import {
   groundItems,
   inferYear,
   parseItemsResponse,
+  type NewsletterItem,
   type RawItem,
 } from "../src/inbound/newsletter-itemize.js";
-import { disposeItems, type DisposeDeps } from "../src/inbound/newsletter-dispose.js";
+import {
+  disposeItems,
+  newsletterNameAffinity,
+  type DisposeDeps,
+} from "../src/inbound/newsletter-dispose.js";
 import { processNewsletter } from "../src/inbound/newsletter-process.js";
 import type { CheckDuplicateResult } from "../src/duplicates/check-duplicate.js";
 import { NEVER_OUTREACH_DETECTORS } from "../src/goodwill/queue-ranking.js";
@@ -350,11 +355,15 @@ describe("groundItems — the model proposes, the newsletter decides", () => {
 
 // ── Disposition ────────────────────────────────────────────────────────────
 
-const hit = (id: string, matchType = "similar_name_date"): CheckDuplicateResult => ({
+const hit = (
+  id: string,
+  matchType = "similar_name_date",
+  name: string = id
+): CheckDuplicateResult => ({
   isDuplicate: true,
   matchType: matchType as never,
   identifiesSameEvent: true,
-  existingEvent: { id, slug: id, name: id, startDate: null, status: "APPROVED", sourceUrl: null },
+  existingEvent: { id, slug: id, name, startDate: null, status: "APPROVED", sourceUrl: null },
 });
 
 function fakeDeps(
@@ -423,7 +432,15 @@ describe("disposeItems — what each item means for the events we hold", () => {
     );
     expect(items).toHaveLength(1);
     const { deps, citations } = fakeDeps(
-      { "New England Made Autumn Show 2026": hit("defe4089", "city_state_date") },
+      {
+        // OPE-1696: the real stored name (prod D1, 2026-11-21) — the hit is
+        // name-blind, so the disposition now checks the names agree.
+        "New England Made Autumn Show 2026": hit(
+          "defe4089",
+          "city_state_date",
+          "New England Made Giftware & Specialty Food Show - Autumn"
+        ),
+      },
       { defe4089: { start: "2026-09-15", end: "2026-09-16" } }
     );
     const out = await disposeItems(
@@ -688,5 +705,133 @@ describe("the workflow runs itemize only for a newsletter, and never lets it fai
     expect(before).toMatch(
       /^if \(newsletter\.isNewsletter\) \{\s*let itemized: "ok" \| "skipped" \| "failed" = "failed";\s*try \{\s*const itemize = await step\.do\(\s*$/
     );
+  });
+});
+
+// ── OPE-1696: a same-town hit is not that event unless the names agree ──────
+
+describe("OPE-1696 — newsletter items vs name-blind city_state_date hits", () => {
+  const BANGOR_MARKET = "Bangor Sunday Farmers Market — 2026-10-18";
+  const item = (over: Partial<NewsletterItem>): NewsletterItem => ({
+    name: "x",
+    startDate: "2026-10-24",
+    endDate: null,
+    venue: null,
+    city: "Bangor",
+    state: "ME",
+    excerpt: "SATURDAY, OCTOBER 24",
+    yearExplicit: false,
+    ...over,
+  });
+
+  it("PROD SPECIMEN (a8532e80): neither Bangor item binds to the farmers market — no discrepancy written", async () => {
+    const items = [
+      item({ name: "Downtown Bangor Trick or Treat", venue: "Downtown Bangor" }),
+      item({
+        name: "Bangor Comedy Festival",
+        startDate: "2026-10-23",
+        endDate: "2026-10-24",
+        venue: "Hollywood Casino",
+      }),
+    ];
+    const market = hit("3e488ab3", "city_state_date", BANGOR_MARKET);
+    const { deps, citations, discrepancies } = fakeDeps(
+      { "Downtown Bangor Trick or Treat": market, "Bangor Comedy Festival": market },
+      { "3e488ab3": { start: "2026-10-18", end: "2026-10-18" } }
+    );
+    const out = await disposeItems(
+      items,
+      { promoterId: "fdc9830e", receivedAt: new Date("2026-10-23T02:00:31Z") },
+      deps
+    );
+    expect(discrepancies).toEqual([]);
+    expect(citations).toEqual([]);
+    // Yearless, as in prod: skipped, exactly as if no match had been found.
+    expect(out.map((o) => o.disposition)).toEqual([
+      { kind: "skipped", reason: "no-year" },
+      { kind: "skipped", reason: "no-year" },
+    ]);
+  });
+
+  it("a YEAR-EXPLICIT item in the same position becomes a candidate instead of being swallowed", async () => {
+    const { deps, discrepancies } = fakeDeps(
+      { "Bangor Comedy Festival": hit("3e488ab3", "city_state_date", BANGOR_MARKET) },
+      { "3e488ab3": { start: "2026-10-18", end: "2026-10-18" } }
+    );
+    const out = await disposeItems(
+      [item({ name: "Bangor Comedy Festival", yearExplicit: true, excerpt: "Oct 24, 2026" })],
+      { promoterId: "fdc9830e", receivedAt: new Date("2026-10-23T02:00:31Z") },
+      deps
+    );
+    expect(out[0].disposition).toEqual({ kind: "unmatched", promoterId: "fdc9830e" });
+    expect(discrepancies).toEqual([]);
+  });
+
+  it("LANDMARK: the same show under its ordinal name still files a discrepancy on a city_state_date hit", async () => {
+    const { deps, discrepancies } = fakeDeps(
+      {
+        "38th Annual Lakes Region Holiday Craft Fair": hit(
+          "lrh",
+          "city_state_date",
+          "Lakes Region Holiday Craft Fair"
+        ),
+      },
+      { lrh: { start: "2026-10-31", end: "2026-11-01" } }
+    );
+    const out = await disposeItems(
+      [
+        item({
+          name: "38th Annual Lakes Region Holiday Craft Fair",
+          startDate: "2026-11-07",
+          endDate: "2026-11-08",
+          city: "Tilton",
+          state: "NH",
+        }),
+      ],
+      { promoterId: null, receivedAt: new Date("2026-10-10") },
+      deps
+    );
+    expect(out[0].disposition).toMatchObject({ kind: "discrepancy", eventId: "lrh" });
+    expect(discrepancies).toHaveLength(1);
+  });
+
+  it("a name-blind hit from any OTHER stage is unchanged (venue_date still binds on dates alone)", async () => {
+    const { deps, discrepancies } = fakeDeps(
+      { "Downtown Bangor Trick or Treat": hit("3e488ab3", "venue_date", BANGOR_MARKET) },
+      { "3e488ab3": { start: "2026-10-18", end: "2026-10-18" } }
+    );
+    await disposeItems(
+      [item({ name: "Downtown Bangor Trick or Treat" })],
+      { promoterId: null, receivedAt: new Date("2026-10-23") },
+      deps
+    );
+    expect(discrepancies).toHaveLength(1);
+  });
+
+  it.each([
+    // [item, stored event, town, expected]
+    ["Downtown Bangor Trick or Treat", BANGOR_MARKET, "Bangor", false],
+    ["Bangor Comedy Festival", BANGOR_MARKET, "Bangor", false],
+    ["Bangor Sunday Farmers Market", BANGOR_MARKET, "Bangor", true],
+    [
+      "New England Made Autumn Show 2026",
+      "New England Made Giftware & Specialty Food Show - Autumn",
+      "Portland",
+      true,
+    ],
+    [
+      "38th Annual Lakes Region Holiday Craft Fair",
+      "Lakes Region Holiday Craft Fair",
+      "Tilton",
+      true,
+    ],
+    // Real prod pair (inbound a482d86b): same venue and dates, no shared distinctive word.
+    // Deliberately NOT affinity — it routes to MEDIUM triage, the submit lane's own call.
+    ["Lakes Region Holiday Craft Fair", "Silver Bells Craft Fair at Tanger", "Tilton", false],
+    ["Spring Craft Fair", "Fall Craft Fair", "Topsham", false],
+    ["Fair", "Fair", "Topsham", true],
+    ["", "Anything", "Topsham", false],
+  ])("newsletterNameAffinity(%j, %j, %j) → %s", (a, b, town, expected) => {
+    expect(newsletterNameAffinity(a, b, town)).toBe(expected);
   });
 });

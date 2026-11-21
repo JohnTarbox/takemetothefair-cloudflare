@@ -19,8 +19,96 @@
  * Made's featured event belongs to Maine Crafts Association, and New England
  * Made's newsletter comes from a sender that attributes to no promoter at all.
  */
+import { levenshteinSimilarity, normalizeName } from "@takemetothefair/utils";
 import type { CheckDuplicateInput, CheckDuplicateResult } from "../duplicates/check-duplicate.js";
 import type { NewsletterItem } from "./newsletter-itemize.js";
+
+/**
+ * OPE-1696 — words that say what KIND of event something is, not WHICH one.
+ * Two shows in one town share these by construction, so they carry no identity.
+ */
+const GENERIC_EVENT_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "at",
+  "by",
+  "for",
+  "in",
+  "of",
+  "on",
+  "or",
+  "the",
+  "to",
+  "with",
+  "annual",
+  "day",
+  "days",
+  "weekend",
+  "event",
+  "events",
+  "fair",
+  "fairs",
+  "festival",
+  "fest",
+  "show",
+  "shows",
+  "market",
+  "markets",
+  "farmers",
+  "craft",
+  "crafts",
+  "expo",
+  "sale",
+  "bazaar",
+]);
+
+function distinctiveWords(name: string, townWords: Set<string>): Set<string> {
+  return new Set(
+    normalizeName(name)
+      .split(" ")
+      .filter((w) => w && !GENERIC_EVENT_WORDS.has(w) && !townWords.has(w) && !/^\d+$/.test(w))
+  );
+}
+
+/**
+ * OPE-1696 — does a newsletter item's name plausibly name the event a
+ * `city_state_date` hit returned?
+ *
+ * That stage of `findDuplicate` is name-blind: any event in the same town within
+ * ±7 days. For one submitted event that is a fair signal, and the submit lane
+ * already rates it MEDIUM (`classifyDedupTier`). A newsletter is a digest of
+ * MANY events in ONE town, so the town is the one thing every item shares —
+ * measured on prod 2026-11-21, both dated items of the Downtown Bangor
+ * newsletter bound to "Bangor Sunday Farmers Market — 2026-10-18".
+ *
+ * Affinity, any of: the normalized names are near-identical (Levenshtein ≥
+ * 0.85, the shared matcher's own name threshold); or at least half the
+ * shorter name's distinctive words — not the town, not "fair"/"show", not
+ * numbers — appear in the other. The real NEM specimen ("New England Made
+ * Autumn Show 2026" ↔ "New England Made Giftware & Specialty Food Show -
+ * Autumn") passes on {new, england, made, autumn}; "Downtown Bangor Trick or
+ * Treat" ↔ the farmers market shares only the town.
+ */
+export function newsletterNameAffinity(
+  itemName: string,
+  eventName: string,
+  town: string | null
+): boolean {
+  const a = normalizeName(itemName);
+  const b = normalizeName(eventName);
+  if (!a || !b) return false;
+  if (levenshteinSimilarity(a, b, 0.85) >= 0.85) return true;
+  const townWords = new Set(town ? normalizeName(town).split(" ").filter(Boolean) : []);
+  const wa = distinctiveWords(itemName, townWords);
+  const wb = distinctiveWords(eventName, townWords);
+  const shorter = wa.size <= wb.size ? wa : wb;
+  const longer = shorter === wa ? wb : wa;
+  if (shorter.size === 0) return false;
+  let shared = 0;
+  for (const w of shorter) if (longer.has(w)) shared++;
+  return shared > 0 && shared * 2 >= shorter.size;
+}
 
 /**
  * OPE-1286 — the outcome of trying to turn one `unmatched` item into a PENDING
@@ -101,7 +189,15 @@ export async function disposeItems(
       venueState: item.state,
     });
     // `series_url` only proves two rows share a listing page (OPE-454).
-    if (dup.isDuplicate && dup.identifiesSameEvent) {
+    // OPE-1696: a name-blind same-town hit is that event only if the names agree;
+    // otherwise the item is treated as unmatched (the candidate step's own dedup
+    // then rates the same hit MEDIUM and stages it for operator triage).
+    const sameEvent =
+      dup.isDuplicate &&
+      dup.identifiesSameEvent &&
+      (dup.matchType !== "city_state_date" ||
+        newsletterNameAffinity(item.name, dup.existingEvent.name, item.city));
+    if (dup.isDuplicate && sameEvent) {
       const eventId = dup.existingEvent.id;
       const stored = await deps.loadEventDates(eventId);
       if (stored) {
