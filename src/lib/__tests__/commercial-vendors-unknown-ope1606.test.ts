@@ -159,13 +159,19 @@ describe("readers treat NULL as unknown, not no", () => {
   it("the three filter sites all use that predicate", () => {
     for (const f of [
       "src/lib/events-filter-count.ts",
-      "src/app/events/(listing)/page.tsx",
+      // OPE-1668 — the /events listing query moved here from its page.tsx.
+      "src/lib/events/events-listing.ts",
       "src/app/api/events/export/route.ts",
     ]) {
       const src = readFileSync(join(process.cwd(), f), "utf8");
       expect(src, f).toContain("${events.commercialVendorsAllowed} IS NOT 0");
       expect(src, f).not.toContain("eq(events.commercialVendorsAllowed, true)");
     }
+  });
+
+  it("the cached /events path's in-memory port also keeps unknown in (OPE-1668)", () => {
+    const src = readFileSync(join(process.cwd(), "src/lib/events/events-listing.ts"), "utf8");
+    expect(src).toContain('p.commercialVendors === "true" && e.commercialVendorsAllowed === false');
   });
 
   it("the event page refuses a commercial vendor only on an explicit no", () => {

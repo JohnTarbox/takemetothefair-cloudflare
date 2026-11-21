@@ -32,7 +32,8 @@ vi.mock("@/lib/cloudflare", () => ({
   getCloudflareDb: () => {
     dbCalls += 1;
     return chain();
-  },
+  }, // OPE-1668 — the page now reads through the KV cache; no binding in tests.
+  getCloudflareRateLimitKv: () => null,
 }));
 vi.mock("@/lib/event-days-attach", () => ({
   attachEventDayDates: async (_db: unknown, rows: unknown[]) => rows,

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 /**
  * OPE-1488 — one click from a date to that day's Day view, and the date survives
@@ -11,7 +11,14 @@ import { test, expect, type Page } from "@playwright/test";
  * non-current-month case, which computes its month relative to now (OPE-1566).
  */
 
-const cal = (page: Page) => page.getByTestId("cm-root");
+// OPE-1669 — scoped to #main-content, not page-wide. React streams each Suspense
+// boundary as a hidden `<div hidden id="S:n">` AFTER `</main>` and reveals it later
+// ($RC → a throttled $RV). If the boundary gets an update before it hydrates, React
+// renders it on the client while that hidden segment is still in <body>, so for a
+// moment the page holds TWO `cm-root`s and strict mode (which counts hidden nodes)
+// throws. Seen 4× on CI's cold `next start`. The scope excludes only the streamed
+// segment: a real double render inside <main> still fails strict mode.
+const cal = (page: Page) => page.locator("#main-content").getByTestId("cm-root");
 const activeTab = (page: Page) =>
   page.getByRole("tablist", { name: "Calendar view" }).locator('[aria-selected="true"]');
 

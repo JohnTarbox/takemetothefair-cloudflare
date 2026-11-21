@@ -23,7 +23,7 @@
  * them. False positives are bad — they'd suppress legitimate names.
  */
 
-const STREET_NUMBER_RE = /^\s*\d+\s+\S/;
+import { looksLikeVenueStreetAddress } from "@takemetothefair/utils";
 
 export interface VenueLike {
   name: string;
@@ -33,13 +33,14 @@ export interface VenueLike {
 }
 
 /**
- * True iff `name` looks like a raw street address (begins with a
- * digit run followed by whitespace and at least one more character).
- * Exported for the recommendation rule + tests.
+ * True iff `name` looks like a raw street address. Delegates to the ONE
+ * shared predicate in @takemetothefair/utils (OPE-1688): this file used to
+ * carry its own copy of the bare leading-number regex, which hid real names
+ * such as "450 Banquets" on public pages even after ingest stopped renaming
+ * them.
  */
-export function looksLikeStreetAddress(name: string): boolean {
-  if (!name) return false;
-  return STREET_NUMBER_RE.test(name);
+export function looksLikeStreetAddress(name: string | null | undefined): boolean {
+  return looksLikeVenueStreetAddress(name);
 }
 
 /**

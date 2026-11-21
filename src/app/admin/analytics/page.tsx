@@ -36,6 +36,7 @@ import {
   Search,
   Sparkles,
   TrendingUp,
+  ExternalLink,
 } from "lucide-react";
 import { count, desc, eq, gte, sql } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -303,11 +304,13 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <HeartbeatProbesCardView snapshot={snapshot} />
       </div>
 
-      {/* §10.3 KPI quartet — site CTR, conversion rate, brand split, sitemap quality.
+      {/* §10.3 KPI quartet — site CTR, conversion rate, brand split, sitemap quality —
+          plus OPE-1658's value-only official-site click rate beside conversion.
           State coloring (GREEN/YELLOW/RED) added in §6.3 — see kpiCardState helper. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <SiteCtrCardView snapshot={snapshot} />
         <ConversionRateCardView snapshot={snapshot} />
+        <OfficialSiteClickRateCardView snapshot={snapshot} />
         <BrandVsNonBrandCardView snapshot={snapshot} />
         <SitemapQualityCardView snapshot={snapshot} />
       </div>
@@ -839,6 +842,9 @@ function kpiCardState(
     const ageLabel = typeof ageSec === "number" ? formatStaleAge(ageSec) : "unknown duration";
     return { state, actionPrompt: `Data feed stale ${ageLabel} — investigate source` };
   }
+  // OPE-1658 — a measured value held INDETERMINATE while its target is re-ruled.
+  const held = KPI_THRESHOLDS[name].awaitingRebaseline;
+  if (state === "INDETERMINATE" && held) return { state, actionPrompt: held };
   return { state };
 }
 
@@ -924,6 +930,35 @@ function ConversionRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           <span title={`Window ends ${c.windowEndDate} (48h GA4 finalization lag)`}>
             window ends {c.windowEndDate}
           </span>
+        </div>
+      }
+    />
+  );
+}
+
+/**
+ * OPE-1658 — click-through to the organizer's own page via the "Official Event
+ * Website" fallback button (no ticket URL). Its own number, value only: no
+ * GREEN/RED until there is a baseline, so it carries no KPI badge.
+ */
+function OfficialSiteClickRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.conversionRate;
+  return (
+    <KpiCard
+      tileId="overview.official-site-click-rate"
+      measurement={c.officialSiteRateMeasured}
+      title={`Official-site click rate (${c.windowDays}d)`}
+      value={measurementText(c.officialSiteRateMeasured, (v) => fmtPct(v, 2))}
+      icon={<ExternalLink className="w-5 h-5 text-sky-600" />}
+      iconColor="bg-sky-100"
+      footer={
+        <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+          <span>
+            {c.officialSiteClicks != null ? fmt(c.officialSiteClicks) : "—"} &ldquo;Official Event
+            Website&rdquo; clicks (organic search) / {c.sessions != null ? fmt(c.sessions) : "—"}{" "}
+            organic sessions
+          </span>
+          <span>no target yet — value only (OPE-1658)</span>
         </div>
       }
     />

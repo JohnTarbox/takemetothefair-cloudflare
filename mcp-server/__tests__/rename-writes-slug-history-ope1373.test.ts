@@ -171,6 +171,7 @@ describe("merge tools abort, not swallow, a slug-history failure", () => {
     const r = await call("merge_promoter", {
       keeper_promoter_id: "p2",
       duplicate_promoter_id: "p1",
+      preview: false, // OPE-1647 — the default is now a write-nothing preview
     });
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/ABORTED/);
@@ -208,6 +209,7 @@ describe("merge tools abort, not swallow, a slug-history failure", () => {
     const r = await call("merge_promoter", {
       keeper_promoter_id: "p2",
       duplicate_promoter_id: "p1",
+      preview: false, // OPE-1647 — the default is now a write-nothing preview
     });
     expect(r.isError).toBe(false);
     expect(all(`SELECT old_slug, new_slug FROM promoter_slug_history`)).toEqual([

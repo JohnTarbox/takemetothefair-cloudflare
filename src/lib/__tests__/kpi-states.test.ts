@@ -69,8 +69,8 @@ describe("decideStateRow", () => {
 
   it("YELLOW → GREEN counts as a resolution", () => {
     const r = decideStateRow(
-      "conversion_rate",
-      0.09,
+      "site_ctr",
+      0.05,
       FRESH,
       { state: "YELLOW", firstDetectedAt: EARLIER },
       NOW

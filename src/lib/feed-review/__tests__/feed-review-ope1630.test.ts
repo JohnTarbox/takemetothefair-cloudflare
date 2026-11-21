@@ -315,6 +315,27 @@ describe("reviewer answers to a refusal (venue_id, not_duplicate_of)", () => {
     expect(n("SELECT COUNT(*) n FROM events")).toBe(before);
   });
 
+  it("OPE-1630: a merged-away INACTIVE venue is neither offered as a candidate nor accepted as a pick", async () => {
+    // merge_venue keeps the loser's name and town; only the slug and status change.
+    raw
+      .prepare(
+        "INSERT INTO venues (id, name, slug, city, state, status) VALUES ('v-bath-tomb','Bath Middle School','bath-middle-school-merged-tomb','Bath','ME','INACTIVE')"
+      )
+      .run();
+    const r = await review({ feedItemId: "i-novenue", action: "approve" });
+    expect(r).toMatchObject({ ok: false, code: "venue_unmatched" });
+    if (r.ok) throw new Error("unreachable");
+    const ids = r.venue_candidates?.map((c) => c.id) ?? [];
+    expect(ids).toContain("v-bath"); // landmark: the candidate query still ran and matched
+    expect(ids).not.toContain("v-bath-tomb");
+
+    const before = n("SELECT COUNT(*) n FROM events");
+    expect(
+      await review({ feedItemId: "i-novenue", action: "approve", venueId: "v-bath-tomb" })
+    ).toMatchObject({ ok: false, code: "venue_inactive" });
+    expect(n("SELECT COUNT(*) n FROM events")).toBe(before);
+  });
+
   it("not_duplicate_of overrides only the match the reviewer named", async () => {
     // Another organizer's DIFFERENT show at the same venue a day earlier: dedup's
     // venue ±7-day stage calls it the same event.
@@ -458,5 +479,88 @@ describe("routes", () => {
       count: 1,
       items: [{ id: "i-wedding", review_note: "private event" }],
     });
+  });
+});
+
+describe("OPE-1659 — approve_as_occurrence and the series' own other dates", () => {
+  // The North Pole Express shape: every run has its own URL and they share one
+  // venue, so dedup's venue_date stage (±7 days) matches each run to a sibling.
+  const run = (id: string, ext: string, date: string) =>
+    seedItem(
+      id,
+      feedEvent({
+        externalId: ext,
+        title: "North Pole Express",
+        url: `https://gurley.example/event/north-pole-express/${date}/`,
+        startDate: date,
+        endDate: date,
+        venue: { name: "Dover Elks Lodge", address: null, city: "Dover", state: "NH", zip: null },
+      })
+    );
+
+  beforeEach(() => {
+    run("i-np1", "201", "2026-12-05");
+    run("i-np2", "202", "2026-12-08"); // 3 days later: inside venue_date's ±7
+    run("i-np1b", "203", "2026-12-05"); // the SAME date again, another URL
+  });
+
+  it("a different-date run of the named series is an occurrence, not a duplicate", async () => {
+    const a = await review({
+      feedItemId: "i-np1",
+      action: "approve_as_occurrence",
+      seriesId: "s-dover",
+    });
+    if (!a.ok) throw new Error(JSON.stringify(a));
+
+    // Without series_id the real dedup still refuses it (venue_date against the first run)…
+    expect(await review({ feedItemId: "i-np2", action: "approve" })).toMatchObject({
+      ok: false,
+      code: "duplicate",
+      suggest: { event_id: a.event!.id },
+    });
+    // …with series_id it goes through, and the audit row says why.
+    const b = await review({
+      feedItemId: "i-np2",
+      action: "approve_as_occurrence",
+      seriesId: "s-dover",
+    });
+    expect(b).toMatchObject({ ok: true, event: { series_id: "s-dover" } });
+    const payload = JSON.parse(
+      one<{ p: string }>(
+        "SELECT payload_json p FROM admin_actions WHERE target_id='i-np2' ORDER BY created_at DESC LIMIT 1"
+      ).p
+    );
+    expect(payload.series_sibling_of).toBe(a.event!.id);
+    expect(
+      n("SELECT COUNT(*) n FROM events WHERE series_id='s-dover' AND name='North Pole Express'")
+    ).toBe(2);
+  });
+
+  it("the SAME date in the series is still a duplicate", async () => {
+    const a = await review({
+      feedItemId: "i-np1",
+      action: "approve_as_occurrence",
+      seriesId: "s-dover",
+    });
+    if (!a.ok) throw new Error(JSON.stringify(a));
+    const before = n("SELECT COUNT(*) n FROM events");
+    expect(
+      await review({ feedItemId: "i-np1b", action: "approve_as_occurrence", seriesId: "s-dover" })
+    ).toMatchObject({
+      ok: false,
+      code: "duplicate",
+      suggest: { action: "link", event_id: a.event!.id },
+    });
+    expect(n("SELECT COUNT(*) n FROM events")).toBe(before);
+  });
+
+  it("a match OUTSIDE the named series is still refused", async () => {
+    // i-np1 approved with no series lands in its own hub, not s-dover.
+    const a = await review({ feedItemId: "i-np1", action: "approve" });
+    if (!a.ok) throw new Error(JSON.stringify(a));
+    expect(a.event!.series_id).not.toBe("s-dover");
+    expect(
+      await review({ feedItemId: "i-np2", action: "approve_as_occurrence", seriesId: "s-dover" })
+    ).toMatchObject({ ok: false, code: "duplicate", suggest: { event_id: a.event!.id } });
   });
 });

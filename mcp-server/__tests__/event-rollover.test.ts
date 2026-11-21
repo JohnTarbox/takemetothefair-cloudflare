@@ -109,6 +109,31 @@ describe("rolloverEventIfRecurring — happy path", () => {
     expect(rolled.completenessScore).toBeGreaterThan(0);
   });
 
+  it("OPE-1680 — drops last year's vendor fee and fee notes, like the deadline", async () => {
+    const sourceId = seedAnnual({
+      vendorFeeMinCents: 7500,
+      vendorFeeMaxCents: 15000,
+      vendorFeeNotes: "$75 per 10x10 booth",
+      applicationDeadline: new Date(Date.UTC(2026, 7, 1, 12, 0, 0)),
+      applicationUrl: "https://example.org/apply",
+    });
+    const res = await rolloverEventIfRecurring(db, sourceId, {
+      via: "cron",
+      actorUserId: null,
+      now: NOW,
+    });
+    expect(res.created).toBe(true);
+    const [rolled] = db.select().from(events).where(eq(events.id, res.newEventId!)).all();
+    expect(rolled.vendorFeeMinCents).toBeNull();
+    expect(rolled.vendorFeeMaxCents).toBeNull();
+    expect(rolled.vendorFeeNotes).toBeNull();
+    expect(rolled.applicationDeadline).toBeNull();
+    // Positive landmark: the standing portal URL still carries over, so the
+    // nulls above are the fee rule, not a rollover that copied nothing.
+    expect(rolled.applicationUrl).toBe("https://example.org/apply");
+    expect(rolled.description).toBe("A big agricultural fair.");
+  });
+
   it("inherits the source's series_id so the rolled edition is series-linked (P3.5)", async () => {
     const sourceId = seedAnnual({
       id: "evt-series-2026",

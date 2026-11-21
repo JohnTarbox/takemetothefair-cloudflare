@@ -533,25 +533,19 @@ async function citeRow(
     ],
     ["hours", v.hours ? `${v.hours.open}-${v.hours.close}` : null],
     ["description", v.description],
-    [
-      "ticket_price_min_cents",
-      v.ticketPriceMin === null ? null : String(dollarsToCents(v.ticketPriceMin)),
-    ],
-    [
-      "ticket_price_max_cents",
-      v.ticketPriceMax === null ? null : String(dollarsToCents(v.ticketPriceMax)),
-    ],
+    // OPE-1680 — citation `field_name`s are the canonical names, in dollars,
+    // not the `_cents` columns: `CITED_VALUE_FIELDS` (mcp-server
+    // citation-coverage.ts), the vendor-field-citations probe and email
+    // auto-apply all read `vendor_fee_min` etc. Under `_cents` these rows
+    // were invisible to every reader (prod: 0 such rows on 2026-11-18).
+    ["ticket_price_min", v.ticketPriceMin === null ? null : String(v.ticketPriceMin)],
+    ["ticket_price_max", v.ticketPriceMax === null ? null : String(v.ticketPriceMax)],
     ["application_url", v.applicationUrl],
     ["application_deadline", v.applicationDeadline],
+    ["vendor_fee_min", v.vendorFeeMin === null ? null : String(v.vendorFeeMin)],
     [
-      "vendor_fee_min_cents",
-      v.vendorFeeMin === null ? null : String(dollarsToCents(v.vendorFeeMin)),
-    ],
-    [
-      "vendor_fee_max_cents",
-      (v.vendorFeeMax ?? v.vendorFeeMin) === null
-        ? null
-        : String(dollarsToCents(v.vendorFeeMax ?? v.vendorFeeMin)),
+      "vendor_fee_max",
+      (v.vendorFeeMax ?? v.vendorFeeMin) === null ? null : String(v.vendorFeeMax ?? v.vendorFeeMin),
     ],
     ["source_url", v.eventUrl],
     ["image_url", v.imageUrl],
