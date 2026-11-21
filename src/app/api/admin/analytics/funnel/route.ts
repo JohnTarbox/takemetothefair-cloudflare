@@ -11,9 +11,23 @@ import {
   computeStepRatios,
   type Funnel,
 } from "@/lib/analytics/funnel-steps";
+import {
+  includeSyntheticParam,
+  notSynthetic,
+  syntheticCompletenessNote,
+} from "@/lib/analytics/synthetic-traffic";
+import {
+  firstSubmitAttempt,
+  submitRetry,
+  SUBMIT_ATTEMPT_SINCE,
+} from "@/lib/analytics/funnel-attempts";
 
 /**
- * GET /api/admin/analytics/funnel?days=7  (OPE-364)
+ * GET /api/admin/analytics/funnel?days=7[&include_synthetic=true]  (OPE-364)
+ *
+ * OPE-1498 — synthetic rows (the funnel canary, production-verify, self-declared
+ * crawlers) are EXCLUDED by default. On the low-volume funnels the canary was
+ * ~3 of 4 submit_view rows, so the default must be the visitor view.
  *
  * The read path. The ticket is explicit that an instrument nobody can read does
  * not close it — a half-built pipeline whose missing half is the connection is
@@ -43,6 +57,7 @@ export async function GET(request: NextRequest) {
   const daysRaw = Number(url.searchParams.get("days") ?? 7);
   const days = Number.isFinite(daysRaw) ? Math.min(Math.max(Math.trunc(daysRaw), 1), MAX_DAYS) : 7;
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const includeSynthetic = includeSyntheticParam(url);
 
   // One grouped scan for every step across every funnel, split by the
   // server-derived device dimension. json_extract on `properties` is why the
@@ -58,13 +73,32 @@ export async function GET(request: NextRequest) {
     .where(
       and(
         inArray(analyticsEvents.eventName, [...ALL_FUNNEL_STEP_NAMES]),
-        gte(analyticsEvents.timestamp, since)
+        gte(analyticsEvents.timestamp, since),
+        includeSynthetic ? undefined : notSynthetic(analyticsEvents.properties),
+        // OPE-1500 — a retry is not a second visitor reaching the step.
+        firstSubmitAttempt(analyticsEvents.properties)
       )
     )
     .groupBy(
       analyticsEvents.eventName,
       sql`COALESCE(json_extract(${analyticsEvents.properties}, '$.device'), 'unknown')`
     );
+
+  // OPE-1500 — the retries the step count leaves out, per step. A visitor
+  // resubmitting several times in a minute is friction worth seeing.
+  const retryRows = await db
+    .select({ eventName: analyticsEvents.eventName, n: sql<number>`count(*)` })
+    .from(analyticsEvents)
+    .where(
+      and(
+        inArray(analyticsEvents.eventName, [...ALL_FUNNEL_STEP_NAMES]),
+        gte(analyticsEvents.timestamp, since),
+        includeSynthetic ? undefined : notSynthetic(analyticsEvents.properties),
+        submitRetry(analyticsEvents.properties)
+      )
+    )
+    .groupBy(analyticsEvents.eventName);
+  const submitRetries = Object.fromEntries(retryRows.map((r) => [r.eventName, Number(r.n ?? 0)]));
 
   // device -> step -> count, plus an "all" rollup.
   const byDevice = new Map<string, Record<string, number>>();
@@ -93,7 +127,9 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     windowDays: days,
     since: since.toISOString(),
+    includeSynthetic,
     funnels,
+    submitRetries,
     completeness: {
       summable: false,
       reason:
@@ -101,7 +137,12 @@ export async function GET(request: NextRequest) {
         "rate limit drops events past 60/hour anonymous (120 authenticated) PER CLIENT, and " +
         "JS-disabled clients emit nothing. Not ad-blocked (first-party endpoint), so the usual " +
         "analytics undercount does not apply. Loss is roughly uniform across steps, so " +
-        "ratioFromPrevious is trustworthy and counts are a FLOOR, not a total.",
+        "ratioFromPrevious is trustworthy and counts are a FLOOR, not a total. " +
+        syntheticCompletenessNote(includeSynthetic) +
+        ` Each *_submitted step counts the first submit attempt per page visit; retries ` +
+        `(properties.attempt >= 2, numbered from ${SUBMIT_ATTEMPT_SINCE}, OPE-1500) are left ` +
+        `out of the step and reported in submitRetries. Earlier rows carry no attempt and ` +
+        `each counts once, retries included.`,
       startedAt: "2026-08-16 (OPE-364) — rows before this date have no device dimension",
     },
   });

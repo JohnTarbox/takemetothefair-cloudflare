@@ -15,12 +15,16 @@ import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/ins
 import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { eventList } from "@/lib/admin-list/lists";
+import { isPagedRequest, parseListParams } from "@/lib/admin-list/params";
+import { respondWithList } from "@/lib/admin-list/respond";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { classifySource } from "@/lib/source-classification";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { evaluateGates } from "@/lib/event-date-gates";
+import { citeAdminVendorFields } from "@/lib/events/admin-vendor-citations";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -29,6 +33,14 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const status = searchParams.get("status");
 
   try {
+    // OPE-1595 — the list page asks for one page; bare calls still get every row.
+    if (isPagedRequest(searchParams)) {
+      return await respondWithList(
+        eventList(db, searchParams, parseListParams(searchParams)),
+        searchParams
+      );
+    }
+
     const eventsList = await getEventsWithRelations(db, {
       status: status || undefined,
       includeVendorCounts: true,
@@ -128,7 +140,7 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   }
 });
 
-export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   // Validate request body
   const validation = await validateRequestBody(request, eventCreateSchema);
   if (!validation.success) {
@@ -289,6 +301,24 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     });
     // OPE-767 — the reason is recorded, so it can be discharged on its own.
     if (formerVenue.kind === "flag") await raiseEventReviewFlag(db, eventId, "former_venue");
+
+    // OPE-1680 — a fee or deadline typed into the admin form is stored with a
+    // citation naming the admin edit as its source.
+    await citeAdminVendorFields(db, {
+      eventId,
+      writer: "admin-create",
+      userId: session.user.id,
+      vendorFeeMin: {
+        submitted: data.vendorFeeMin,
+        storedCents: dollarsToCents(data.vendorFeeMin),
+      },
+      vendorFeeMax: {
+        submitted: data.vendorFeeMax,
+        storedCents: dollarsToCents(data.vendorFeeMax),
+      },
+      applicationDeadline: { submitted: data.applicationDeadline, stored: applicationDeadline },
+      now: new Date(),
+    });
 
     // OPE-472 — attach to a series parent at write time. `event_series`
     // minted nothing between 2026-06-30 and this fix, so every event from

@@ -139,6 +139,20 @@ describe("handleReplyToInbound (OPE-163)", () => {
     expect(q.sent[0].references).toBeUndefined();
   });
 
+  it("OPE-1540: a reply into an ongoing thread keeps a single Re:", async () => {
+    // The specimen: inbound a41d30aa's subject already read "Re: …", and the
+    // reply went out as "Re: Re: …".
+    const id = await seedInbound({
+      id: "inb-3",
+      subject: "Re: Optional editable-sign resource for your vendor display guide",
+    });
+    const q = mockQueue();
+    const res = await handleReplyToInbound(db, enabled(q), { inboundEmailId: id, body: "body" });
+    const want = "Re: Optional editable-sign resource for your vendor display guide";
+    expect(res).toMatchObject({ ok: true, subject: want });
+    expect(q.sent[0].subject).toBe(want);
+  });
+
   it("reports a missing inbound id without throwing", async () => {
     const q = mockQueue();
     const res = await handleReplyToInbound(db, enabled(q), { inboundEmailId: "nope", body: "x" });

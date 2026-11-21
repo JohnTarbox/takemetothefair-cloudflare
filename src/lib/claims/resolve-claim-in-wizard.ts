@@ -29,6 +29,7 @@ import type { Database } from "@/lib/db";
 import { vendors, promoters, userRoles, entityClaims, adminActions } from "@/lib/db/schema";
 import { unsafeSlug } from "@/lib/utils";
 import { decideDomainMatch } from "@/lib/claims/domain-match";
+import { matchableDomainsFor } from "@takemetothefair/db-schema";
 import { insertClaimApprovedNotification } from "@/lib/claims/notify-approved";
 
 export type ClaimEntityType = "VENDOR" | "PROMOTER";
@@ -71,6 +72,15 @@ interface WizardEntity {
   website: string | null;
   name: string;
   slug: string;
+}
+
+/** OPE-1614 — the entity's matchable domains (its list, not its website alone). */
+async function entityDomains(
+  db: Database,
+  entityType: ClaimEntityType,
+  entityId: string
+): Promise<string[]> {
+  return matchableDomainsFor(db, entityType === "VENDOR" ? "vendor" : "promoter", entityId);
 }
 
 function normEmail(e: string | null | undefined): string {
@@ -284,7 +294,7 @@ export async function resolveClaimInWizard(
       normEmail(entity.contactEmail) === normEmail(userEmail);
     const method: WizardClaimMethod = emailMatch
       ? "EMAIL_MATCH"
-      : decideDomainMatch(userEmail, entity.website).match
+      : decideDomainMatch(userEmail, await entityDomains(db, entityType, entity.id)).match
         ? "DOMAIN_MATCH"
         : "EVIDENCE";
     const reused = await reuseOpenClaim(db, entityType, entity.id, userId, "DISPUTED", method);
@@ -316,9 +326,10 @@ export async function resolveClaimInWizard(
     return { outcome: "pending_verification", ...base, claimId, method: "EMAIL_MATCH" };
   }
 
-  // 4. Rung 2 — domain match (STORED website's registrable domain == the email's).
-  //    PURE string comparison; the website is NEVER fetched (SSRF K30).
-  if (decideDomainMatch(userEmail, entity.website).match) {
+  // 4. Rung 2 — domain match: the email's registrable domain is on the
+  //    entity's STORED domain list (website host + OPE-1614 established
+  //    domains, shared ones excluded). Nothing is fetched (SSRF K30).
+  if (decideDomainMatch(userEmail, await entityDomains(db, entityType, entity.id)).match) {
     if (emailVerified) {
       const claimId = await approveNow(db, entityType, entity, userId, "DOMAIN_MATCH", now);
       return { outcome: "approved", ...base, claimId, method: "DOMAIN_MATCH" };
@@ -383,8 +394,7 @@ export async function approvePendingDomainMatchClaims(
     const role = entityType === "VENDOR" ? "VENDOR" : "PROMOTER";
 
     let entity:
-      | { claimed: boolean; website: string | null; slug: string; name: string }
-      | undefined;
+      { claimed: boolean; website: string | null; slug: string; name: string } | undefined;
     if (entityType === "VENDOR") {
       const [row] = await db
         .select({
@@ -423,7 +433,9 @@ export async function approvePendingDomainMatchClaims(
 
     // SECURITY re-check: the domain match must STILL hold against the entity's
     // CURRENT website (it may have changed since the wizard recorded PENDING).
-    if (!decideDomainMatch(verifiedEmail, entity.website).match) {
+    if (
+      !decideDomainMatch(verifiedEmail, await entityDomains(db, entityType, claim.entityId)).match
+    ) {
       continue; // leave PENDING — website changed / no longer matches
     }
 

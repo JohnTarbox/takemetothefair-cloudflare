@@ -25,7 +25,7 @@
  * VENUE claims are intentionally out of scope (no claim funnel yet) and are
  * filtered out of every path here.
  */
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { recordClaimantAsPromoterContact } from "@/lib/claims/promoter-contact";
 import {
@@ -126,7 +126,8 @@ export async function listReviewableClaims(db: Database): Promise<ReviewableClai
         inArray(entityClaims.entityType, ["VENDOR", "PROMOTER", "PERFORMER"])
       )
     )
-    .orderBy(desc(entityClaims.createdAt));
+    // OPE-1599 — oldest first: the claim that has waited longest is the one to read.
+    .orderBy(asc(entityClaims.createdAt));
 
   if (claims.length === 0) return [];
 

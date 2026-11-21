@@ -4,6 +4,11 @@ import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { analyticsEvents } from "@/lib/db/schema";
 import { desc, eq, gte, and, sql } from "drizzle-orm";
+import {
+  includeSyntheticParam,
+  notSynthetic,
+  syntheticCompletenessNote,
+} from "@/lib/analytics/synthetic-traffic";
 
 /**
  * GET /api/admin/analytics/events
@@ -14,6 +19,9 @@ import { desc, eq, gte, and, sql } from "drizzle-orm";
  *   name     - filter by event name
  *   days     - how many days back (default 30, max 365)
  *   limit    - max results (default 100, max 500)
+ *   include_synthetic - "true" to count synthetic rows (OPE-1498). Default:
+ *              excluded — the funnel canary, production-verify and
+ *              self-declared crawlers are not visitors.
  *
  * Response:
  *   { success: true, data: { events: [...], summary: [...] } }
@@ -33,10 +41,13 @@ export async function GET(request: Request) {
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "100", 10), 500);
 
   const sinceTimestamp = new Date(Date.now() - days * 86400 * 1000);
+  const includeSynthetic = includeSyntheticParam(url);
+  const syntheticFilter = includeSynthetic ? undefined : notSynthetic(analyticsEvents.properties);
 
   const db = getCloudflareDb();
 
   const conditions = [gte(analyticsEvents.timestamp, sinceTimestamp)];
+  if (syntheticFilter) conditions.push(syntheticFilter);
   if (category) conditions.push(eq(analyticsEvents.eventCategory, category));
   if (name) conditions.push(eq(analyticsEvents.eventName, name));
 
@@ -53,11 +64,17 @@ export async function GET(request: Request) {
       count: sql<number>`COUNT(*)`,
     })
     .from(analyticsEvents)
-    .where(gte(analyticsEvents.timestamp, sinceTimestamp))
+    .where(and(gte(analyticsEvents.timestamp, sinceTimestamp), syntheticFilter))
     .groupBy(analyticsEvents.eventName);
 
   return NextResponse.json({
     success: true,
-    data: { events, summary, daysWindow: days },
+    data: {
+      events,
+      summary,
+      daysWindow: days,
+      includeSynthetic,
+      completeness: syntheticCompletenessNote(includeSynthetic),
+    },
   });
 }

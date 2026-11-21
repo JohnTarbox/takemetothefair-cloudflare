@@ -13,40 +13,53 @@ import { useEffect, useRef } from "react";
  * first step counts crawlers makes every later ratio meaningless.
  *
  * The signals are input a renderer does not produce by loading a page:
- * a pointer press, a key press, a touch, a scroll, or focus moving into the
- * document. Listeners are on `window` in the CAPTURE phase so a handler that
- * stops propagation cannot hide the interaction, and all of them are removed
- * as soon as one fires.
+ * a pointer press, a key press, a touch, or a mouse wheel. Listeners are on
+ * `window` in the CAPTURE phase so a handler that stops propagation cannot
+ * hide the interaction, and all of them are removed as soon as one fires.
+ *
+ * `scroll` and `focusin` were in the first cut and are deliberately OUT: the
+ * crawler kept coming through them. 10-16 → 10-18 (after the 10-16 00:41Z
+ * deploy) prod still logged 382 / 55 / 196 `claim_view` rows, every one a
+ * different vendor, all desktop, and zero later steps on any day. A renderer
+ * scrolls programmatically to trigger lazy content (`scroll` fires; `wheel`
+ * does not), and `focusin` fires when the page itself takes focus. A human
+ * who only reads still reaches `claim_view` through Continue or any press.
+ *
+ * The callback receives the event type that fired it (or "direct" for
+ * `fire()`), so the beacon can record WHICH signal admitted the view — the
+ * next crawler that gets through names its own door.
  *
  * Returns a `fire()` function so a caller that sees a stronger signal of its
  * own (a button activated by a synthetic click, say) can trigger it directly;
  * the once-per-mount guard is shared, so the two paths can never double-fire.
  */
-export const HUMAN_INTERACTION_EVENTS = [
-  "pointerdown",
-  "keydown",
-  "touchstart",
-  "scroll",
-  "focusin",
-] as const;
+export const HUMAN_INTERACTION_EVENTS = ["pointerdown", "keydown", "touchstart", "wheel"] as const;
 
-export function useOnFirstHumanInteraction(callback: () => void): () => void {
+/** Events a page load alone can produce — must NEVER admit a view. */
+export const RENDERER_PRODUCIBLE_EVENTS = ["scroll", "focusin", "focus", "load"] as const;
+
+export type InteractionTrigger = (typeof HUMAN_INTERACTION_EVENTS)[number] | "direct";
+
+export function useOnFirstHumanInteraction(
+  callback: (trigger: InteractionTrigger) => void
+): () => void {
   const fired = useRef(false);
   const cb = useRef(callback);
   cb.current = callback;
 
-  const fire = useRef(() => {
+  const fireWith = useRef((trigger: InteractionTrigger) => {
     if (fired.current) return;
     fired.current = true;
-    cb.current();
+    cb.current(trigger);
   }).current;
+  const fire = useRef(() => fireWith("direct")).current;
 
   useEffect(() => {
     if (fired.current) return;
     const opts: AddEventListenerOptions = { capture: true, passive: true };
-    const handler = () => {
+    const handler = (e: Event) => {
       cleanup();
-      fire();
+      fireWith(e.type as InteractionTrigger);
     };
     function cleanup() {
       for (const type of HUMAN_INTERACTION_EVENTS) {
@@ -57,7 +70,7 @@ export function useOnFirstHumanInteraction(callback: () => void): () => void {
       window.addEventListener(type, handler, opts);
     }
     return cleanup;
-  }, [fire]);
+  }, [fireWith]);
 
   return fire;
 }

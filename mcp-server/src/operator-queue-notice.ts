@@ -31,16 +31,31 @@
  * seen it and has not got to it yet — and re-nagging that is what trains
  * someone to filter the sender.
  */
-import { and, eq, gte, isNull, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, inArray, lte, not, sql } from "drizzle-orm";
+import { DISPOSED_INBOUND_STATUSES } from "@takemetothefair/constants";
+import { isOperatorAddress } from "./test-addresses.js";
+import {
+  clearDigestState,
+  recordDigestSent,
+  shouldSendDigest,
+  type DigestSnapshot,
+} from "./digest-change-gate.js";
+import { ageBucket } from "./inbound-exception-notice.js";
 import {
   entityClaims,
   pendingEmailReplies,
   emailSendLedger,
   operatorOutboundDrafts,
   inboundEmails,
+  promoterEventFeeds,
+  promoterFeedItems,
+  supportObligations,
   users,
   tunableThresholds,
+  loadFeedLaneMetrics,
+  feedLaneDigestLine,
 } from "@takemetothefair/db-schema";
+import { publicEventWhere } from "./helpers.js";
 import type { Env } from "./index.js";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
@@ -55,8 +70,15 @@ import {
   IMMINENT_DAYS,
   IMMINENT_SECONDS,
 } from "./events/tentative-queue.js";
+import { readLatestAutopromoteRun } from "./events/tentative-autopromote.js";
+import { readLatestElapsedExpiryRun } from "./events/elapsed-pending-expiry.js";
 
 const SOURCE = "mcp:schedule:operator-queue-notice";
+/** OPE-1585 — this digest's row in `digest_change_state`. */
+const DIGEST_KEY = "operator-queue";
+/** OPE-1584 — older held photos stay on the inbound-triage queue; this line is
+ *  for recent batches. */
+const HELD_PHOTO_DAYS = 30;
 
 /** OPE-1290 — how far ahead an unpinned venue becomes an operator task. */
 export const UNPINNED_IMMINENT_DAYS = 7;
@@ -146,6 +168,8 @@ export interface OperatorQueueCounts {
    * moving toward them, not by sitting still.
    */
   imminentTentative: number;
+  /** OPE-1584 — the operator's own photos held in the last HELD_PHOTO_DAYS. */
+  heldOperatorPhotos: number;
   /**
    * OPE-761 — inbound emails hibernating on the workflow's `admin-decision`
    * pause (`status='waiting'`) past the SLA. Each is a person who wrote to us
@@ -163,6 +187,13 @@ export interface OperatorQueueCounts {
    * somebody has not got to it yet.
    */
   droppedRealAttachments: number;
+  /**
+   * OPE-1550 — inbound images in the last 7 days refused because of their
+   * FORMAT (JPEG XL, AVIF, TIFF, BMP — `attachment_skips[].detectedFormat`).
+   * Nothing tells the sender, so this line is the only place a refused photo
+   * reaches a person. Expected steady state is zero.
+   */
+  refusedFormatAttachments: number;
   /**
    * OPE-1011 — upcoming public events whose `start_date` or `public_start_date`
    * renders a DIFFERENT calendar date in America/New_York than in UTC.
@@ -192,6 +223,30 @@ export interface OperatorQueueCounts {
    * FORMER venues and venues the gate calls `not-a-point` are excluded.
    */
   unpinnedVenueImminent: number;
+  /**
+   * OPE-1605 — approved drafts that never sent. Karen's sat unseen for 68 days:
+   * approved while delivery was off, it left the pending count and nothing else
+   * counted it.
+   */
+  approvedUnsentDrafts: number;
+  /**
+   * OPE-1626 — organizer-feed items a read marked `awaiting_review`: a new
+   * event on a promoter's own calendar that matched none of ours. The scheduled
+   * reader finds them unattended, so this line is how they reach John. Counted
+   * for enabled feeds, items still on the feed, starting today or later.
+   */
+  feedItemsAwaitingReview: number;
+  /**
+   * OPE-1633 — open feed health flags on enabled feeds (freshness, volume
+   * drop, format drift, inclusion swing). A term in `totalWaiting` and the
+   * snapshot so a newly tripped flag makes a zero-state digest send (0→1).
+   */
+  openFeedHealthFlags: number;
+  /**
+   * OPE-1510 — open contact obligations past their one-business-day target.
+   * Each is a known contact John owes a reply to, already late.
+   */
+  contactObligationsPastTarget: number;
   /** OPE-1290 landmark: upcoming events the unpinned-venue check examined. */
   unpinnedVenueExamined?: number;
   /** Oldest waiting row in either queue, in days. */
@@ -212,13 +267,19 @@ export function decideOperatorQueueNotice(
     | "agedClaims"
     | "agedReplies"
     | "imminentTentative"
+    | "heldOperatorPhotos"
     | "ungatedReplies"
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
     | "droppedRealAttachments"
+    | "refusedFormatAttachments"
     | "venueDateShifts"
     | "authEmailProblems"
     | "unpinnedVenueImminent"
+    | "contactObligationsPastTarget"
+    | "approvedUnsentDrafts"
+    | "feedItemsAwaitingReview"
+    | "openFeedHealthFlags"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -241,13 +302,19 @@ export function totalWaiting(
     | "agedClaims"
     | "agedReplies"
     | "imminentTentative"
+    | "heldOperatorPhotos"
     | "ungatedReplies"
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
     | "droppedRealAttachments"
+    | "refusedFormatAttachments"
     | "venueDateShifts"
     | "authEmailProblems"
     | "unpinnedVenueImminent"
+    | "contactObligationsPastTarget"
+    | "approvedUnsentDrafts"
+    | "feedItemsAwaitingReview"
+    | "openFeedHealthFlags"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -264,6 +331,7 @@ export function totalWaiting(
     (counts.agedClaims ?? 0) +
     (counts.agedReplies ?? 0) +
     (counts.imminentTentative ?? 0) +
+    (counts.heldOperatorPhotos ?? 0) +
     (counts.ungatedReplies ?? 0) +
     (counts.pendingOperatorDrafts ?? 0) +
     // OPE-761 is the fifth term, and this file's own warning above is why it
@@ -272,10 +340,20 @@ export function totalWaiting(
     // on a completely empty queue.
     (counts.agedAwaitingDecision ?? 0) +
     (counts.droppedRealAttachments ?? 0) +
+    // OPE-1550 — `?? 0` for the NaN reason above.
+    (counts.refusedFormatAttachments ?? 0) +
     (counts.venueDateShifts ?? 0) +
     (counts.authEmailProblems ?? 0) +
     // OPE-1290 — `?? 0` for the reason the comment above gives.
-    (counts.unpinnedVenueImminent ?? 0)
+    (counts.unpinnedVenueImminent ?? 0) +
+    // OPE-1510 — `?? 0` for the same reason.
+    (counts.contactObligationsPastTarget ?? 0) +
+    // OPE-1605 — `?? 0` for the same reason.
+    (counts.approvedUnsentDrafts ?? 0) +
+    // OPE-1626 — `?? 0` for the same reason.
+    (counts.feedItemsAwaitingReview ?? 0) +
+    // OPE-1633 — `?? 0` for the same reason.
+    (counts.openFeedHealthFlags ?? 0)
   );
 }
 
@@ -400,7 +478,43 @@ export async function readOperatorQueues(
   const tentative = selectImminentTentative(
     await readTentativePromotionQueue(db, now, { withinSeconds: IMMINENT_SECONDS })
   );
-  for (const t of tentative) lines.push(formatTentativeLine(t));
+  // OPE-1586 — the auto-promotion rule ran just before this notice (sequenced
+  // in the daily cron). Its summary is ONE line here, never its own email, and
+  // it does not count toward totalWaiting: a run alone must not cause a send.
+  // Each row it held carries the rule's reason, so the list is actionable.
+  let autoHeld = new Map<string, string>();
+  try {
+    const run = await readLatestAutopromoteRun(db, now);
+    if (run) {
+      lines.push(`TENTATIVE auto-promotion (OPE-1586): ${run.summary}`);
+      autoHeld = new Map(
+        run.held.map((h) => [h.slug, h.detail ? `${h.reason}: ${h.detail}` : h.reason])
+      );
+    }
+  } catch (error) {
+    await logError(db, {
+      source: SOURCE,
+      message: "[operator-queue] auto-promotion run read failed",
+      error,
+    });
+  }
+  for (const t of tentative) {
+    const why = autoHeld.get(t.slug);
+    lines.push(formatTentativeLine(t) + (why ? ` — auto-check held: ${why}` : ""));
+  }
+
+  // OPE-1596 — the elapsed-PENDING expiry also ran just before this notice.
+  // One line, never its own email, and not counted toward totalWaiting.
+  try {
+    const expiry = await readLatestElapsedExpiryRun(db, now);
+    if (expiry) lines.push(`Elapsed PENDING expiry (OPE-1596): ${expiry.summary}`);
+  } catch (error) {
+    await logError(db, {
+      source: SOURCE,
+      message: "[operator-queue] elapsed-expiry run read failed",
+      error,
+    });
+  }
 
   // OPE-626 — `reply:*` mail that reached a customer in the last 24h.
   //
@@ -461,6 +575,80 @@ export async function readOperatorQueues(
     }
   } catch {
     // The table may not exist on an older deploy; never take the notice down.
+  }
+
+  // OPE-1605 — approved and never sent. Its own count: "awaiting approval" would
+  // be false for these, and folding them in would hide which kind is waiting.
+  let approvedUnsentDrafts = 0;
+  try {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(operatorOutboundDrafts)
+      .where(
+        and(eq(operatorOutboundDrafts.status, "approved"), isNull(operatorOutboundDrafts.sentAt))
+      );
+    approvedUnsentDrafts = Number(row?.n ?? 0);
+    if (approvedUnsentDrafts > 0) {
+      lines.push(
+        `${approvedUnsentDrafts} approved operator draft(s) never sent — discard them, or send ` +
+          `them again as new drafts.`
+      );
+    }
+  } catch {
+    // Same reason as the pending count above: never take the notice down.
+  }
+
+  // OPE-1626 — new events on an organizer's own feed, waiting for review.
+  // Standing depth (a work queue, like the drafts above); the OPE-1585 change
+  // gate keeps an unchanged count from repeating. Future items only, so a
+  // past event nobody reviewed drops off instead of sitting here forever.
+  let feedItemsAwaitingReview = 0;
+  try {
+    const today = now.toISOString().slice(0, 10);
+    const rows = await db
+      .select({ feedId: promoterFeedItems.feedId, n: sql<number>`count(*)` })
+      .from(promoterFeedItems)
+      .innerJoin(promoterEventFeeds, eq(promoterEventFeeds.id, promoterFeedItems.feedId))
+      .where(
+        and(
+          eq(promoterFeedItems.reviewState, "awaiting_review"),
+          isNull(promoterFeedItems.missingSince),
+          eq(promoterEventFeeds.enabled, true),
+          gte(promoterFeedItems.startLocal, today)
+        )
+      )
+      .groupBy(promoterFeedItems.feedId);
+    feedItemsAwaitingReview = rows.reduce((a, r) => a + Number(r.n ?? 0), 0);
+    if (feedItemsAwaitingReview > 0) {
+      lines.push(
+        `${feedItemsAwaitingReview} new organizer-feed event(s) awaiting review across ` +
+          `${rows.length} feed(s) — on a promoter's own calendar, matching none of ours; ` +
+          `nothing is created until reviewed. Review at ` +
+          `https://meetmeatthefair.com/admin/feed-review, or with list_feed_items then ` +
+          `review_feed_item: approve / approve_as_occurrence / link / reject (OPE-1630).`
+      );
+    }
+  } catch {
+    // Observability must not take the notice down with it.
+  }
+
+  // OPE-1632 — one summary line for the feed lane (health, backlog age, new to
+  // us), from the same numbers get_feed_lane_metrics and the /admin tile show.
+  // Body text only: the OPE-1585 change gate compares per-queue COUNTS, so the
+  // age in this line changing daily does not, by itself, make the digest send.
+  // Only written when a feed is registered, so a lane with no feeds says nothing.
+  // OPE-1633 — the same read carries the open health flags (enabled feeds).
+  let openFeedHealthFlags = 0;
+  try {
+    const metrics = await loadFeedLaneMetrics(db, {
+      now,
+      publicWhere: publicEventWhere(),
+      windowDays: 30,
+    });
+    openFeedHealthFlags = metrics.feeds.open_health_flags.length;
+    if (metrics.feeds.registered > 0) lines.push(feedLaneDigestLine(metrics));
+  } catch {
+    // Observability must not take the notice down with it.
   }
 
   // OPE-761 — inbound mail hibernating on the workflow's `admin-decision`
@@ -526,7 +714,49 @@ export async function readOperatorQueues(
   // Measured over all history 2026-09-02: ONE row has any skip at all — the
   // specimen — against 94 rows carrying attachments. So the expected steady
   // state is zero, which is what makes a non-zero worth an email.
+  // OPE-1584 — the operator's held photos, one line per day's batch. This is
+  // what replaces the per-photo hold email he used to get.
+  let heldOperatorPhotos = 0;
+  try {
+    const held = await db
+      .select({
+        receivedAt: inboundEmails.receivedAt,
+        attachmentCount: inboundEmails.attachmentCount,
+        fromAddress: inboundEmails.fromAddress,
+      })
+      .from(inboundEmails)
+      .where(
+        and(
+          eq(inboundEmails.replyKind, "photo-intake-unresolved"),
+          isNull(inboundEmails.resultingEventId),
+          gte(inboundEmails.receivedAt, new Date(now.getTime() - HELD_PHOTO_DAYS * 86_400_000)),
+          not(inArray(inboundEmails.status, [...DISPOSED_INBOUND_STATUSES]))
+        )
+      );
+    const byDay = new Map<string, number>();
+    // Same predicate that silenced the email, so a batch can't be in neither.
+    for (const row of held.filter((r) => isOperatorAddress(r.fromAddress))) {
+      const day = row.receivedAt.toISOString().slice(0, 10);
+      byDay.set(day, (byDay.get(day) ?? 0) + Math.max(1, row.attachmentCount ?? 0));
+    }
+    for (const [day, photos] of [...byDay].sort()) {
+      heldOperatorPhotos += photos;
+      lines.push(
+        `${photos} of your photos from ${day} are held: no GPS / no fair match — ` +
+          `resolve at https://meetmeatthefair.com/admin/inbound-emails`
+      );
+    }
+  } catch (error) {
+    await logError(db, {
+      level: "warn",
+      source: SOURCE,
+      message: "[operator-queue] held-photo read failed; digest sent without that line",
+      error,
+    });
+  }
+
   let droppedRealAttachments = 0;
+  let refusedFormatAttachments = 0;
   try {
     const recent = await db
       .select({ id: inboundEmails.id, skips: inboundEmails.attachmentSkips })
@@ -538,8 +768,13 @@ export async function readOperatorQueues(
         )
       );
     for (const r of recent) {
-      let parsed: Array<{ name?: string; reason?: string; furniture?: boolean; size?: number }> =
-        [];
+      let parsed: Array<{
+        name?: string;
+        reason?: string;
+        furniture?: boolean;
+        size?: number;
+        detectedFormat?: string;
+      }> = [];
       try {
         parsed = JSON.parse(r.skips ?? "[]");
       } catch {
@@ -554,6 +789,20 @@ export async function readOperatorQueues(
         lines.push(
           `⚠️ ${real.length} real attachment(s) dropped by the count cap on inbound ${r.id} — ` +
             `${real.map((k) => k.name ?? "(unnamed)").join(", ")} (OPE-760)`
+        );
+      }
+      // OPE-1550 — an image we refused because of its FORMAT (JPEG XL, AVIF,
+      // TIFF…). Nothing replies to the sender about it, so without this line the
+      // only record is `attachment_skips` on the row, which nobody reads unprompted.
+      const refusedFormat = parsed.filter(
+        (k) => k.reason === "unrecognized-content" && k.detectedFormat && k.furniture !== true
+      );
+      if (refusedFormat.length > 0) {
+        refusedFormatAttachments += refusedFormat.length;
+        lines.push(
+          `⚠️ ${refusedFormat.length} image(s) refused for format on inbound ${r.id} — ` +
+            `${refusedFormat.map((k) => `${k.name ?? "(unnamed)"} [${k.detectedFormat}]`).join(", ")} ` +
+            `(OPE-1550: convert and attach by hand, or reply asking for a JPEG)`
         );
       }
     }
@@ -729,17 +978,57 @@ export async function readOperatorQueues(
     // Observability must not take the notice down with it.
   }
 
+  // OPE-1510 — contact obligations past target. Read apart from everything
+  // above so a failure here costs this one line, not the notice.
+  let contactObligationsPastTarget = 0;
+  try {
+    const late = await db
+      .select({
+        fromAddress: supportObligations.fromAddress,
+        subject: supportObligations.subject,
+        targetAt: supportObligations.targetAt,
+      })
+      .from(supportObligations)
+      .where(
+        and(
+          eq(supportObligations.status, "open"),
+          eq(supportObligations.kind, "contact"),
+          lte(supportObligations.targetAt, now)
+        )
+      )
+      .limit(100);
+    contactObligationsPastTarget = late.length;
+    for (const o of late) {
+      lines.push(
+        `known contact ${o.fromAddress} is past the one-business-day reply target ` +
+          `(was due ${o.targetAt?.toISOString().slice(0, 16)}Z): ${o.subject ?? "(no subject)"} (OPE-1510)`
+      );
+    }
+  } catch (error) {
+    await logError(db, {
+      source: SOURCE,
+      message: "[operator-queue] contact-obligation read failed",
+      error,
+    });
+  }
+
   return {
     agedClaims: claims.length,
     agedReplies: replies.length,
     imminentTentative: tentative.length,
+    heldOperatorPhotos,
     ungatedReplies,
     pendingOperatorDrafts,
     agedAwaitingDecision,
     droppedRealAttachments,
+    refusedFormatAttachments,
     venueDateShifts,
     authEmailProblems,
     unpinnedVenueImminent,
+    contactObligationsPastTarget,
+    approvedUnsentDrafts,
+    feedItemsAwaitingReview,
+    openFeedHealthFlags,
     unpinnedVenueExamined,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
@@ -764,6 +1053,7 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
 
   if (totalWaiting(counts) <= 0) {
     console.log("[cron] operator-queue-notice — queues clear, staying quiet");
+    await clearDigestState(db, DIGEST_KEY, SOURCE);
     return;
   }
 
@@ -792,6 +1082,35 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
 
   if (!decideOperatorQueueNotice(counts, alreadySentToday)) {
     console.log("[cron] operator-queue-notice — already alerted today");
+    return;
+  }
+
+  // OPE-1585 — a standing queue is news once. It reappears when the counts
+  // move past drift or the oldest item crosses an age threshold; Monday's
+  // inventory carries it in between.
+  const digestSnapshot: DigestSnapshot = {
+    counts: {
+      agedClaims: counts.agedClaims,
+      agedReplies: counts.agedReplies,
+      imminentTentative: counts.imminentTentative,
+      heldOperatorPhotos: counts.heldOperatorPhotos,
+      ungatedReplies: counts.ungatedReplies,
+      pendingOperatorDrafts: counts.pendingOperatorDrafts,
+      agedAwaitingDecision: counts.agedAwaitingDecision,
+      droppedRealAttachments: counts.droppedRealAttachments,
+      refusedFormatAttachments: counts.refusedFormatAttachments,
+      venueDateShifts: counts.venueDateShifts,
+      authEmailProblems: counts.authEmailProblems,
+      unpinnedVenueImminent: counts.unpinnedVenueImminent,
+      contactObligationsPastTarget: counts.contactObligationsPastTarget,
+      approvedUnsentDrafts: counts.approvedUnsentDrafts,
+      feedItemsAwaitingReview: counts.feedItemsAwaitingReview,
+      openFeedHealthFlags: counts.openFeedHealthFlags,
+    },
+    severity: ageBucket(counts.oldestDays),
+  };
+  if (!(await shouldSendDigest(db, DIGEST_KEY, digestSnapshot, SOURCE))) {
+    console.log("[cron] operator-queue-notice — unchanged since last digest, staying quiet");
     return;
   }
 
@@ -845,6 +1164,7 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
         source: NOTICE_EMAIL_SOURCE,
       });
       console.log(`[cron] operator-queue-notice fired — ${total} waiting to=${alertEmail}`);
+      await recordDigestSent(db, DIGEST_KEY, digestSnapshot, now, SOURCE);
     } catch (error) {
       await logError(db, {
         source: SOURCE,

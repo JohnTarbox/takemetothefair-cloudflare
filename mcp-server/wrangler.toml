@@ -205,6 +205,19 @@ PHOTO_VISION_ENABLED = "true"
 # stages instead of publishing). The flip itself waits for John to confirm
 # directly — a relayed approval is not the approval. When it flips, also set
 # `enabled_at` on the `booth-autowrite` heartbeat probe (drizzle/0164).
+#
+# ⛔ BACK TO "false" 2026-10-18 (OPE-1486), enforcing John's 2026-09-30 ruling on
+# OPE-240: "keep PHOTO_AUTOWRITE_ENABLED OFF for now". That ruling was made on a
+# receipt that said `current: "false"`, but this line had read "true" since the
+# 09-26 flip (#1425) and nothing reverted it. On 10-10 it auto-wrote 5 vendors
+# at one show and 3 of the 5 were wrong (a misread name, an invented URL). Flip
+# it again only on John's direct word, and read the DEPLOYED value before you
+# quote a "current" value: `get_send_gates` → `write_gates`.
+#
+# ✅ FLIPPED "true" again 2026-11-01 on John's DIRECT instruction in session
+# ("flip PHOTO_AUTOWRITE_ENABLED to true"), after a Harvest Festival of Crafts
+# batch where 1 of 6 booth photos cleared the 1.0 bar and sat staged. The
+# booth-autowrite probe has stayed armed since drizzle/0327, so no migration.
 PHOTO_AUTOWRITE_ENABLED = "true"
 # OPE-1394 / OPE-469 — commit gate for the replay_inbound_attachment MCP tool
 # (src/photo/replay.ts commitBlockedReason). A replay is DRY-RUN unless the call
@@ -217,6 +230,35 @@ PHOTO_AUTOWRITE_ENABLED = "true"
 # to "true", deploy, run it, and set it back — a dashboard edit is reverted by
 # the next `wrangler deploy` (OPE-284/OPE-509).
 REPLAY_COMMIT_ENABLED = "false"
+# OPE-1617 — scheduled organizer-feed polling (hourly cron; each feed's own
+# interval, default 6h). A scheduled read WRITES feed items and organizer_feed
+# discrepancies but SENDS nothing (questions go out only as operator drafts John
+# approves). OPE-1626: ON — John approved automatic, review-only reading of
+# OHTM's calendar as a pilot (its feed has questions_hold = 1).
+# Edit THIS line — a dashboard edit is reverted by the next deploy.
+FEED_POLLING_ENABLED = "true"
+# OPE-1626 — WebSub subscribe + lease renewal. Subscribing POSTs to a
+# third-party hub and was NOT approved with polling, so it is a separate flag
+# and needs FEED_POLLING_ENABLED as well. Change pings are unaffected.
+WEBSUB_ENABLED = "false"
+# OPE-1586 — daily TENTATIVE → SCHEDULED auto-promotion (06:00Z cron). ON:
+# John ruled 2026-11-16 (option 2) — promote only when a fresh read of the cited
+# organizer page agrees with our start date; anything unconfirmed stays
+# TENTATIVE in the operator digest. "false" stops it (reversible; promotions
+# already made stay, and each can be demoted with update_event_lifecycle).
+# If you turn it off for long, also set heartbeat_probes.enabled_at = NULL for
+# 'tentative-autopromote', or its probe will (correctly) report it silent.
+# Edit THIS line — a dashboard edit is reverted by the next deploy.
+TENTATIVE_AUTOPROMOTE_ENABLED = "true"
+# OPE-1596 — nightly expiry of elapsed PENDING submissions (06:00Z cron, before
+# the operator digest). ON: John ruled 2026-11-16 (option 1) — a PENDING event
+# more than 3 days past its end date (start date when end is null) → REJECTED,
+# reason elapsed_unreviewed in admin_actions; rows touched in the last 7 days
+# are skipped; nobody is emailed. "false" stops it (each expiry is reversible:
+# set status back to PENDING). If you turn it off for long, also set
+# heartbeat_probes.enabled_at = NULL for 'elapsed-pending-expiry'.
+# Edit THIS line — a dashboard edit is reverted by the next deploy.
+ELAPSED_PENDING_EXPIRY_ENABLED = "true"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 # Inbound-email failures (parse / extract / submit) get forwarded here.
 # Must be a verified destination address in Cloudflare Email Routing —
@@ -292,6 +334,9 @@ new_sqlite_classes = ["BurstCounter"]
 #                   batch so the heavy work doesn't contend (added 2026-06-03).
 #                   See src/goodwill/holdout-sampling.ts for the per-event
 #                   fetch+extract cost and the cap rationale.
+# "25 6 * * *"    → OPE-1607 analytics ingest (GSC/GA4/Bing + milestone derive)
+#                   and photo coverage. Moved out of the 06:00 batch, where they
+#                   failed with "D1 DB is overloaded" at 06:00:27-30.
 # "*/10 * * * *"  → §6.3 KPI state-machine recompute (light, ~5 INSERTs per fire)
 # "0 * * * *"     → hourly: drain pending_search_pings older than 1 hour
 #                   (safety net for forgotten flushes after deferred-ingest runs)
@@ -326,7 +371,7 @@ new_sqlite_classes = ["BurstCounter"]
 #                   staggered 1h after the vendor sweep to space Browser-Rendering.
 # "30 8 * * *"   → OPE-408 venue-geocode safety net (missing_only, <=25/run).
 #                  After the 08:00 promoter sweep so the two do not contend.
-crons = ["0 6 * * *", "10 6 * * *", "*/10 * * * *", "0 * * * *", "0 7 * * *", "0 8 * * *", "30 8 * * *"]
+crons = ["0 6 * * *", "10 6 * * *", "25 6 * * *", "*/10 * * * *", "0 * * * *", "0 7 * * *", "0 8 * * *", "30 8 * * *"]
 
 # Cloudflare Email Service — outbound sending binding (public beta).
 # Replaced Resend HTTP integration in the EMAIL_JOBS consumer. Without

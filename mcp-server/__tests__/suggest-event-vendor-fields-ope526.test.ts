@@ -33,6 +33,13 @@ beforeEach(() => {
   registerVendorTools(server as never, db, AUTH, undefined);
 });
 
+// OPE-1673 — vendor fee / deadline values are stored only with their source.
+const VENDOR_CITATION = {
+  source_url: "https://example.org/vendors",
+  source_type: "official_website",
+  excerpt: "Booths $50 (10x10) / $75 (10x20). Applications due August 1.",
+};
+
 async function suggest(args: Record<string, unknown>) {
   const r = (await server.invoke("suggest_event", args)) as {
     content: Array<{ text: string }>;
@@ -56,6 +63,7 @@ describe("suggest_event captures the vendor-application family (OPE-526)", () =>
       vendor_fee_notes: "$50 for 10x10, $75 for 10x20",
       application_url: "https://kingfieldcraftfair.org/apply",
       application_deadline: "2026-08-01",
+      vendor_citation: VENDOR_CITATION,
       application_instructions: "Email photos to organizer@example.com",
       estimated_attendance: 2400,
     });
@@ -95,6 +103,7 @@ describe("suggest_event captures the vendor-application family (OPE-526)", () =>
       name: "Free Booth Market",
       start_date: "2026-09-15",
       vendor_fee_min: 0,
+      vendor_citation: VENDOR_CITATION,
     });
     const row = await readEvent(payload.event.id);
     expect(row.vendorFeeMinCents).toBe(0);
@@ -119,6 +128,7 @@ describe("the gate this parameter re-enables (OPE-526)", () => {
       name: "Deadline Equals Start Fair",
       start_date: "2026-09-15",
       application_deadline: "2026-09-15",
+      vendor_citation: VENDOR_CITATION,
       source_url: "https://example.org/fair",
     });
     const row = await readEvent(payload.event.id);
@@ -131,6 +141,7 @@ describe("the gate this parameter re-enables (OPE-526)", () => {
       name: "Normal Deadline Fair",
       start_date: "2026-09-15",
       application_deadline: "2026-08-01",
+      vendor_citation: VENDOR_CITATION,
       source_url: "https://example.org/fair2",
     });
     const row = await readEvent(payload.event.id);

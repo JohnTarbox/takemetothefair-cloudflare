@@ -2,6 +2,7 @@ import { parseDateLoose, parseWallClockInVenueZone, formatIsoInVenueZone } from 
 import { buildEventSchemaImages } from "@/lib/event-photos";
 import { LIFECYCLE_TO_SCHEMA_ORG, type EventLifecycle } from "@/lib/event-lifecycle";
 import { buildPlaceJsonLd } from "@/lib/seo/place-jsonld";
+import { isDateOnlySentinel, columnDateForJsonLd } from "@/lib/seo/column-date-jsonld";
 import { formatAudienceBadge, isClosedToPublic, hasNonDefaultAudience } from "@/lib/event-audience";
 import type { PrimaryAudience, PublicAccess } from "@takemetothefair/constants";
 import { SITE_URL } from "@takemetothefair/constants";
@@ -21,6 +22,8 @@ interface EventDay {
   closeTime: string | null;
   notes?: string | null;
   closed?: boolean | null;
+  // OPE-1563 — a vendor-setup window. Dropped at the prop boundary below.
+  vendorOnly?: boolean | null;
   // F2 / E.2b (Dev-Email-2026-06-09 §E.2, 2026-06-09) — per-occurrence
   // image. PR #412 added the column; subEvent.image below prefers
   // this per-day URL when present and falls back to the series-level
@@ -139,47 +142,10 @@ interface EventSchemaProps {
   emitPerformerSubevents?: boolean;
 }
 
-/**
- * OPE-1241 — exactly 12:00:00.000 UTC is `normalizeEventDate`'s DATE-ONLY
- * sentinel ("we know the day, not the hour"), not a time. Rendered in Eastern it
- * reads 08:00, so the JSON-LD told search engines A Different Drummer opened at
- * 8 AM (it opens at 10) and ENDED at 8 AM on its last day. 356 of the upcoming
- * starts carried it on 2026-10-01.
- */
-export function isDateOnlySentinel(d: Date): boolean {
-  return (
-    d.getUTCHours() === 12 &&
-    d.getUTCMinutes() === 0 &&
-    d.getUTCSeconds() === 0 &&
-    d.getUTCMilliseconds() === 0
-  );
-}
-
-/**
- * A start/end column value as JSON-LD. A real instant is emitted as-is in the
- * venue zone. The date-only sentinel takes that day's hours from event_days
- * (earliest open for the start, latest close for the end), and with no hours on
- * that day it is emitted as a bare date, which schema.org accepts.
- */
-export function columnDateForJsonLd(
-  value: Date,
-  edge: "start" | "end",
-  eventDays: EventDay[] | undefined,
-  venueTz: string | undefined
-): string | undefined {
-  if (!isDateOnlySentinel(value)) return formatIsoInVenueZone(value, venueTz) || undefined;
-  // Noon UTC falls on the same calendar day in every US zone.
-  const day = value.toISOString().slice(0, 10);
-  const instants = (eventDays ?? [])
-    .filter((d) => d.date === day && !d.closed && d.openTime != null && d.closeTime != null)
-    .map((d) =>
-      parseWallClockInVenueZone(day, (edge === "start" ? d.openTime : d.closeTime)!, venueTz)
-    )
-    .filter((x): x is Date => x != null);
-  if (instants.length === 0) return day;
-  const pick = instants.reduce((a, b) => ((edge === "start" ? a < b : a > b) ? a : b), instants[0]);
-  return formatIsoInVenueZone(pick, venueTz) || day;
-}
+// OPE-1547 — `isDateOnlySentinel` / `columnDateForJsonLd` moved to
+// src/lib/seo/column-date-jsonld.ts so the EventSeries builder applies the SAME
+// rule to its occurrences. Re-exported here for existing importers.
+export { isDateOnlySentinel, columnDateForJsonLd };
 
 function getEventType(categories?: string[]): string {
   if (!categories?.length) return "Event";
@@ -217,7 +183,7 @@ export function EventSchema({
   pastUnconfirmed,
   previousStartDate,
   previousEndDate,
-  eventDays,
+  eventDays: allEventDays,
   vendors,
   performers,
   emitPerformerSubevents,
@@ -227,6 +193,13 @@ export function EventSchema({
   accessNotes,
   superEvent,
 }: EventSchemaProps) {
+  // OPE-1563 — every date this builder emits (subEvents, the day-derived span,
+  // the noon-sentinel hours) reads PUBLIC days only. Filtered once here so no
+  // reader below can see a vendor-setup row: GAHS Holiday Craft Fair's 07:00
+  // "Vendor setup" became a public "Day 2" subEvent, and the same row would have
+  // set the top-level startDate to 7 AM via columnDateForJsonLd's earliest-open.
+  // `closed` days stay in: each reader below already handles them its own way.
+  const eventDays = allEventDays?.filter((d) => !d.vendorOnly);
   // Convert integer cents → dollars for JSON-LD emission. Round-2 backlog
   // item 1 (2026-05-11): only emit `offers` and `isAccessibleForFree` when
   // price is *known*. The previous code treated null/undefined as free,
@@ -511,7 +484,11 @@ export function EventSchema({
             (d): d is EventDay & { openTime: string; closeTime: string } =>
               d.openTime != null && d.closeTime != null
           )
-          .map((day, i) => {
+          .map((day, _i, emitted) => {
+            // OPE-1563 — "Day N" is the date's position among the emitted
+            // dates, so two sessions on one date are both "Day 1", never a
+            // phantom "Day 2".
+            const dayNumber = [...new Set(emitted.map((d) => d.date))].sort().indexOf(day.date) + 1;
             // Sub-event open/close times are wall-clock in the venue's zone.
             // Emit them as ISO with the proper offset (`-04:00`/`-05:00` at
             // Eastern, `-02:30`/`-03:30` at Newfoundland, etc.) so calendar
@@ -528,14 +505,14 @@ export function EventSchema({
               vendorBucketToPerformerSponsor(dayBucket);
             return {
               "@type": "Event",
-              name: `${name} - Day ${i + 1}`,
+              name: `${name} - Day ${dayNumber}`,
               startDate: venueTz
                 ? formatIsoInVenueZone(startWall, venueTz) || undefined
                 : formatIsoInVenueZone(startWall) || undefined,
               endDate: venueTz
                 ? formatIsoInVenueZone(endWall, venueTz) || undefined
                 : formatIsoInVenueZone(endWall) || undefined,
-              description: day.notes || description || `${name} - Day ${i + 1}`,
+              description: day.notes || description || `${name} - Day ${dayNumber}`,
               location,
               // E.2b — use per-day image when set, else series-level.
               // resolvedImage covers the OG-fallback + transformations

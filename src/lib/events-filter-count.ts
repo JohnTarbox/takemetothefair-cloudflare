@@ -1,8 +1,9 @@
-import { and, eq, isNotNull, notLike, or, isNull, lte, count } from "drizzle-orm";
+import { and, eq, isNotNull, notLike, or, isNull, lte, count, sql } from "drizzle-orm";
 import { events, eventInStateWhere } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
 import { containsCI } from "@/lib/db/contains-ci";
+import { daysFilterPredicate, easternDateStr, parseDaysFilter } from "@/lib/events/days-filter";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 // Public filters that show up in /events?... URLs and could legitimately
@@ -20,6 +21,7 @@ const PUBLIC_FILTER_KEYS = [
   "includePast",
   "includeTBD",
   "when",
+  "days",
 ] as const;
 
 type FilterableSearchParams = Partial<Record<(typeof PUBLIC_FILTER_KEYS)[number] | "page", string>>;
@@ -73,6 +75,17 @@ export async function countPublicFilteredEvents(
     conditions.push(lte(events.startDate, whenEnd));
   }
 
+  // OPE-1487 — keep the Days filter in lockstep with src/app/events/(listing)/page.tsx.
+  const daysFilter = parseDaysFilter(searchParams.days);
+  if (daysFilter) {
+    conditions.push(
+      daysFilterPredicate(
+        daysFilter,
+        searchParams.includePast === "true" ? null : easternDateStr(new Date())
+      )
+    );
+  }
+
   if (searchParams.query) {
     // OPE-565 — `instr()` via containsCI, matching the listing query in
     // `app/events/(listing)/page.tsx`. These two run on the SAME request from
@@ -94,7 +107,8 @@ export async function countPublicFilteredEvents(
   }
 
   if (searchParams.commercialVendors === "true") {
-    conditions.push(eq(events.commercialVendorsAllowed, true));
+    // OPE-1606 — unknown stays in; only an explicit no is filtered out.
+    conditions.push(sql`${events.commercialVendorsAllowed} IS NOT 0`);
   }
 
   if (searchParams.excludeFarmersMarkets === "true") {

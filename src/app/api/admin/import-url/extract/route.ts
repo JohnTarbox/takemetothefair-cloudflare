@@ -3,13 +3,19 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareAi } from "@/lib/cloudflare";
-import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
+import {
+  extractMultipleEvents,
+  INTERACTIVE_AI_EXTRACT_TIMEOUT_MS,
+  UNATTENDED_AI_EXTRACT_TIMEOUT_MS,
+  UNATTENDED_EXTRACT_CALLERS,
+} from "@/lib/url-import/ai-extractor";
 import { tryExtractFromJsonLd } from "@/lib/url-import/jsonld-to-event";
 import type { PageMetadata, ExtractedEvent } from "@/lib/url-import/types";
 import { expandCadence } from "@/lib/url-import/cadence-expander";
 import { composeDeterministicExtract } from "@/lib/url-import/deterministic/compose";
 import { logError } from "@/lib/logger";
 import { AI_EXTRACTION_OK_MESSAGE } from "@/lib/url-import/extract-telemetry";
+import { withVisitorFacts } from "@/lib/url-import/visitor-facts";
 
 const extractRequestSchema = z.object({
   content: z.string().min(1, "Content is required"),
@@ -113,7 +119,7 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
       if (eventsFromJsonLd.length > 0) {
         return NextResponse.json({
           success: true,
-          events: eventsFromJsonLd,
+          events: withVisitorFacts(eventsFromJsonLd, content),
           confidence: confidenceMap,
           count: eventsFromJsonLd.length,
           extractionMethod: "json-ld",
@@ -149,7 +155,12 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
         ai,
         content,
         (metadata || {}) as PageMetadata,
-        emailBody
+        emailBody,
+        // OPE-1316 Ask 2 — 90 s for the callers nobody is waiting on (email
+        // workflow, free-text, holdout sampler); 20 s for the admin import.
+        UNATTENDED_EXTRACT_CALLERS.has(caller)
+          ? UNATTENDED_AI_EXTRACT_TIMEOUT_MS
+          : INTERACTIVE_AI_EXTRACT_TIMEOUT_MS
       ));
     } catch (aiError) {
       aiFailure = aiError instanceof Error ? aiError.message : String(aiError);
@@ -263,7 +274,7 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
       if (salvaged.events.length > 0) {
         return NextResponse.json({
           success: true,
-          events: salvaged.events,
+          events: withVisitorFacts(salvaged.events, content),
           confidence: salvaged.confidence,
           count: salvaged.events.length,
           extractionMethod: "thin",
@@ -302,7 +313,9 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
 
     return NextResponse.json({
       success: true,
-      events,
+      // OPE-1484 — verbatim parking / accessibility / pet sentences for the
+      // enrich-on-match stager. Proposal input only; nothing here is written.
+      events: withVisitorFacts(events, content),
       confidence,
       count: events.length,
       extractionMethod: "ai",

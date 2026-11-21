@@ -162,6 +162,58 @@ describe("processSyndicationEntity — venue fan-out", () => {
   });
 });
 
+describe("processSyndicationEntity — signed sentAt (OPE-1493)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("puts sentAt (ISO-8601 UTC, send time) inside the HMAC'd body", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-19T02:40:00.000Z"));
+    db.insert(syndicationSubscriptions)
+      .values({ id: "ss-1", subscriberId: SUB_ID, eventId: E1, createdAt: new Date() })
+      .run();
+    seedVenueOutbox();
+
+    await processSyndicationEntity(db, { entityType: "venue", entityId: VENUE_ID });
+
+    const init = fetchMock.mock.calls[0][1];
+    const body = init.body as string;
+    expect(JSON.parse(body).sentAt).toBe("2026-10-19T02:40:00.000Z");
+    // The signature is over the exact bytes carrying sentAt, so rewriting it
+    // breaks verification.
+    expect(init.headers["X-Syndication-Signature"]).toBe(
+      `sha256=${await hmacSha256Hex(SECRET, body)}`
+    );
+    const tampered = body.replace("2026-10-19T02:40:00.000Z", "2026-10-19T03:40:00.000Z");
+    expect(tampered).not.toBe(body);
+    expect(`sha256=${await hmacSha256Hex(SECRET, tampered)}`).not.toBe(
+      init.headers["X-Syndication-Signature"]
+    );
+  });
+
+  it("re-stamps sentAt on a retry, so a delivery retried after backoff is not stale", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-19T02:40:00.000Z"));
+    fetchMock.mockResolvedValueOnce(new Response("nope", { status: 500 }));
+    db.insert(syndicationSubscriptions)
+      .values({ id: "ss-1", subscriberId: SUB_ID, eventId: E1, createdAt: new Date() })
+      .run();
+    seedVenueOutbox();
+
+    await expect(
+      processSyndicationEntity(db, { entityType: "venue", entityId: VENUE_ID })
+    ).rejects.toThrow(/delivery failed/);
+
+    vi.setSystemTime(new Date("2026-10-19T03:10:00.000Z"));
+    await processSyndicationEntity(db, { entityType: "venue", entityId: VENUE_ID });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).sentAt).toBe("2026-10-19T02:40:00.000Z");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).sentAt).toBe("2026-10-19T03:10:00.000Z");
+  });
+});
+
 describe("processSyndicationEntity — event_day resolves to parent event", () => {
   it("delivers the parent event for an event_day outbox row", async () => {
     db.insert(syndicationSubscriptions)

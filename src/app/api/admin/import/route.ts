@@ -662,7 +662,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           sourceId: eventData.sourceId,
           syncEnabled: true,
           lastSyncedAt: new Date(),
-          commercialVendorsAllowed: eventData.commercialVendorsAllowed ?? true,
+          commercialVendorsAllowed: eventData.commercialVendorsAllowed ?? null,
         });
         // OPE-767 — recorded as a reason, so it can be discharged on its own.
         if (formerCheck.flagForReview) await raiseEventReviewFlag(db, newEventId, "former_venue");

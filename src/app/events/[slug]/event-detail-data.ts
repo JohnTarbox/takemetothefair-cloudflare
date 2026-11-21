@@ -182,6 +182,20 @@ async function getEventOnce(slug: string) {
       )
       .orderBy(eventApplications.lane, eventApplications.department);
 
+    // OPE-1512 item 4 — the whole-lane commercial row, if there is one. Whether
+    // it is CURRENT is decided in buildVendorCall, at render.
+    const [vendorCallRow] = await db
+      .select()
+      .from(eventApplications)
+      .where(
+        and(
+          eq(eventApplications.eventId, eventData.events.id),
+          eq(eventApplications.lane, "commercial_vendor"),
+          isNull(eventApplications.department)
+        )
+      )
+      .limit(1);
+
     // OPE-790 rework — the view-count UPDATE used to run HERE, inside the
     // function `getEvent` retries. So the retried "read" contained a write: a
     // D1 timeout that committed and reported failure (the very class retried)
@@ -246,6 +260,7 @@ async function getEventOnce(slug: string) {
       // performer, volunteer). Empty for almost every event today; that is the
       // gap this table exists to let us close.
       applicationRoutes: applicationRouteResults,
+      vendorCallRow: vendorCallRow ?? null,
     };
   } catch (e) {
     await logError(db, {

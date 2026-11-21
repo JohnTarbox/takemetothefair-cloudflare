@@ -46,6 +46,26 @@ export const EVENT_REVIEW_FLAG_REASONS = [
   "ungrounded_name",
   /** Flagged before reasons were recorded (drizzle/0341 backfill). */
   "legacy",
+  /**
+   * OPE-1618 — the promoter's own spreadsheet proposes changes to this event.
+   * Portal edits of a live listing are requests, not writes (OPE-1514 option D),
+   * so the import stages them on `promoter_import_rows.proposed_changes`.
+   */
+  "promoter_import_update",
+  /**
+   * OPE-1620 — the promoter asked, through its API, to cancel this event. The API
+   * never cancels directly: the request is staged on `promoter_import_rows`
+   * (outcome `cancel_staged`) for an operator.
+   */
+  "promoter_cancel_request",
+  /**
+   * OPE-1586 — the TENTATIVE → SCHEDULED auto-promotion rule promoted this
+   * event, and a later read of the same organizer page no longer agreed with
+   * our start date, so the rule demoted it back to TENTATIVE. A judgement axis:
+   * a person decides which is right. While active, the rule will not promote
+   * the event again (no promote/demote flapping on a page that changes).
+   */
+  "auto_promotion_reversed",
 ] as const;
 export type EventReviewFlagReason = (typeof EVENT_REVIEW_FLAG_REASONS)[number];
 

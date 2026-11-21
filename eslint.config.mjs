@@ -163,6 +163,11 @@ export default [
         //   - src/app/admin/**/*.tsx — admin dashboards use hex for chart
         //     visualization colors (axes, plot lines) where Tailwind
         //     utilities don't fit the SVG attribute syntax.
+        //   - src/lib/charts/echarts-options.ts, src/components/admin/charts/**
+        //     — OPE-1565: the shared admin ECharts palette. ECharts paints its
+        //     own SVG from option objects, so neither Tailwind classes nor
+        //     CSS variables reach it; dark mode is a second literal palette
+        //     chosen from next-themes' resolvedTheme.
         //   - src/lib/newsletter-masthead.ts — email HTML. Mail clients
         //     support neither CSS custom properties nor <style> blocks
         //     (Gmail strips them), so the brand band MUST inline raw hex.
@@ -196,7 +201,13 @@ export default [
   // (not eslint-disable-line comments) keeps the allowlist auditable
   // in one place.
   {
-    files: ["src/app/global-error.tsx", "src/app/admin/**/*.tsx", "src/lib/newsletter-masthead.ts"],
+    files: [
+      "src/app/global-error.tsx",
+      "src/app/admin/**/*.tsx",
+      "src/lib/newsletter-masthead.ts",
+      "src/lib/charts/echarts-options.ts",
+      "src/components/admin/charts/**/*.{ts,tsx}",
+    ],
     rules: {
       "no-restricted-syntax": [
         "error",

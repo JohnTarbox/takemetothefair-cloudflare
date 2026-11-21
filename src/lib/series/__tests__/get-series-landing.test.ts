@@ -18,9 +18,11 @@ vi.mock("react", async (importOriginal) => {
 
 const seriesRows = vi.fn();
 const occurrenceRows = vi.fn();
+const dayRows = vi.fn(() => Promise.resolve([] as unknown[]));
 
-// getSeriesLanding makes exactly two selects: the series row (with .limit(1)),
-// then its public occurrences. Hand back each in turn.
+// getSeriesLanding selects the series row (with .limit(1)), then its public
+// occurrences, then (OPE-1547) the occurrences' event_days in chunks of 50.
+// Hand back each in turn.
 let call = 0;
 vi.mock("@/lib/cloudflare", () => ({
   getCloudflareDb: () => {
@@ -30,10 +32,11 @@ vi.mock("@/lib/cloudflare", () => ({
       leftJoin: () => chain,
       where: () => {
         // First `where` resolves the series lookup (it chains .limit);
-        // the second resolves the occurrence rows directly.
+        // the second resolves the occurrence rows; any later one is day rows.
         call += 1;
-        const isSeriesLookup = call === 1;
-        return isSeriesLookup ? { limit: async () => seriesRows() } : (occurrenceRows() as unknown);
+        if (call === 1) return { limit: async () => seriesRows() };
+        if (call === 2) return occurrenceRows() as unknown;
+        return dayRows() as unknown;
       },
     };
     return chain;
@@ -73,6 +76,7 @@ const OCCURRENCE = {
   venueZip: "04037",
   venueLat: 44.0176,
   venueLng: -70.9803,
+  venueTimezone: "America/New_York",
 };
 
 beforeEach(() => {
@@ -102,5 +106,28 @@ describe("getSeriesLanding — OPE-210 empty-hub guard", () => {
     seriesRows.mockReturnValue([]);
     occurrenceRows.mockReturnValue(Promise.resolve([]));
     expect(await getSeriesLanding("no-such-series-c")).toBeNull();
+  });
+});
+
+describe("getSeriesLanding — OPE-1547 day rows for the JSON-LD dates", () => {
+  it("attaches each occurrence's own event_days and its venue zone", async () => {
+    seriesRows.mockReturnValue([{ ...SERIES, canonicalSlug: "days-hub-d" }]);
+    occurrenceRows.mockReturnValue(
+      Promise.resolve([OCCURRENCE, { ...OCCURRENCE, id: "e2", slug: "fryeburg-fair-2027" }])
+    );
+    dayRows.mockReturnValueOnce(
+      Promise.resolve([
+        { eventId: "e1", date: "2026-10-04", openTime: "08:00", closeTime: "22:00", closed: false },
+      ])
+    );
+    const landing = await getSeriesLanding("days-hub-d");
+    const [e1, e2] = landing!.occurrences;
+    expect(e1.eventDays).toEqual([
+      { date: "2026-10-04", openTime: "08:00", closeTime: "22:00", closed: false },
+    ]);
+    expect(e2.eventDays).toEqual([]);
+    expect(e1.venueTimezone).toBe("America/New_York");
+    // One day-rows query for two occurrences (well under the 50-id chunk).
+    expect(dayRows).toHaveBeenCalledTimes(1);
   });
 });

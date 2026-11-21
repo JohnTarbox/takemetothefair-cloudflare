@@ -136,6 +136,8 @@ export interface HoldoutSamplingResult {
   skippedCooldown: number;
   /** OPE-1316 — persistently-unreadable pages alerted on this run (each at most once). */
   alertsRaised: number;
+  /** OPE-1555 — name comparisons that differed only cosmetically, so no row was minted. */
+  normalizedAwayName: number;
 }
 
 export interface HoldoutEnv {
@@ -168,6 +170,7 @@ export async function runScheduledHoldoutSampling(
     skippedDuplicateUrl: 0,
     skippedCooldown: 0,
     alertsRaised: 0,
+    normalizedAwayName: 0,
   };
 
   try {
@@ -393,12 +396,28 @@ export async function runScheduledHoldoutSampling(
       const storedNameNorm = simpleNormalize(row.eventName);
       const freshNameNorm = simpleNormalize(ev.name);
       if (storedNameNorm && freshNameNorm && storedNameNorm !== freshNameNorm) {
-        disagreements.push({
-          fieldClass: "name",
-          stored: row.eventName,
-          fresh: ev.name,
-          notes: `holdout: name drifted on source ("${row.eventName}" → "${ev.name}")`,
-        });
+        // OPE-1555 — a year moved or dropped, a leading "The", `&`/`and`, or
+        // our own em-dash qualifier is not the page renaming the event. The
+        // same six were dismissed four weeks running and re-minted on 10-28.
+        // Counted and logged, never silently dropped (OPE-1174 scope 3).
+        if (namesDifferOnlyCosmetically(row.eventName, ev.name)) {
+          result.normalizedAwayName += 1;
+          await logError(db, {
+            level: "info",
+            source: SOURCE,
+            message: `name difference normalized away for event=${row.eventId} ("${row.eventName}" ~ "${ev.name}")`,
+            // Deliberately NO `holdoutOutcome`: this page WAS compared, so it
+            // must not feed the cooldown or the unreadable-page alert.
+            context: { sourceUrl: row.eventSourceUrl, holdoutNameNormalized: true },
+          });
+        } else {
+          disagreements.push({
+            fieldClass: "name",
+            stored: row.eventName,
+            fresh: ev.name,
+            notes: `holdout: name drifted on source ("${row.eventName}" → "${ev.name}")`,
+          });
+        }
       }
 
       for (const d of disagreements) {
@@ -425,7 +444,8 @@ export async function runScheduledHoldoutSampling(
         `extracted=${result.extracted} skippedThin=${result.skippedThin} emitted=${result.emitted} ` +
         `skipped_dedup=${result.skipped_dedup} errors=${result.errors} ` +
         `skippedMultiEvent=${result.skippedMultiEvent} skippedDuplicateUrl=${result.skippedDuplicateUrl} ` +
-        `skippedCooldown=${result.skippedCooldown} alertsRaised=${result.alertsRaised}`
+        `skippedCooldown=${result.skippedCooldown} alertsRaised=${result.alertsRaised} ` +
+        `normalizedAwayName=${result.normalizedAwayName}`
     );
     return result;
   } catch (error) {
@@ -471,6 +491,50 @@ export function simpleNormalize(s: string | null | undefined): string {
     .replace(/[^a-z0-9\s]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+const LEADING_YEAR = /^(?:19|20)\d{2}\s+/;
+const TRAILING_YEAR = /\s+(?:19|20)\d{2}$/;
+const LEADING_ARTICLE = /^the\s+/;
+
+/**
+ * OPE-1555 — the comparison key for a holdout name check. On top of
+ * `simpleNormalize`: `&` reads as `and`, and ONE year token at either END and
+ * a leading "The" are dropped. That is the whole list. A year is the only
+ * token allowed to move. A general word-order or subset match would fuse
+ * genuinely different events (the OPE-481 / OPE-712 lesson), so "Hardwick
+ * Fair" vs "Hardwick Winter Market" must still differ.
+ */
+export function cosmeticNameKey(s: string | null | undefined): string {
+  const base = simpleNormalize((s ?? "").replace(/&/g, " and "));
+  let k = base.replace(LEADING_YEAR, "");
+  k = k.replace(LEADING_ARTICLE, "");
+  k = k.replace(LEADING_YEAR, "");
+  k = k.replace(TRAILING_YEAR, "");
+  // A name that is nothing but a year (or "The 2026") keeps its full form.
+  return k.length > 0 ? k : base;
+}
+
+/**
+ * OPE-1555 — true when two names that are NOT equal under `simpleNormalize`
+ * are equal once the cosmetic differences are removed. When exactly one side
+ * carries an em-dash qualifier ("Belchertown Fair 2026 — Sep 25–27 in …"), only
+ * the part before the first em-dash is compared. That tail is our own display
+ * suffix, not something the source page said.
+ */
+export function namesDifferOnlyCosmetically(
+  stored: string | null | undefined,
+  fresh: string | null | undefined
+): boolean {
+  let a = stored ?? "";
+  let b = fresh ?? "";
+  const aDash = a.includes("—");
+  const bDash = b.includes("—");
+  if (aDash && !bDash) a = a.slice(0, a.indexOf("—"));
+  if (bDash && !aDash) b = b.slice(0, b.indexOf("—"));
+  const ka = cosmeticNameKey(a);
+  const kb = cosmeticNameKey(b);
+  return ka.length > 0 && ka === kb;
 }
 
 /** "City, ST" or null when either component is missing. */

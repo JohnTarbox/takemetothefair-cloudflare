@@ -31,6 +31,40 @@ const HERO_MIN_ASPECT = 1.3;
 /** URL tokens that mark an image as a brand mark, never a hero. */
 const LOGO_URL_TOKEN = /(logo|icon|wordmark|favicon)/i;
 
+/**
+ * OPE-1687 — filename tokens that mark an image as a banner/graphic, never a
+ * logo (Soule Homestead staged `newsletter-graphic.png` as its logo). Read from
+ * the LAST path segment only, so a `/headers/` directory does not count.
+ */
+const NOT_LOGO_FILENAME_TOKEN = /(banner|header|hero|newsletter|cover|slide)/i;
+
+/**
+ * OPE-1687 — image dimensions a Wix URL states reliably, for when the probe
+ * cannot measure the image itself:
+ *   - `_d_<W>_<H>` in the media id is the ORIGINAL upload's size, and every Wix
+ *     transform here preserves its aspect;
+ *   - `/v1/fill/w_<W>,h_<H>` crops to exactly W×H.
+ * Deliberately NOT `/v1/fit/w_<W>,h_<H>`: that is a bounding box which keeps
+ * the source aspect and never upscales — Chandler Center's og:image sits in a
+ * `fit/w_2500,h_1330` box and is a 500×500 square (measured 2026-11-18).
+ * Exported for tests.
+ */
+export function wixHintedDimensions(url: string): { width: number; height: number } | null {
+  const orig = url.match(/_d_(\d{2,5})_(\d{2,5})/);
+  if (orig) return { width: Number(orig[1]), height: Number(orig[2]) };
+  const fill = url.match(/\/v1\/fill\/w_(\d{2,5}),h_(\d{2,5})/);
+  if (fill) return { width: Number(fill[1]), height: Number(fill[2]) };
+  return null;
+}
+
+function lastSegment(url: string): string {
+  try {
+    return decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).pop() ?? "");
+  } catch {
+    return "";
+  }
+}
+
 export type PromoterImageClass = "hero" | "logo";
 
 export interface ProbedPromoterImage {
@@ -49,9 +83,27 @@ export function classifyPromoterImage(
   dims: { width: number; height: number } | null
 ): ProbedPromoterImage {
   const hasLogoToken = LOGO_URL_TOKEN.test(url);
+  // OPE-1687 — a banner/header/newsletter graphic is never a logo. Without a
+  // confirmed hero it stages as an UNconfident hero (never auto-applied).
+  const notLogoByName = !hasLogoToken && NOT_LOGO_FILENAME_TOKEN.test(lastSegment(url));
   if (!dims) {
-    // Can't measure → can't confirm a hero. Default to the logo slot.
-    return { url, width: null, height: null, classification: "logo", heroConfident: false };
+    // Can't measure. OPE-1687 — a Wix URL may still state the shape reliably
+    // (see wixHintedDimensions); a wide one is a hero candidate, but an
+    // unmeasured image is never a CONFIDENT hero.
+    const hinted = wixHintedDimensions(url);
+    const hintedWide =
+      hinted !== null &&
+      Math.min(hinted.width, hinted.height) > 0 &&
+      Math.max(hinted.width, hinted.height) / Math.min(hinted.width, hinted.height) >=
+        HERO_MIN_ASPECT;
+    const hero = !hasLogoToken && (hintedWide || notLogoByName);
+    return {
+      url,
+      width: null,
+      height: null,
+      classification: hero ? "hero" : "logo",
+      heroConfident: false,
+    };
   }
   const { width, height } = dims;
   const long = Math.max(width, height);
@@ -63,7 +115,7 @@ export function classifyPromoterImage(
     url,
     width,
     height,
-    classification: isHero ? "hero" : "logo",
+    classification: isHero || notLogoByName ? "hero" : "logo",
     heroConfident: isHero,
   };
 }

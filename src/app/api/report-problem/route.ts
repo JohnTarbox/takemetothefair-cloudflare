@@ -21,7 +21,8 @@ export const dynamic = "force-dynamic";
  *
  * Anti-spam:
  *   - Honeypot `website` field — must be empty.
- *   - Per-IP rate-limit via RATE_LIMIT_KV: max 5 reports per minute.
+ *   - Per-IP rate limit via checkRateLimit (burst limiter + KV quota).
+ *   - Scanner payloads are stored already resolved, as kind='spam' (OPE-1598).
  *   - Required body field with min length.
  */
 
@@ -30,12 +31,12 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { problemReports } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { isInjectionProbe } from "@/lib/problem-report-probe";
 
 const SOURCE = "app/api/report-problem/route.ts:POST";
 const MAX_BODY_CHARS = 5000;
 const MIN_BODY_CHARS = 5;
-const RATE_LIMIT_MAX = 5; // reports per IP per window
-const RATE_LIMIT_WINDOW_SEC = 60;
 
 export async function POST(req: Request): Promise<Response> {
   let form: FormData;
@@ -71,25 +72,13 @@ export async function POST(req: Request): Promise<Response> {
   const sourceTag = ((form.get("source_tag") as string | null) ?? "footer").slice(0, 40);
   const userAgent = req.headers.get("user-agent")?.slice(0, 500) ?? null;
 
-  // Rate-limit by IP — CF sets `cf-connecting-ip`.
-  const ip = req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for") ?? "unknown";
-  const env = getCloudflareEnv();
-  if (env.RATE_LIMIT_KV) {
-    const key = `problem-report:${ip}`;
-    try {
-      const current = parseInt((await env.RATE_LIMIT_KV.get(key)) ?? "0", 10);
-      if (current >= RATE_LIMIT_MAX) {
-        return new Response("Rate limit exceeded. Please try again in a minute.", {
-          status: 429,
-        });
-      }
-      await env.RATE_LIMIT_KV.put(key, String(current + 1), {
-        expirationTtl: RATE_LIMIT_WINDOW_SEC,
-      });
-    } catch {
-      // RATE_LIMIT_KV outage → fail-open (still accept the report).
-    }
-  }
+  // OPE-1598 — the previous KV read-then-write counter could not hold a burst:
+  // parallel requests read the same value. This one is backed by a Durable Object.
+  const rateLimit = await checkRateLimit(req, "report-problem");
+  if (!rateLimit.allowed) return rateLimitResponse(rateLimit);
+
+  // A scanner payload is kept for the record but never enters the open queue.
+  const isProbe = isInjectionProbe(body);
 
   // Insert. Severity defaults to LOW. D (Dev backlog 2026-06-05) wires
   // an at-intake correlation call below; pre-D, severity could only be
@@ -108,6 +97,13 @@ export async function POST(req: Request): Promise<Response> {
       severity: "LOW",
       correlatedErrorCount: 0,
       createdAt: new Date(),
+      ...(isProbe
+        ? {
+            kind: "spam",
+            resolvedAt: new Date(),
+            notes: "auto-resolved: injection probe (OPE-1598)",
+          }
+        : {}),
     });
   } catch (e) {
     await logError(db, {
@@ -121,6 +117,9 @@ export async function POST(req: Request): Promise<Response> {
       { status: 500 }
     );
   }
+
+  // Same thanks page either way, so a scanner learns nothing from the response.
+  if (isProbe) return NextResponse.redirect(new URL("/report-problem/thanks", req.url), 303);
 
   // D — Phase 2: burst-watch correlation against mcp-server. Fails open on
   // any error (timeout, 5xx, network) — the operator's correlate_problem_report

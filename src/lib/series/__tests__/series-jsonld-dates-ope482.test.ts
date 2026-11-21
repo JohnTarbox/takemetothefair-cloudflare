@@ -15,7 +15,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { toSchemaOccurrences } from "../occurrence-view";
-import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
+import { columnDateForJsonLd } from "@/lib/seo/column-date-jsonld";
 
 /** The real farmington-fair row: end-of-day Eastern on Sep 26. */
 const FARMINGTON_END = new Date("2026-09-27T03:59:59.000Z");
@@ -41,8 +41,10 @@ describe("series JSON-LD dates are Eastern calendar dates", () => {
     // "2026-09-27", and the fair ends on the 26th.
     expect(FARMINGTON_END.toISOString().slice(0, 10)).toBe("2026-09-27");
 
+    // OPE-1547 — a real instant now keeps its time; the venue-zone offset is
+    // what keeps it on the 26th (the bare UTC Z form would read as the 27th).
     const [node] = toSchemaOccurrences([occ()]);
-    expect(node.endDateIso).toBe("2026-09-26");
+    expect(node.endDateIso).toBe("2026-09-26T23:59:59-04:00");
     expect(node.startDateIso).toBe("2026-09-20");
   });
 
@@ -68,7 +70,13 @@ describe("series JSON-LD dates are Eastern calendar dates", () => {
   it("uses the same helper the event builder does — not a second implementation", () => {
     // The divergence existed because each builder derived the string its own
     // way. Pinning them to one helper is the fix; this asserts they agree.
+    // OPE-1547 — the event builder's helper has been `columnDateForJsonLd` since
+    // OPE-1241; this used to pin the series side to the date-only one instead,
+    // which is how the two drifted apart a second time.
     const [node] = toSchemaOccurrences([occ()]);
-    expect(node.endDateIso).toBe(toIsoDateOnlyInVenueZone(FARMINGTON_END));
+    expect(node.endDateIso).toBe(columnDateForJsonLd(FARMINGTON_END, "end", undefined, undefined));
+    expect(node.startDateIso).toBe(
+      columnDateForJsonLd(FARMINGTON_START, "start", undefined, undefined)
+    );
   });
 });

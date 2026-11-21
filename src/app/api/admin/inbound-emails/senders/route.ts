@@ -22,7 +22,8 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { inboundEmails, events, inboundEmailSenders } from "@/lib/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
+import { SUBMIT_PIPELINE_INTENTS } from "@takemetothefair/constants";
 
 const NE_STATES = new Set(["ME", "NH", "VT", "MA", "CT", "RI"]);
 
@@ -50,7 +51,7 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       lastSeen: sql<number>`MAX(${inboundEmails.receivedAt})`,
     })
     .from(inboundEmails)
-    .where(eq(inboundEmails.intent, "submit"))
+    .where(inArray(inboundEmails.intent, [...SUBMIT_PIPELINE_INTENTS]))
     .groupBy(inboundEmails.fromAddress);
 
   // Event aggregates per sender (only events originating from the

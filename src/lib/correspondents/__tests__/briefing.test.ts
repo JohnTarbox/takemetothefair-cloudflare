@@ -151,6 +151,16 @@ describe("the waiting queue is a real queue, not the obligation count", () => {
     expect(b.waiting).toHaveLength(0);
   });
 
+  it("OPE-1604: spam and held-automated senders are not in the waiting queue", async () => {
+    inbound("s1", "oliver@spam.example", daysAgo(9), { intent: "spam" });
+    inbound("s2", "leads@list.example", daysAgo(9), { intent: "held-automated" });
+    inbound("r1", "real@person.example", daysAgo(9), { intent: "support" });
+    const b = await build();
+    expect(b.waiting.map((r) => r.fromAddress)).toEqual(["real@person.example"]);
+    // They stay on the full list; only the waiting queue drops them.
+    expect(b.rows).toHaveLength(3);
+  });
+
   it("a FRESH auto-ack is not yet waiting — the 72h bound is real", async () => {
     inbound("f1", "fresh@example.com", hoursAgo(4));
     outbound("o4", "fresh@example.com", hoursAgo(4), "reply:support-ack");

@@ -7,6 +7,15 @@
  * milestones" chart stays current without hand-entered SQL. Idempotent — dedupes
  * on (metric, window_days, threshold).
  *
+ * OPE-1568 — it ALSO ingests Google's monthly "Your <Month> Search performance"
+ * report into the OPE-344 external oracle (`gsc_monthly_oracle`). The endpoint
+ * has parsed both shapes since OPE-344, but this tool's description and its
+ * success payload only spoke milestones: an analyst lane read the description,
+ * concluded it could not clear the red `gsc-monthly-oracle` heartbeat, and the
+ * September 2026 report sat in Gmail for four weeks. The success payload now
+ * passes the monthly result (`kind`, `month`, `oracle`, `comparison`) through
+ * instead of answering a bare `success: true` with every field undefined.
+ *
  * Intended drain: an agent with inbox access (or John) reads the congrats email
  * and calls this with the subject/body/received-date; the server parses the
  * K-shorthand + dates and writes the row. Thin shell over the main app's
@@ -26,6 +35,11 @@ interface Env {
 
 type IngestResponse = {
   success: boolean;
+  /** "monthly_oracle" for a monthly report; absent for a milestone. */
+  kind?: string;
+  month?: string;
+  oracle?: Record<string, unknown>;
+  comparison?: Record<string, unknown>;
   inserted?: boolean;
   milestone?: Record<string, unknown>;
   note?: string;
@@ -39,15 +53,19 @@ export function registerGscMilestoneIngestTool(server: McpServer, auth: AuthCont
 
   server.tool(
     "ingest_gsc_milestone_email",
-    "Record a Google Search Console 'click milestone' congrats email into the milestones chart. Paste the email's subject (e.g. 'Congrats on reaching 3K clicks in 28 days!'), optionally its body (for the reached date), and its received date. The server parses the K-shorthand + dates and upserts idempotently (dedupes on metric+window+threshold). Admin only.",
+    "Ingest an email from Google Search Console (sc-noreply@google.com). Two shapes are accepted: (1) a 'click milestone' congrats email ('Congrats on reaching 3K clicks in 28 days!') → milestones chart, idempotent on metric+window+threshold; (2) the MONTHLY report ('Your September Search performance for meetmeatthefair.com') → the OPE-344 external oracle that keeps the `gsc-monthly-oracle` heartbeat green, upserted per month and compared against our own GSC ingest (alarm at >10% divergence). For a monthly report the BODY IS REQUIRED: paste the plaintext body from the top through at least 'Your content achievements'. Pass the email's received date. K and M shorthand are both parsed. The response says `kind: 'monthly_oracle'` with the month and comparison, or carries a `milestone`. Admin only.",
     {
       subject: z
         .string()
-        .describe("The email subject, e.g. 'Congrats on reaching 3K clicks in 28 days!'."),
+        .describe(
+          "The email subject, e.g. 'Congrats on reaching 3K clicks in 28 days!' or 'Your September Search performance for meetmeatthefair.com'."
+        ),
       body: z
         .string()
         .optional()
-        .describe("Optional email body — used to extract the 'reached' date (e.g. 'Jul 4, 2026')."),
+        .describe(
+          "Email body (plaintext). Optional for a milestone (used for the 'reached' date, e.g. 'Jul 4, 2026'); REQUIRED for a monthly report, which carries its figures only in the body."
+        ),
       email_date: z
         .string()
         .describe(
@@ -131,12 +149,22 @@ export function registerGscMilestoneIngestTool(server: McpServer, auth: AuthCont
 
       return {
         content: [
-          jsonContent({
-            success: true,
-            inserted: parsed.inserted,
-            milestone: parsed.milestone,
-            note: parsed.note,
-          }),
+          jsonContent(
+            parsed.kind === "monthly_oracle"
+              ? {
+                  success: true,
+                  kind: parsed.kind,
+                  month: parsed.month,
+                  oracle: parsed.oracle,
+                  comparison: parsed.comparison,
+                }
+              : {
+                  success: true,
+                  inserted: parsed.inserted,
+                  milestone: parsed.milestone,
+                  note: parsed.note,
+                }
+          ),
         ],
       };
     }

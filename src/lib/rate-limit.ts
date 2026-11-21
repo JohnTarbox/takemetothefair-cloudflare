@@ -19,6 +19,13 @@ export const EMAIL_FETCH_DAILY_CEILING = 50;
 
 // Pre-configured limits for suggest-event endpoints
 export const RATE_LIMITS = {
+  // OPE-1598 — bursts of scanner payloads went straight past the old KV-only
+  // per-minute counter on this form.
+  "report-problem": {
+    anonymousLimit: 5,
+    authenticatedLimit: 20,
+    windowMs: 60 * 60 * 1000,
+  },
   "suggest-event-submit": {
     anonymousLimit: 3,
     authenticatedLimit: 10,
@@ -234,6 +241,7 @@ export type RateLimitEndpoint = keyof typeof RATE_LIMITS;
  * read this note when auditing burst coverage.
  */
 const BURST_POLICIES: ReadonlySet<RateLimitEndpoint> = new Set([
+  "report-problem",
   "auth-register",
   "auth-forgot-password",
   "auth-reset-password",

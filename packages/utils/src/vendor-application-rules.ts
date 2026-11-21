@@ -27,7 +27,8 @@ export function checkEventAcceptsVendor(
       error: "This event is not currently accepting vendor applications",
     };
   }
-  if (vendor.commercial && !event.commercialVendorsAllowed) {
+  // OPE-1606 — NULL is unknown, not a refusal.
+  if (vendor.commercial && event.commercialVendorsAllowed === false) {
     return {
       ok: false,
       httpStatus: 403,

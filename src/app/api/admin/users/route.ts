@@ -4,6 +4,9 @@ import { withAuth } from "@/lib/api/with-auth";
 import { users, promoters, vendors } from "@/lib/db/schema";
 import { notInArray, isNotNull } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { userList as adminUserList } from "@/lib/admin-list/lists";
+import { isPagedRequest, parseListParams } from "@/lib/admin-list/params";
+import { respondWithList } from "@/lib/admin-list/respond";
 import { realUserWhere } from "@takemetothefair/db-schema";
 
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
@@ -11,6 +14,14 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const available = searchParams.get("available");
 
   try {
+    // OPE-1595 — the list page asks for one page; bare calls still get every row.
+    if (isPagedRequest(searchParams)) {
+      return await respondWithList(
+        adminUserList(db, searchParams, parseListParams(searchParams)),
+        searchParams
+      );
+    }
+
     if (available === "promoter") {
       // Users who don't already have a promoter profile. Uses a NOT IN
       // (SELECT …) SUBQUERY rather than fetching the ids and binding them via

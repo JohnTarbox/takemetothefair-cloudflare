@@ -62,6 +62,16 @@ export interface QueueFlow {
    * to the freeze window so the digest can still say roughly how long.
    */
   oldestOpenAgeHours: number | null;
+  /**
+   * OPE-1556 — WHY `outflow7d` is null, when it is null on purpose.
+   *
+   * A null outflow used to mean two different things that the alarm read the
+   * same way: "this queue has no definable exit event" (a deliberate exclusion)
+   * and "the probe that should count exits is broken or missing". Both went
+   * silent. Set this to the reason for the first; leave it unset and a non-empty
+   * queue with a null outflow raises a probe-gap RED instead of hiding.
+   */
+  flowExclusion?: string;
 }
 
 function toRed(priority: "P0" | "P1", title: string, flow: QueueFlow, now: Date): StaleRed {
@@ -90,7 +100,21 @@ export function assessQueueFreeze(
   const frozenDays = thresholds.frozenZeroOutflowDays ?? FROZEN_ZERO_OUTFLOW_DAYS;
   const slowRatio = thresholds.slowDrainRatio ?? SLOW_DRAIN_RATIO_THRESHOLD;
   if (flow.depth <= 0) return null; // an empty queue can't be frozen
-  if (flow.outflow7d === null) return null; // outflow not yet computable → don't cry wolf
+  if (flow.outflow7d === null) {
+    // OPE-1556 — a DECLARED exclusion is skipped deliberately (the reason is on
+    // the tile). An UNDECLARED null on a non-empty queue is a probe gap: the
+    // alarm cannot fire because it has no input, and that must not read the
+    // same as a healthy queue. Specimens: promoter_needs_enrichment (647 deep)
+    // and undelivered_auth_email (6 people) sat 74/77 days with NULL outflow
+    // and nothing anywhere said the alarm was blind to them.
+    if (flow.flowExclusion) return null;
+    return toRed(
+      "P1",
+      `${flow.label}: ${flow.depth} open, outflow NOT MEASURED and no exclusion declared (probe gap)`,
+      flow,
+      now
+    );
+  }
 
   // FROZEN — a real backlog with zero drainage in the last week.
   if (flow.outflow7d === 0) {

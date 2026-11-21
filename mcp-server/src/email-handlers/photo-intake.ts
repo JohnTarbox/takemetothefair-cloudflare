@@ -40,6 +40,7 @@ import type { HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
 import type { InboundEmail } from "@takemetothefair/db-schema";
 import { parsePlusSegment } from "../email-intents.js";
 import { logError } from "../logger.js";
+import { isOperatorAddress } from "../test-addresses.js";
 import { chunkedInArray, createSlug } from "@takemetothefair/utils";
 import { PUBLIC_EVENT_STATUSES } from "@takemetothefair/constants";
 import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
@@ -64,6 +65,8 @@ export interface AttachmentRef {
   name: string;
   mimeType: string;
   size: number;
+  /** OPE-1578 — stored but past the count cap; see email-handler.ts. */
+  ocrSkipped?: boolean;
 }
 
 /** Miles per degree of latitude — for the bounding-box pre-filter only. */
@@ -90,7 +93,11 @@ export function parseRefs(attachmentRefs: string | null): AttachmentRef[] {
 
 export function imageRefs(refs: AttachmentRef[]): AttachmentRef[] {
   return refs.filter(
-    (r) => typeof r?.mimeType === "string" && r.mimeType.toLowerCase().startsWith("image/")
+    (r) =>
+      typeof r?.mimeType === "string" &&
+      r.mimeType.toLowerCase().startsWith("image/") &&
+      // OPE-1578 — past the count cap: kept for retrieval, not processed.
+      !r.ocrSkipped
   );
 }
 
@@ -1385,6 +1392,9 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
 
   // Held: name the reason and tell John exactly how to fix it. Never guess.
   return {
+    // OPE-1584 — the operator knows he sent these. The row stays classified and
+    // reachable; the line in the operator-queue digest replaces the email.
+    ...(isOperatorAddress(row.fromAddress) ? { suppressReply: true } : {}),
     replyKind: "photo-intake-unresolved",
     replyParams: {
       subject: row.subject ?? "",

@@ -1,93 +1,165 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Pencil, Trash2, Eye, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconButton, IconLink } from "@/components/ui/icon-button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  SortableHeader,
-  SortConfig,
-  sortData,
-  getNextSortDirection,
-} from "@/components/ui/sortable-table";
+  AdminPagedTable,
+  type AdminColumn,
+  type AdminFilter,
+} from "@/components/admin/admin-paged-table";
+import type { AdminVendorRow } from "@/lib/admin-list/lists";
 
-interface Vendor {
-  id: string;
-  businessName: string;
-  slug: string;
-  vendorType: string | null;
-  verified: boolean;
-  commercial: boolean;
-  canSelfConfirm: boolean;
-  user: { email: string; name: string | null } | null;
-  _count: { events: number };
+type VendorRow = Omit<AdminVendorRow, "deletedAt"> & { deletedAt: string | null };
+
+const FILTERS: AdminFilter[] = [
+  {
+    param: "claim",
+    allLabel: "All owners",
+    options: [
+      { value: "claimed", label: "Claimed" },
+      { value: "unclaimed", label: "Unclaimed" },
+    ],
+  },
+  {
+    param: "verified",
+    allLabel: "All statuses",
+    options: [
+      { value: "yes", label: "Verified" },
+      { value: "no", label: "Unverified" },
+    ],
+  },
+  {
+    param: "commercial",
+    allLabel: "Commercial + non",
+    options: [
+      { value: "yes", label: "Commercial" },
+      { value: "no", label: "Non-commercial" },
+    ],
+  },
+  {
+    param: "selfConfirm",
+    allLabel: "Self-confirm: any",
+    options: [
+      { value: "yes", label: "Can self-confirm" },
+      { value: "no", label: "Cannot self-confirm" },
+    ],
+  },
+  {
+    param: "deleted",
+    allLabel: "Live vendors",
+    title: "Soft-deleted vendors, which is what a merge leaves behind",
+    options: [{ value: "only", label: "Deleted only" }],
+  },
+];
+
+async function deleteVendor(vendor: VendorRow, reload: () => void) {
+  // Include the business name in the confirm so the operator can
+  // re-confirm they targeted the right row (UX-R2, 2026-06-01 EVE).
+  if (!confirm(`Delete vendor "${vendor.businessName}"? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/admin/vendors/${vendor.id}`, { method: "DELETE" });
+    if (res.ok) reload();
+  } catch (error) {
+    console.error("Failed to delete vendor:", error);
+  }
 }
 
-export default function AdminVendorsPage() {
-  const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [sortConfig, setSortConfig] = useState<SortConfig>({
-    column: "businessName",
-    direction: "asc",
-  });
-
-  useEffect(() => {
-    fetchVendors();
-  }, []);
-
-  const fetchVendors = async () => {
-    try {
-      const res = await fetch("/api/admin/vendors");
-      const data = (await res.json()) as Vendor[];
-      setVendors(data);
-    } catch (error) {
-      console.error("Failed to fetch vendors:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDelete = async (id: string, businessName: string) => {
-    // Include the business name in the confirm so the operator can
-    // re-confirm they targeted the right row (UX-R2, 2026-06-01 EVE).
-    if (!confirm(`Delete vendor "${businessName}"? This cannot be undone.`)) return;
-
-    try {
-      const res = await fetch(`/api/admin/vendors/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        setVendors(vendors.filter((v) => v.id !== id));
-      }
-    } catch (error) {
-      console.error("Failed to delete vendor:", error);
-    }
-  };
-
-  const handleSort = (column: string) => {
-    setSortConfig(getNextSortDirection(sortConfig, column));
-  };
-
-  const sortedVendors = sortData(vendors, sortConfig, {
-    businessName: (v) => v.businessName,
-    vendorType: (v) => v.vendorType || "",
-    user: (v) => v.user?.email || "",
-    events: (v) => v._count.events,
-    verified: (v) => v.verified,
-    commercial: (v) => v.commercial,
-    canSelfConfirm: (v) => v.canSelfConfirm,
-  });
-
-  if (loading) {
-    return (
-      <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-muted rounded w-1/4"></div>
-        <div className="h-64 bg-muted rounded"></div>
+const COLUMNS: AdminColumn<VendorRow>[] = [
+  {
+    key: "businessName",
+    label: "Business",
+    sortKey: "businessName",
+    cell: (v) => (
+      <p className="font-medium text-foreground">
+        {v.businessName}
+        {v.deletedAt && (
+          <Badge variant="default" className="ml-2">
+            Deleted
+          </Badge>
+        )}
+      </p>
+    ),
+  },
+  {
+    key: "vendorType",
+    label: "Type",
+    sortKey: "vendorType",
+    cell: (v) => <span className="text-muted-foreground">{v.vendorType || "-"}</span>,
+  },
+  {
+    key: "user",
+    label: "User",
+    sortKey: "user",
+    cell: (v) =>
+      v.unclaimed ? (
+        <Badge variant="default">Unclaimed</Badge>
+      ) : (
+        <span className="text-muted-foreground">{v.ownerEmail}</span>
+      ),
+  },
+  {
+    key: "events",
+    label: "Events",
+    sortKey: "events",
+    cell: (v) => <span className="text-muted-foreground">{v.eventCount}</span>,
+  },
+  {
+    key: "verified",
+    label: "Status",
+    sortKey: "verified",
+    cell: (v) =>
+      v.verified ? (
+        <Badge variant="success" className="inline-flex items-center gap-1">
+          <CheckCircle className="w-3 h-3" />
+          Verified
+        </Badge>
+      ) : (
+        <Badge variant="default">Unverified</Badge>
+      ),
+  },
+  {
+    key: "commercial",
+    label: "Commercial",
+    sortKey: "commercial",
+    cell: (v) => <Badge variant="default">{v.commercial ? "Commercial" : "Non-Commercial"}</Badge>,
+  },
+  {
+    key: "canSelfConfirm",
+    label: "Self-Confirm",
+    sortKey: "canSelfConfirm",
+    cell: (v) => (v.canSelfConfirm ? <Badge variant="success">Self-Confirm</Badge> : null),
+  },
+  {
+    key: "actions",
+    label: "Actions",
+    align: "right",
+    cell: (v, { reload }) => (
+      <div className="flex items-center justify-end gap-1">
+        <IconLink
+          href={`/vendors/${v.slug}`}
+          aria-label={`View ${v.businessName}`}
+          icon={<Eye />}
+        />
+        <IconLink
+          href={`/admin/vendors/${v.id}/edit`}
+          aria-label={`Edit ${v.businessName}`}
+          icon={<Pencil />}
+        />
+        <IconButton
+          variant="danger"
+          onClick={() => void deleteVendor(v, reload)}
+          aria-label={`Delete ${v.businessName}`}
+          icon={<Trash2 />}
+        />
       </div>
-    );
-  }
+    ),
+  },
+];
 
+export default function AdminVendorsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
@@ -99,122 +171,15 @@ export default function AdminVendorsPage() {
           </Button>
         </Link>
       </div>
-
-      <Card>
-        <CardHeader>
-          <p className="text-sm text-muted-foreground">{vendors.length} vendors total</p>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <SortableHeader
-                    column="businessName"
-                    label="Business"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="vendorType"
-                    label="Type"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="user"
-                    label="User"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="events"
-                    label="Events"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="verified"
-                    label="Status"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="commercial"
-                    label="Commercial"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="canSelfConfirm"
-                    label="Self-Confirm"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedVendors.map((vendor) => (
-                  <tr key={vendor.id} className="border-b border-border">
-                    <td className="py-3 px-4">
-                      <p className="font-medium text-foreground">{vendor.businessName}</p>
-                    </td>
-                    <td className="py-3 px-4 text-muted-foreground">{vendor.vendorType || "-"}</td>
-                    <td className="py-3 px-4 text-muted-foreground">{vendor.user?.email || "-"}</td>
-                    <td className="py-3 px-4 text-muted-foreground">{vendor._count.events}</td>
-                    <td className="py-3 px-4">
-                      {vendor.verified ? (
-                        <Badge variant="success" className="inline-flex items-center gap-1">
-                          <CheckCircle className="w-3 h-3" />
-                          Verified
-                        </Badge>
-                      ) : (
-                        <Badge variant="default">Unverified</Badge>
-                      )}
-                    </td>
-                    <td className="py-3 px-4">
-                      {vendor.commercial ? (
-                        <Badge variant="default">Commercial</Badge>
-                      ) : (
-                        <Badge variant="default">Non-Commercial</Badge>
-                      )}
-                    </td>
-                    <td className="py-3 px-4">
-                      {vendor.canSelfConfirm && <Badge variant="success">Self-Confirm</Badge>}
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center justify-end gap-1">
-                        {/* IconLink + IconButton primitives — type-enforced
-                            aria-label, ≥40px hit area, single interactive
-                            element (no nested Link>Button). UX-R2, 2026-06-01. */}
-                        <IconLink
-                          href={`/vendors/${vendor.slug}`}
-                          aria-label={`View ${vendor.businessName}`}
-                          icon={<Eye />}
-                        />
-                        <IconLink
-                          href={`/admin/vendors/${vendor.id}/edit`}
-                          aria-label={`Edit ${vendor.businessName}`}
-                          icon={<Pencil />}
-                        />
-                        <IconButton
-                          variant="danger"
-                          onClick={() => handleDelete(vendor.id, vendor.businessName)}
-                          aria-label={`Delete ${vendor.businessName}`}
-                          icon={<Trash2 />}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+      <AdminPagedTable<VendorRow>
+        endpoint="/api/admin/vendors"
+        columns={COLUMNS}
+        rowKey={(v) => v.id}
+        noun="vendor"
+        searchPlaceholder="Search vendors by name…"
+        filters={FILTERS}
+        defaultSort={{ column: "businessName", direction: "asc" }}
+      />
     </div>
   );
 }

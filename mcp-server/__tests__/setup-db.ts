@@ -170,6 +170,8 @@ const SCHEMA_SQL = `
     claimed INTEGER NOT NULL DEFAULT 0,
     claimed_at INTEGER,
     claimed_by TEXT,
+    -- OPE-1682 (drizzle/0432) — camps/workshops feed opt-in.
+    include_camps_workshops INTEGER NOT NULL DEFAULT 0,
     -- OPE-979 (drizzle/0285) — operating status + succession.
     operating_status TEXT,
     succeeded_by_promoter_id TEXT,
@@ -199,7 +201,7 @@ const SCHEMA_SQL = `
     ticket_price_max_cents INTEGER,
     image_url TEXT,
     featured INTEGER DEFAULT 0,
-    commercial_vendors_allowed INTEGER DEFAULT 1,
+    commercial_vendors_allowed INTEGER,
     status TEXT NOT NULL DEFAULT 'DRAFT',
     view_count INTEGER DEFAULT 0,
     source_name TEXT,
@@ -256,6 +258,10 @@ const SCHEMA_SQL = `
     primary_audience TEXT NOT NULL DEFAULT 'PUBLIC',
     public_access TEXT NOT NULL DEFAULT 'OPEN',
     access_notes TEXT,
+    parking_notes TEXT,
+    accessibility_notes TEXT,
+    vendor_eligibility TEXT NOT NULL DEFAULT 'OPEN',
+    vendor_eligibility_org TEXT,
     registration_required INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER,
     updated_at INTEGER,
@@ -459,6 +465,12 @@ const SCHEMA_SQL = `
     checked_at INTEGER NOT NULL
   );
 
+  CREATE TABLE digest_change_state (
+    key TEXT PRIMARY KEY NOT NULL,
+    counts_json TEXT NOT NULL,
+    severity INTEGER NOT NULL DEFAULT 0,
+    last_sent_at INTEGER NOT NULL
+  );
   CREATE TABLE weekly_inventory_state (
     id TEXT PRIMARY KEY,
     last_sent_date TEXT,
@@ -858,6 +870,28 @@ const SCHEMA_SQL = `
   -- The admin reader selects from this unconditionally, so every test using the
   -- shared harness needs it present; without it the reader throws and the
   -- failure looks like a reader bug rather than a missing fixture.
+  CREATE TABLE event_documents (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    r2_key TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    year INTEGER NOT NULL,
+    source_organizer TEXT NOT NULL,
+    source_inbound_email_id TEXT,
+    source_attachment_index INTEGER,
+    source_url TEXT,
+    received_at INTEGER NOT NULL,
+    posted_by TEXT,
+    posted_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'live',
+    withdrawn_reason TEXT,
+    withdrawn_at INTEGER
+  );
+
   CREATE TABLE event_applications (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
@@ -875,6 +909,10 @@ const SCHEMA_SQL = `
     capacity_status TEXT NOT NULL DEFAULT 'UNKNOWN',
     capacity_as_of INTEGER,
     capacity_note TEXT,
+    -- OPE-1512 (drizzle/0390).
+    categories_wanted TEXT,
+    categories_full TEXT,
+    categories_as_of INTEGER,
     created_at INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL DEFAULT 0
   );
@@ -1057,6 +1095,7 @@ const SCHEMA_SQL = `
     provider TEXT,
     body_html TEXT,
     body_text TEXT,
+    attachments_json TEXT,
     -- OPE-177 — downstream delivery outcome, separate from status (which
     -- stays the send-attempt outcome; see drizzle/0193).
     delivery_status TEXT,
@@ -1173,7 +1212,10 @@ const SCHEMA_SQL = `
     resolved_at INTEGER,
     created_at INTEGER NOT NULL,
     -- OPE-1174 — drizzle/0330.
-    inherited_from TEXT
+    inherited_from TEXT,
+    -- OPE-1665 — drizzle/0426.
+    incident_routes INTEGER,
+    incident_sources INTEGER
   );
 
   -- OPE-1178 — mirrors drizzle/0331.
@@ -1402,6 +1444,10 @@ const SCHEMA_SQL = `
     matched_entity_id TEXT,
     match_basis TEXT,
     match_confidence REAL,
+    -- OPE-1510 (drizzle/0401) — the contact lane branches on these.
+    known_contact_basis TEXT,
+    known_contact_entity_type TEXT,
+    known_contact_entity_id TEXT,
     created_at INTEGER NOT NULL
   );
 
@@ -1467,7 +1513,7 @@ const SCHEMA_SQL = `
   CREATE TABLE submission_correction_tokens (
     token TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
-    inbound_email_id TEXT NOT NULL,
+    inbound_email_id TEXT, -- nullable since OPE-1558 (drizzle/0389)
     expires_at INTEGER NOT NULL,
     used_at INTEGER,
     created_at INTEGER NOT NULL
@@ -1549,6 +1595,14 @@ const SCHEMA_SQL = `
   );
   CREATE UNIQUE INDEX uq_promoter_list_subscriptions_addr
     ON promoter_list_subscriptions (promoter_id, address);
+  -- OPE-1506 — copied from drizzle/0075 (no later ALTERs).
+  CREATE TABLE inbound_email_senders (
+    email TEXT PRIMARY KEY,
+    trust_status TEXT NOT NULL DEFAULT 'unknown',
+    notes TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch('now')),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch('now'))
+  );
   CREATE TABLE promoter_contacts (
     id TEXT PRIMARY KEY,
     promoter_id TEXT NOT NULL REFERENCES promoters(id) ON DELETE CASCADE,
@@ -1574,6 +1628,83 @@ const SCHEMA_SQL = `
     updated_at INTEGER NOT NULL
   );
   CREATE UNIQUE INDEX uq_promoter_contacts_promoter_email ON promoter_contacts (promoter_id, email);
+  CREATE TABLE promoter_onboarding_requests (
+    id TEXT PRIMARY KEY,
+    inbound_email_id TEXT NOT NULL UNIQUE,
+    from_address TEXT NOT NULL,
+    org_domain TEXT,
+    org_name TEXT,
+    match_report TEXT,
+    staged_promoter TEXT,
+    enrichment_status TEXT NOT NULL DEFAULT 'queued',
+    enrichment_detail TEXT,
+    enrichment_finished_at INTEGER,
+    obligation_id TEXT,
+    target_at INTEGER,
+    draft_id TEXT,
+    draft_composed_at INTEGER,
+    draft_missing_fault_at INTEGER,
+    notified_at INTEGER,
+    reminded_at INTEGER,
+    deadline_fault_at INTEGER,
+    replied_at INTEGER,
+    claimed_at INTEGER,
+    first_submission_at INTEGER,
+    followup_draft_id TEXT,
+    followup_composed_at INTEGER,
+    followup_target_at INTEGER,
+    followup_notified_at INTEGER,
+    followup_reminded_at INTEGER,
+    followup_deadline_fault_at INTEGER,
+    followup_sent_at INTEGER,
+    closed_at INTEGER,
+    close_reason TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE pending_promoter_contacts (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    org_domain TEXT NOT NULL,
+    name TEXT,
+    matched_entity_type TEXT,
+    matched_entity_id TEXT,
+    inbound_email_id TEXT,
+    validation_evidence TEXT,
+    sender_auth TEXT,
+    auth_domain TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attached_promoter_id TEXT,
+    attached_at INTEGER,
+    domain_probed_at INTEGER,
+    first_validated_at INTEGER NOT NULL,
+    last_heard_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE org_domains (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    status TEXT NOT NULL,
+    method TEXT NOT NULL,
+    evidence TEXT,
+    source_url TEXT,
+    inbound_email_id TEXT,
+    added_by TEXT NOT NULL,
+    retired_by TEXT,
+    retired_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX uq_org_domains_entity_domain ON org_domains(entity_type, entity_id, domain);
+  CREATE TABLE shared_org_domains (
+    domain TEXT PRIMARY KEY,
+    note TEXT,
+    added_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
   CREATE TABLE promoter_list_arrivals (
     id TEXT PRIMARY KEY,
     inbound_email_id TEXT NOT NULL UNIQUE,
@@ -1697,8 +1828,11 @@ const SCHEMA_SQL = `
     reviewed_at INTEGER,
     review_note TEXT,
     sent_at INTEGER,
-    sent_message_id TEXT
+    sent_message_id TEXT,
+    inbound_email_id TEXT
   );
+  CREATE UNIQUE INDEX uq_operator_outbound_inbound
+    ON operator_outbound_drafts(inbound_email_id) WHERE inbound_email_id IS NOT NULL;
   CREATE INDEX idx_entity_claims_user ON entity_claims (user_id);
   CREATE INDEX idx_entity_claims_status ON entity_claims (status);
 
@@ -1794,6 +1928,95 @@ const FORMER_VENUE_TRIGGERS_SQL = (() => {
   return sql.slice(start);
 })();
 
+// OPE-1613 — feed/provenance/pin tables and the citation provenance column,
+// loaded from the migration itself (DDL only: the heartbeat_probes seed row is
+// cut off, since this harness has no heartbeat_probes table).
+const FEED_PROVENANCE_SQL = (() => {
+  const sql = readFileSync(
+    join(__dirname, "../../drizzle/0406_ope1613_feed_provenance.sql"),
+    "utf8"
+  );
+  const end = sql.indexOf("INSERT INTO heartbeat_probes");
+  if (end < 0 || !sql.includes("CREATE TABLE event_field_pins"))
+    throw new Error("0406 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
+// OPE-1617 — calendar-reader columns (polling, validators, ownership, missing_since),
+// loaded from the migration itself. It ALTERs 0406's tables, so it runs after them.
+const CALENDAR_READER_SQL = (() => {
+  const sql = readFileSync(
+    join(__dirname, "../../drizzle/0409_ope1617_calendar_reader.sql"),
+    "utf8"
+  );
+  // DDL only: the heartbeat_probes seed is cut off (this harness has no such table).
+  const end = sql.indexOf("INSERT INTO heartbeat_probes");
+  if (end < 0 || !sql.includes("ADD COLUMN missing_since"))
+    throw new Error("0409 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
+// OPE-1618 — the spreadsheet-import ledger, loaded from the migration itself.
+const PROMOTER_IMPORT_SQL = (() => {
+  const sql = readFileSync(
+    join(__dirname, "../../drizzle/0410_ope1618_promoter_spreadsheet_import.sql"),
+    "utf8"
+  );
+  if (!sql.includes("CREATE TABLE promoter_import_rows"))
+    throw new Error("0410 shape changed — the loader is reading the wrong file");
+  return sql;
+})();
+
+// OPE-1620 — promoter API keys, request ids and event refs, loaded from the
+// migration itself (DDL only: the heartbeat_probes seed is cut). OPE-1647 —
+// merge_promoter repoints these, so every suite that merges needs them.
+const PROMOTER_API_SQL = (() => {
+  const sql = readFileSync(join(__dirname, "../../drizzle/0411_ope1620_promoter_api.sql"), "utf8");
+  const end = sql.indexOf("INSERT INTO heartbeat_probes");
+  if (end < 0 || !sql.includes("CREATE TABLE promoter_api_event_refs"))
+    throw new Error("0411 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
+// OPE-1621 — change-ping columns, WebSub subscriptions and ping counters,
+// loaded from the migration itself (DDL only: the heartbeat_probes seed is cut).
+const CHANGE_PING_SQL = (() => {
+  const sql = readFileSync(join(__dirname, "../../drizzle/0412_ope1621_change_ping.sql"), "utf8");
+  const end = sql.indexOf("INSERT INTO heartbeat_probes");
+  if (end < 0 || !sql.includes("CREATE TABLE feed_websub_subscriptions"))
+    throw new Error("0412 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
+// OPE-1626 — questions hold, auto-disable state, last good read, and the run
+// log, loaded from the migration itself (DDL + its feed UPDATEs; the
+// heartbeat_probes statements after the OPE-246 marker are cut).
+const FEED_READER_SQL = (() => {
+  const sql = readFileSync(join(__dirname, "../../drizzle/0413_ope1626_feed_reader.sql"), "utf8");
+  const end = sql.indexOf("-- OPE-246 — heartbeat probes");
+  if (end < 0 || !sql.includes("CREATE TABLE promoter_feed_reads"))
+    throw new Error("0413 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
+// OPE-1630 — review columns on promoter_feed_items, loaded from the migration itself.
+const FEED_REVIEW_SQL = (() => {
+  const sql = readFileSync(join(__dirname, "../../drizzle/0414_ope1630_feed_review.sql"), "utf8");
+  if (!sql.includes("ADD COLUMN reviewed_by"))
+    throw new Error("0414 shape changed — the loader is reading the wrong file");
+  return sql;
+})();
+
+// OPE-1633 — fill-count columns on the run log and the feed_health_flags
+// table, loaded from the migration itself (DDL only: the probe seed is cut).
+const FEED_HEALTH_SQL = (() => {
+  const sql = readFileSync(join(__dirname, "../../drizzle/0416_ope1633_feed_health.sql"), "utf8");
+  const end = sql.indexOf("-- OPE-246 — heartbeat probes");
+  if (end < 0 || !sql.includes("CREATE TABLE feed_health_flags"))
+    throw new Error("0416 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
   const raw = new Database(":memory:");
   raw.pragma("foreign_keys = ON");
@@ -1804,6 +2027,14 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   // OPE-1180 — the FORMER-venue triggers, loaded from the migration itself so
   // the tests run against the exact SQL prod runs (one source, no copy to drift).
   raw["exec"](FORMER_VENUE_TRIGGERS_SQL);
+  raw["exec"](FEED_PROVENANCE_SQL);
+  raw["exec"](CALENDAR_READER_SQL);
+  raw["exec"](PROMOTER_IMPORT_SQL);
+  raw["exec"](PROMOTER_API_SQL);
+  raw["exec"](CHANGE_PING_SQL);
+  raw["exec"](FEED_READER_SQL);
+  raw["exec"](FEED_REVIEW_SQL);
+  raw["exec"](FEED_HEALTH_SQL);
   const db = drizzle(raw, { schema });
   // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.
   // Shim it so code paths that batch — e.g. SYN1's outbox-row + version-bump

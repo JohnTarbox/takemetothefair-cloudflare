@@ -148,14 +148,27 @@ describe("the route implements what the mirror models", () => {
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\/\/.*$/gm, "");
 
+  // OPE-1665 — the per-row grouping moved out of the route into this module,
+  // which the route calls (`createFaultRowGrouper`) and the OPE-1665 replay runs.
+  const GROUPER = readFileSync(join(process.cwd(), "src/lib/faults/group-rows.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+
+  const SCAN = readFileSync(join(process.cwd(), "src/lib/faults/scan-error-logs.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+
   it("no longer allow-lists the render sources in the scan", () => {
     // The defect, exactly: `inArray(errorLogs.source, RENDER_FAULT_SOURCES)`
     // meant a NEW source was ignored by default.
     expect(ROUTE).not.toMatch(/inArray\(\s*errorLogs\.source/);
+    expect(SCAN).not.toMatch(/[^t]inArray\(\s*errorLogs\.source/);
   });
 
   it("scans by exclusion instead — so a new source is watched by default", () => {
-    expect(ROUTE).toMatch(/notInArray\(\s*errorLogs\.source,\s*NEVER_INGEST_SOURCES/);
+    // OPE-1600 moved the query into the paged scanner; the route supplies the list.
+    expect(SCAN).toMatch(/notInArray\(\s*errorLogs\.source,\s*excludedSources/);
+    expect(ROUTE).toMatch(/scanErrorLogPages\(\s*db,\s*since,\s*NEVER_INGEST_SOURCES/);
   });
 
   it("still refuses to ingest its own heartbeat (the OPE-93 lesson)", () => {
@@ -167,10 +180,11 @@ describe("the route implements what the mirror models", () => {
   });
 
   it("keys server rows on source and render rows on route", () => {
-    expect(ROUTE).toMatch(/isRenderLane\s*\?\s*r\.route\s*:\s*\(r\.source/);
+    expect(ROUTE).toMatch(/createFaultRowGrouper\(/);
+    expect(GROUPER).toMatch(/isRenderLane\s*\?\s*r\.route\s*:\s*\(r\.source/);
   });
 
   it("uses the UTC day as the server session dimension", () => {
-    expect(ROUTE).toMatch(/toISOString\(\)\.slice\(0,\s*10\)/);
+    expect(GROUPER).toMatch(/toISOString\(\)\.slice\(0,\s*10\)/);
   });
 });

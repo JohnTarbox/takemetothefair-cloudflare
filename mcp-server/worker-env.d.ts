@@ -27,6 +27,10 @@ interface __BaseEnv_WorkerEnv {
   PHOTO_VISION_ENABLED: string;
   PHOTO_AUTOWRITE_ENABLED: string;
   REPLAY_COMMIT_ENABLED: string;
+  FEED_POLLING_ENABLED: string;
+  WEBSUB_ENABLED: string;
+  TENTATIVE_AUTOPROMOTE_ENABLED: string;
+  ELAPSED_PENDING_EXPIRY_ENABLED: string;
   SUBMIT_ADMIN_FORWARD: string;
   MCP_OBJECT: DurableObjectNamespace<import("./src/index").MeetMeAtTheFairMCP>;
   BURST_COUNTER: DurableObjectNamespace<import("./src/index").BurstCounter>;
@@ -189,7 +193,7 @@ declare abstract class WorkerGlobalScope extends EventTarget<WorkerGlobalScopeEv
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/console)
  */
 interface Console {
-  "assert"(condition?: boolean, ...data: any[]): void;
+  assert(condition?: boolean, ...data: any[]): void;
   /**
    * The **`console.clear()`** static method clears the console if possible.
    *
@@ -718,17 +722,7 @@ interface DurableObjectNamespaceNewUniqueIdOptions {
   jurisdiction?: DurableObjectJurisdiction;
 }
 type DurableObjectLocationHint =
-  | "wnam"
-  | "enam"
-  | "sam"
-  | "weur"
-  | "eeur"
-  | "apac"
-  | "apac-ne"
-  | "apac-se"
-  | "oc"
-  | "afr"
-  | "me";
+  "wnam" | "enam" | "sam" | "weur" | "eeur" | "apac" | "apac-ne" | "apac-se" | "oc" | "afr" | "me";
 type DurableObjectRoutingMode = "primary-only";
 interface DurableObjectNamespaceGetDurableObjectOptions {
   locationHint?: DurableObjectLocationHint;
@@ -977,8 +971,7 @@ interface EventListenerObject<EventType extends Event = Event> {
   handleEvent(event: EventType): void;
 }
 type EventListenerOrEventListenerObject<EventType extends Event = Event> =
-  | EventListener<EventType>
-  | EventListenerObject<EventType>;
+  EventListener<EventType> | EventListenerObject<EventType>;
 /**
  * The **`EventTarget`** interface is implemented by objects that can receive events and may have listeners for them. In other words, any target of events implements the three methods associated with this interface.
  *
@@ -2059,8 +2052,7 @@ interface ResponseInit {
   encodeBody?: "automatic" | "manual";
 }
 type RequestInfo<CfHostMetadata = unknown, Cf = CfProperties<CfHostMetadata>> =
-  | Request<CfHostMetadata, Cf>
-  | string;
+  Request<CfHostMetadata, Cf> | string;
 /**
  * The **`Request`** interface of the Fetch API represents a resource request.
  *
@@ -3895,12 +3887,7 @@ type ContainerStartupOptions = {
   enableInternet: boolean;
   env?: Record<string, string>;
   instance?:
-    | "lite"
-    | "standard-1"
-    | "standard-2"
-    | "standard-3"
-    | "standard-4"
-    | ContainerStartResources;
+    "lite" | "standard-1" | "standard-2" | "standard-3" | "standard-4" | ContainerStartResources;
   labels?: Record<string, string>;
   directorySnapshots?: ContainerDirectorySnapshotRestoreParams[];
 } & (
@@ -3974,9 +3961,8 @@ interface MessagePortPostMessageOptions {
 }
 type LoopbackForExport<
   T extends
-    | (new (...args: any[]) => Rpc.EntrypointBranded)
-    | ExportedHandler<any, any, any>
-    | undefined = undefined,
+    (new (...args: any[]) => Rpc.EntrypointBranded) | ExportedHandler<any, any, any> | undefined =
+    undefined,
 > = T extends new (...args: any[]) => Rpc.WorkerEntrypointBranded
   ? LoopbackServiceStub<InstanceType<T>>
   : T extends new (...args: any[]) => Rpc.DurableObjectBranded
@@ -5503,8 +5489,7 @@ type ChatCompletionCustomToolTextFormat = {
   type: "text";
 };
 type ChatCompletionCustomToolFormat =
-  | ChatCompletionCustomToolTextFormat
-  | ChatCompletionCustomToolGrammarFormat;
+  ChatCompletionCustomToolTextFormat | ChatCompletionCustomToolGrammarFormat;
 type ChatCompletionCustomTool = {
   type: "custom";
   custom: {
@@ -5532,8 +5517,7 @@ type ChatCompletionMessageCustomToolCall = {
   };
 };
 type ChatCompletionMessageToolCall =
-  | ChatCompletionMessageFunctionToolCall
-  | ChatCompletionMessageCustomToolCall;
+  ChatCompletionMessageFunctionToolCall | ChatCompletionMessageCustomToolCall;
 type ChatCompletionToolChoiceFunction = {
   type: "function";
   function: {
@@ -5644,12 +5628,7 @@ type FunctionMessage = {
   name: string;
 };
 type ChatCompletionMessageParam =
-  | DeveloperMessage
-  | SystemMessage
-  | UserMessage
-  | AssistantMessage
-  | ToolMessage
-  | FunctionMessage;
+  DeveloperMessage | SystemMessage | UserMessage | AssistantMessage | ToolMessage | FunctionMessage;
 type ChatCompletionsResponseFormatText = {
   type: "text";
 };
@@ -5984,9 +5963,7 @@ type ResponseFormatJSONObject = {
   type: "json_object";
 };
 type ResponseFormatTextConfig =
-  | ResponseFormatText
-  | ResponseFormatTextJSONSchemaConfig
-  | ResponseFormatJSONObject;
+  ResponseFormatText | ResponseFormatTextJSONSchemaConfig | ResponseFormatJSONObject;
 type ResponseFormatTextJSONSchemaConfig = {
   name: string;
   schema: {
@@ -6174,12 +6151,7 @@ type ResponseRefusalDoneEvent = {
   type: "response.refusal.done";
 };
 type ResponseStatus =
-  | "completed"
-  | "failed"
-  | "in_progress"
-  | "cancelled"
-  | "queued"
-  | "incomplete";
+  "completed" | "failed" | "in_progress" | "cancelled" | "queued" | "incomplete";
 type ResponseStreamEvent =
   | ResponseCompletedEvent
   | ResponseCreatedEvent
@@ -6684,8 +6656,7 @@ type Ai_Cf_Baai_Bge_M3_Input =
        * Batch of the embeddings requests to run using async-queue
        */
       requests: (
-        | Ai_Cf_Baai_Bge_M3_Input_QueryAnd_Contexts_1
-        | Ai_Cf_Baai_Bge_M3_Input_Embedding_1
+        Ai_Cf_Baai_Bge_M3_Input_QueryAnd_Contexts_1 | Ai_Cf_Baai_Bge_M3_Input_Embedding_1
       )[];
     };
 interface Ai_Cf_Baai_Bge_M3_Input_QueryAnd_Contexts {
@@ -7478,8 +7449,7 @@ declare abstract class Base_Ai_Cf_Baai_Bge_Reranker_Base {
   postProcessedOutputs: Ai_Cf_Baai_Bge_Reranker_Base_Output;
 }
 type Ai_Cf_Qwen_Qwen2_5_Coder_32B_Instruct_Input =
-  | Ai_Cf_Qwen_Qwen2_5_Coder_32B_Instruct_Prompt
-  | Ai_Cf_Qwen_Qwen2_5_Coder_32B_Instruct_Messages;
+  Ai_Cf_Qwen_Qwen2_5_Coder_32B_Instruct_Prompt | Ai_Cf_Qwen_Qwen2_5_Coder_32B_Instruct_Messages;
 interface Ai_Cf_Qwen_Qwen2_5_Coder_32B_Instruct_Prompt {
   /**
    * The input text prompt for the model to generate a response.
@@ -8276,8 +8246,7 @@ declare abstract class Base_Ai_Cf_Mistralai_Mistral_Small_3_1_24B_Instruct {
   postProcessedOutputs: Ai_Cf_Mistralai_Mistral_Small_3_1_24B_Instruct_Output;
 }
 type Ai_Cf_Google_Gemma_3_12B_It_Input =
-  | Ai_Cf_Google_Gemma_3_12B_It_Prompt
-  | Ai_Cf_Google_Gemma_3_12B_It_Messages;
+  Ai_Cf_Google_Gemma_3_12B_It_Prompt | Ai_Cf_Google_Gemma_3_12B_It_Messages;
 interface Ai_Cf_Google_Gemma_3_12B_It_Prompt {
   /**
    * The input text prompt for the model to generate a response.
@@ -11821,7 +11790,7 @@ type AIGatewayHeaders = {
   [key: string]: string | number | boolean | object;
 };
 type AIGatewayUniversalRequest = {
-  provider: AIGatewayProviders | string;  
+  provider: AIGatewayProviders | string;
   endpoint: string;
   headers: Partial<AIGatewayHeaders>;
   query: unknown;
@@ -11839,7 +11808,7 @@ declare abstract class AiGateway {
       signal?: AbortSignal;
     }
   ): Promise<Response>;
-  getUrl(provider?: AIGatewayProviders | string): Promise<string>;  
+  getUrl(provider?: AIGatewayProviders | string): Promise<string>;
 }
 /** A parameter accepted by an Analytics SQL query. */
 type AnalyticsSQLParameter = string | number | boolean | null;
@@ -12522,17 +12491,7 @@ type BrowserRunPDFOptions = BrowserRunCommonOptions & {
     pageRanges?: string;
     /** @default "letter" */
     format?:
-      | "letter"
-      | "legal"
-      | "tabloid"
-      | "ledger"
-      | "a0"
-      | "a1"
-      | "a2"
-      | "a3"
-      | "a4"
-      | "a5"
-      | "a6";
+      "letter" | "legal" | "tabloid" | "ledger" | "a0" | "a1" | "a2" | "a3" | "a4" | "a5" | "a6";
     width?: string | number;
     height?: string | number;
     /** @default false */
@@ -13545,7 +13504,8 @@ interface RequestInitCfPropertiesImageDraw extends BasicImageTransformations {
   /**
    * How to combine the foreground and backdrop pixels to create the result
    */
-  composite?: /** Foreground drawn on top of backdrop (default) */
+  composite?:
+    /** Foreground drawn on top of backdrop (default) */
     | "over"
     /** Foreground shown only where backdrop is opaque */
     | "in"
@@ -13809,8 +13769,7 @@ interface IncomingRequestCfPropertiesCloudflareAccessOrApiShield {
    * the object is populated (i.e. the above conditions were met).
    */
   tlsClientAuth:
-    | IncomingRequestCfPropertiesTLSClientAuth
-    | IncomingRequestCfPropertiesTLSClientAuthPlaceholder;
+    IncomingRequestCfPropertiesTLSClientAuth | IncomingRequestCfPropertiesTLSClientAuthPlaceholder;
 }
 /**
  * Metadata about the request's TLS handshake
@@ -14343,8 +14302,7 @@ declare type Iso3166Alpha2Code =
 /** The 2-letter continent codes Cloudflare uses */
 declare type ContinentCode = "AF" | "AN" | "AS" | "EU" | "NA" | "OC" | "SA";
 type CfProperties<HostMetadata = unknown> =
-  | IncomingRequestCfProperties<HostMetadata>
-  | RequestInitCfProperties;
+  IncomingRequestCfProperties<HostMetadata> | RequestInitCfProperties;
 interface D1Meta {
   duration: number;
   size_after: number;
@@ -15565,9 +15523,7 @@ declare namespace Rpc {
     [__WORKFLOW_ENTRYPOINT_BRAND]: never;
   }
   export type EntrypointBranded =
-    | WorkerEntrypointBranded
-    | DurableObjectBranded
-    | WorkflowEntrypointBranded;
+    WorkerEntrypointBranded | DurableObjectBranded | WorkflowEntrypointBranded;
   // Types that can be used through `Stub`s
   export type Stubable = RpcTargetBranded | ((...args: any[]) => any);
   // Types that can be passed over RPC
@@ -15780,13 +15736,7 @@ declare namespace CloudflareWorkersModule {
     webSocketError?(ws: WebSocket, error: unknown): void | Promise<void>;
   }
   export type WorkflowDurationLabel =
-    | "second"
-    | "minute"
-    | "hour"
-    | "day"
-    | "week"
-    | "month"
-    | "year";
+    "second" | "minute" | "hour" | "day" | "week" | "month" | "year";
   export type WorkflowSleepDuration = `${number} ${WorkflowDurationLabel}${"s" | ""}` | number;
   export type WorkflowDelayDuration = WorkflowSleepDuration;
   export type WorkflowDynamicDelayContext = {
@@ -17055,8 +17005,7 @@ type VectorizeVectorMetadataValue = string | number | boolean | string[];
  * Additional information to associate with a vector.
  */
 type VectorizeVectorMetadata =
-  | VectorizeVectorMetadataValue
-  | Record<string, VectorizeVectorMetadataValue>;
+  VectorizeVectorMetadataValue | Record<string, VectorizeVectorMetadataValue>;
 type VectorFloatArray = Float32Array | Float64Array;
 interface VectorizeError {
   code?: number;
@@ -17538,17 +17487,7 @@ type WorkflowRetentionDuration = WorkflowSleepDuration;
 /** Geographic regions supported when creating a Workflow instance.
  * Location hints are best-effort placement preferences. */
 type WorkflowInstanceLocationHint =
-  | "wnam"
-  | "enam"
-  | "sam"
-  | "weur"
-  | "eeur"
-  | "apac"
-  | "apac-ne"
-  | "apac-se"
-  | "oc"
-  | "afr"
-  | "me";
+  "wnam" | "enam" | "sam" | "weur" | "eeur" | "apac" | "apac-ne" | "apac-se" | "oc" | "afr" | "me";
 interface WorkflowInstanceCreateOptions<PARAMS = unknown> {
   /**
    * An id for your Workflow instance. Must be unique within the Workflow.

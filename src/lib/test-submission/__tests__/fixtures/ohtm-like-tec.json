@@ -1,0 +1,109 @@
+{
+  "events": [
+    {
+      "id": 9101,
+      "title": "Junior Inventors",
+      "url": "https://museum.example/event/junior-inventors/",
+      "description": "<p>After-school STEM for K-8 families. Join us at 4:30 PM for an afternoon of building.</p>",
+      "start_date": "2026-11-19 04:30:00",
+      "end_date": "2026-11-19 06:00:00",
+      "all_day": false,
+      "timezone": "America/New_York",
+      "venue": { "venue": "Example Transportation Museum", "city": "Owls Head", "state": "ME" },
+      "organizer": [{ "organizer": "Education", "email": "education@museum.example" }],
+      "categories": [{ "name": "Spring" }],
+      "cost": "Free with Admission"
+    },
+    {
+      "id": 9102,
+      "title": "Thanksgiving [Closed]",
+      "url": "https://museum.example/event/thanksgiving-closed/",
+      "description": "<p>The museum is closed for the holiday.</p>",
+      "start_date": "2026-11-26 00:00:00",
+      "end_date": "2026-11-26 23:59:59",
+      "all_day": true,
+      "timezone": "America/New_York",
+      "venue": { "venue": "Example Transportation Museum", "city": "Owls Head", "state": "ME" },
+      "organizer": [{ "organizer": "Events", "email": "events@museum.example" }],
+      "categories": [],
+      "cost": ""
+    },
+    {
+      "id": 9103,
+      "title": "Owls Nest: Turkey STEM",
+      "url": "https://museum.example/event/owls-nest-turkey-stem/",
+      "description": "<p>A sensory play morning for little ones, ages 2-5.</p>",
+      "start_date": "2026-11-20 10:00:00",
+      "end_date": "2026-11-20 11:00:00",
+      "all_day": false,
+      "timezone": "America/New_York",
+      "venue": { "venue": "Example Transportation Museum", "city": "Owls Head", "state": "ME" },
+      "organizer": [{ "organizer": "Events", "email": "events@museum.example" }],
+      "categories": [{ "name": "Spring" }],
+      "cost": ""
+    },
+    {
+      "id": 9104,
+      "title": "Antique Tractor Day",
+      "url": "https://museum.example/event/antique-tractor-day/",
+      "description": "<p>Tractors on the field from 4:30 PM until dusk.</p>",
+      "start_date": "2027-05-15 04:30:00",
+      "end_date": "2027-05-15 08:00:00",
+      "all_day": false,
+      "timezone": "America/New_York",
+      "venue": {
+        "venue": "Example Transportation Museum",
+        "address": "1 Museum Way",
+        "city": "Owls Head",
+        "state": "ME",
+        "zip": "04854"
+      },
+      "organizer": [{ "organizer": "Events", "email": "events@museum.example" }],
+      "categories": [{ "name": "Spring" }],
+      "cost": "$10"
+    },
+    {
+      "id": 9105,
+      "title": "Truck Show",
+      "url": "https://museum.example/event/truck-show/",
+      "description": "<p>Two days of vintage trucks.</p>",
+      "start_date": "2027-07-10 09:00:00",
+      "end_date": "2027-07-11 16:00:00",
+      "all_day": false,
+      "timezone": "America/New_York",
+      "venue": { "venue": "Example Transportation Museum", "city": "Owls Head", "state": "ME" },
+      "organizer": [{ "organizer": "Events", "email": "events@museum.example" }],
+      "categories": [],
+      "cost": "$15"
+    },
+    {
+      "id": 9106,
+      "title": "Hudson Valley Car Show",
+      "url": "https://museum.example/event/hudson-valley-car-show/",
+      "description": "<p>Our sister museum's show.</p>",
+      "start_date": "2027-08-07 09:00:00",
+      "end_date": "2027-08-07 15:00:00",
+      "all_day": false,
+      "timezone": "America/New_York",
+      "venue": { "venue": "Sister Museum", "city": "Rhinebeck", "state": "NY" },
+      "organizer": [{ "organizer": "Events", "email": "events@museum.example" }],
+      "categories": [],
+      "cost": ""
+    },
+    {
+      "id": 9107,
+      "title": "Fall Auto Auction",
+      "url": "https://museum.example/event/fall-auto-auction/",
+      "description": "<p>Our annual auction.</p>",
+      "start_date": "2026-10-24 10:00:00",
+      "end_date": "2026-10-24 15:00:00",
+      "all_day": false,
+      "timezone": "America/New_York",
+      "venue": { "venue": "Example Transportation Museum", "city": "Owls Head", "state": "ME" },
+      "organizer": [{ "organizer": "Events", "email": "events@museum.example" }],
+      "categories": [],
+      "cost": ""
+    }
+  ],
+  "next_rest_url": null
+}

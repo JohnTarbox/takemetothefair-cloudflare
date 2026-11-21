@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useRef, useEffect } from "react";
+import { Suspense, useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -8,6 +8,7 @@ import Script from "next/script";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { FormErrorSummary } from "@/components/ui/form-error-summary";
 import {
@@ -15,7 +16,7 @@ import {
   trackClaimView,
   trackFunnelView,
   trackFunnelInteracted,
-  trackFunnelSubmitted,
+  makeSubmitAttemptTracker,
 } from "@/lib/analytics";
 import { type FieldErrors, validateAll, validateField } from "@/lib/validations/field-errors";
 import { checkEmailDomain } from "@/lib/auth/email-domain-check";
@@ -148,11 +149,11 @@ function RegisterForm() {
   // OPE-364 rework — once per mount on the first HUMAN interaction, not on
   // mount: a JS-rendering crawler mounts the page too, and on-mount
   // claim_view went from 23 rows all-time to 282 in ~13h of crawler traffic.
-  useOnFirstHumanInteraction(() => {
+  useOnFirstHumanInteraction((trigger) => {
     if (!claimSlug) return;
     const normalizedRole = defaultRole.toUpperCase();
     if (normalizedRole !== "VENDOR" && normalizedRole !== "PROMOTER") return;
-    trackClaimView(normalizedRole, claimSlug);
+    trackClaimView(normalizedRole, claimSlug, undefined, trigger);
   });
 
   // Turnstile state
@@ -252,6 +253,7 @@ function RegisterForm() {
   // start dropping the very steps being measured. A ref, not state, so latching
   // costs no re-render.
   const interactionTracked = useRef(false);
+  const trackSubmitAttempt = useMemo(() => makeSubmitAttemptTracker("register"), []);
   const markInteracted = useCallback(() => {
     if (interactionTracked.current) return;
     interactionTracked.current = true;
@@ -300,7 +302,11 @@ function RegisterForm() {
     // `register_submitted` measures "did they get as far as trying". A step
     // that only fired on success would hide a form that cannot be submitted —
     // the same blind spot as counting views and conversions alone.
-    trackFunnelSubmitted("register");
+    // OPE-1500 — numbered per mount; the read path counts attempt 1 as the
+    // step. markInteracted() first, so `submitted <= interacted` holds by
+    // construction even for a submit no change/focus event preceded.
+    markInteracted();
+    trackSubmitAttempt();
 
     // OPE-150 — never let the user submit into the unsolvable server-side
     // "complete the security check" dead-end when the widget can't exist.
@@ -460,7 +466,7 @@ function RegisterForm() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <h1 className="text-2xl font-bold text-center text-foreground">Create an Account</h1>
-          <p className="text-center text-muted-foreground mt-2">Join Meet Me at the Fair</p>
+          <p className="text-center text-muted-foreground mt-2">Create your free account</p>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
@@ -517,9 +523,9 @@ function RegisterForm() {
               required
             />
 
-            <Input
+            <PasswordInput
               label="Password"
-              type="password"
+              autoComplete="new-password"
               name="password"
               value={formData.password}
               onChange={handleChange}
@@ -529,9 +535,9 @@ function RegisterForm() {
               required
             />
 
-            <Input
+            <PasswordInput
               label="Confirm Password"
-              type="password"
+              autoComplete="new-password"
               name="confirmPassword"
               value={formData.confirmPassword}
               onChange={handleChange}
@@ -599,7 +605,7 @@ function RegisterForm() {
                   aria-describedby="website-help"
                 />
                 <p id="website-help" className="mt-1 text-xs text-muted-foreground">
-                  Helps us confirm your listing is yours — speeds up review.
+                  Helps us confirm your listing is yours.
                 </p>
               </div>
             )}

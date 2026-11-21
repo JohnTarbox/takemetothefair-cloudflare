@@ -154,9 +154,22 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // the last 90 days, mean 14.1h. Sized off the MAX rather than the mean
       // because inbound volume is lumpy and a quiet week is normal.
       "classifier-execution": 240,
+      // OPE-1615 — demand-conditional on classifier errors: ~1 retried email
+      // per 6 days (10% of ~1.7/day), so 30 days keeps a quiet-spell false
+      // alarm near 0.7%. Re-size from real classify-retry/attempt rows.
+      "classifier-retry": 720,
+      // OPE-1496 — PLACEHOLDER, dormant until the first digest links through
+      // /go/; its arming ticket measures the redirect-row inter-arrival then.
+      // Two weekly sends, because scanners prefetch every link on each send.
+      "go-click-redirect": 336,
+      // OPE-1558 — PLACEHOLDER window. Armed by OPE-1559 (drizzle/0391) with
+      // the nav CTA, before any traffic existed to measure an inter-arrival
+      // from; re-measure the list_view gap once ~2 weeks of rows exist.
+      "list-your-event-view": 168,
       // OPE-1316 — PLACEHOLDER, dormant until its arming ticket measures the
       // success-row inter-arrival (none existed when it shipped).
-      "import-url-extract-success": 336,
+      // OPE-1329 — measured: 33 rows, max gap 24.01h (daily holdout sampler) → 3 × max.
+      "import-url-extract-success": 72,
       // OPE-1352 — an invariant, not a cadence: any inbound left on a loser for
       // a day is a writer that skipped the repoint. Dormant until the backfill.
       "inbound-follows-duplicate-keeper": 24,
@@ -168,8 +181,14 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "event-data-citations-writer": 72,
       "citation-source-snapshot": 504,
       "occurred-transition-sweep": 48,
+      "tentative-autopromote": 48,
+      "elapsed-pending-expiry": 48,
       "gsc-sweep-filler-tiers": 48,
       "agent-silence-watchdog": 48,
+      // OPE-1637 — hourly cron; two missed runs plus slack.
+      "host-silence-watch": 3,
+      // OPE-1655 — hourly deploy-lag watch; two missed runs plus slack.
+      "deploy-lag-watch": 3,
       "inbound-held-submissions-snapshot": 48,
       // OPE-1117 — written by the same daily stale-red scan as the row above.
       // Measured on that sibling (n=31 snapshots, 2026-08-25 → 09-23): max gap
@@ -184,6 +203,11 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // starts the clock, so 6h cannot fire in the weeks between fairs.
       "snap-intake": 6,
       "free-text-extract-record": 24,
+      "text-match-record": 24,
+      "outreach-reply-link": 24,
+      "enrich-auto-apply": 24,
+      "contact-lane": 720,
+      "operator-draft-closes-obligation": 2,
       "photo-intake-storage-record": 30 * 24,
       // OPE-325 — demand-conditional: counts from an unanswered poster, not
       // from the last success, so a short window cannot cry wolf in a quiet month.
@@ -194,8 +218,22 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "click-traffic-attribution": 24,
       // OPE-1201 — daily cron, one run row each; two cycles before it pages.
       "near-duplicate-sweep": 48,
+      // OPE-1597 — daily cron, oldest of four type rows; two cycles before it pages.
+      "entity-duplicate-full-sweep": 48,
       // OPE-1205 — daily cron, one run row each; two cycles before it pages.
       "sync-stale-sweep": 48,
+      "pending-contact-attach": 3,
+      // OPE-1617 — hourly poll, one info row per run even with the flag off.
+      "organizer-feed-poll": 3,
+      // OPE-1621 — oldest outstanding change ping; the pass runs every 10 min.
+      "feed-change-ping": 1,
+      // OPE-1626 — a deadline offset: evidence is (earliest feed deadline − 1h),
+      // the deadline being 2× that feed's own interval after its last good read.
+      "feed-reader": 1,
+      // OPE-1633 — one evidence row per hourly poll; three missed runs before it pages.
+      "feed-health-eval": 3,
+      "promoter-onboarding": 3,
+      "replied-ledger-check": 3,
       // OPE-1239 — */10 cron, run row at most hourly; three missed before it pages.
       "ci-trigger-watchdog": 3,
       "ocr-attachment": 21 * 24,
@@ -206,6 +244,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // 72h only absorbs a stuck workflow, never a quiet week.
       "enrich-on-match-disposition": 72,
       "venue-google-amenities": 72,
+      "vendor-field-citations": 48,
       "inbound-submit": 21 * 24,
       "inbound-forward-analysis": 72,
       "inbound-email-event-links": 21 * 24,
@@ -217,7 +256,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // OPE-987 — run stamp of a pass on the daily 06:00Z drift workflow: one
       // missed run tolerated, two not.
       "organizer-cancellation-recheck": 48,
-      "owed-human-notice": 720,
+      // OPE-1034 — measured: 19 notices, p90 gap 124.1h, max 255.4h → 3 × p90.
+      "owed-human-notice": 372,
       "source-agreement-sweep": 72,
       "vendor-enrichment": 7 * 24,
       "image-coverage-scan": 48,
@@ -227,9 +267,11 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "vendor-claim-evidence": 30 * 24,
       "claim-corroboration-sweep": 48,
       "promoter-enrichment": 7 * 24,
-      "discrepancy-detection": 72,
-      // OPE-1065 — dormant placeholder, not a measurement (see the registry).
-      "citation-live-defect": 720,
+      "promoter-contact-page-hop": 14 * 24, // OPE-1689
+      // OPE-1503 — measured post-tuning: longest gap between new rows 102h.
+      "discrepancy-detection": 240,
+      // OPE-1083 — armed on a measurement: longest gap between passes 166h.
+      "citation-live-defect": 336,
       "gw1d-scorer": 7 * 24,
       "booth-autowrite": 30 * 24,
       "series-write-path": 336,
@@ -253,6 +295,11 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "request-sample-retention": 48,
       "self-announced-exhibitor": 720,
       "gemba-observation": 720,
+      "event-document-post": 2160,
+      // OPE-1613 — armed by OPE-1626 (0413); still a placeholder window.
+      "organizer-feed-ingest": 720,
+      // OPE-1620 — dormant placeholder until promoters use the signed API.
+      "promoter-api-write": 720,
       // OPE-1265 — dormant placeholder, same stance as gemba-observation.
       "promoter-list-arrival": 720,
       // OPE-1264 — measured: the largest gap between workflow emails over 60 days was 50.5h.
@@ -261,8 +308,11 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "promoter-contact-capture": 72,
       // OPE-1285 — measured: 12 newsletters, largest gap 17.9 days.
       "newsletter-itemize": 720,
+      // OPE-1286 — dormant placeholder (n=1 newsletter since OPE-1285); armed from real rows later.
+      "newsletter-candidates": 720,
       "unterminated-crossing-notice": 6,
       "error-log-retention": 48,
+      "error-log-buffer-replay": 2,
       "indexnow-submission-retention": 48,
       // OPE-1328 — armed 2026-10-06 at 270 days: a judgement at n=1 (one
       // multi-edition series, one member), not a measurement. See heartbeat.ts.

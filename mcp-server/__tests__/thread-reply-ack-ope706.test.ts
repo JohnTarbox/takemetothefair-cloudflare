@@ -95,8 +95,10 @@ describe("the kind gate is as narrow as it claims", () => {
 
   it("exposes exactly the kinds that claim 'not read by a person yet'", () => {
     // The two measured kinds, plus OPE-1134's two new acks, which make the same
-    // claim and are just as false mid-thread.
+    // claim and are just as false mid-thread. OPE-1615's fallback ack is the
+    // support-ack copy verbatim, so it makes the claim too.
     expect([...THREAD_REPLY_OVERRIDABLE_KINDS].sort()).toEqual([
+      "ack-after-classifier-failure",
       "claim-request-ack",
       "correction-ack",
       "support-ack",

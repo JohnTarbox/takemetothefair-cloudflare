@@ -34,6 +34,10 @@ export interface TrafficAttribution {
   medium: string;
   /** GA4-style session source: google | bing | a host | (direct) | utm value */
   source: string;
+  /** OPE-1496 — the landing URL's `utm_campaign`, as given (trimmed, ≤100
+   *  chars). Absent when the landing URL carried none, so two issues of one
+   *  digest — or two different digests — are told apart on the click row. */
+  campaign?: string;
 }
 
 const STORAGE_KEY = "mmatf_traffic_attribution_v1";
@@ -75,12 +79,15 @@ export function classifyTrafficSource(input: {
   selfHost: string;
 }): TrafficAttribution {
   const params = new URLSearchParams(input.search);
-  if (params.get("gclid")) return { medium: "cpc", source: "google" };
+  const utmCampaign = params.get("utm_campaign")?.trim().slice(0, 100) || null;
+  const withCampaign = (a: TrafficAttribution): TrafficAttribution =>
+    utmCampaign ? { ...a, campaign: utmCampaign } : a;
+  if (params.get("gclid")) return withCampaign({ medium: "cpc", source: "google" });
 
   const utmSource = params.get("utm_source")?.trim().toLowerCase() || null;
   const utmMedium = params.get("utm_medium")?.trim().toLowerCase() || null;
   if (utmSource || utmMedium) {
-    return { medium: utmMedium ?? "(not set)", source: utmSource ?? "(not set)" };
+    return withCampaign({ medium: utmMedium ?? "(not set)", source: utmSource ?? "(not set)" });
   }
 
   const refHost = input.referrer ? hostOf(input.referrer) : null;
@@ -123,7 +130,11 @@ export function getTrafficAttribution(): TrafficAttribution | null {
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<TrafficAttribution>;
       if (typeof parsed.medium === "string" && typeof parsed.source === "string") {
-        return { medium: parsed.medium, source: parsed.source };
+        return {
+          medium: parsed.medium,
+          source: parsed.source,
+          ...(typeof parsed.campaign === "string" ? { campaign: parsed.campaign } : {}),
+        };
       }
     }
   } catch {

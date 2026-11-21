@@ -55,7 +55,12 @@
  */
 
 import { heldSendReason } from "./inbound/replies-suppressed.js";
-import { and, eq, gt, isNull, lt, or, isNotNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, or, isNotNull, notLike, sql } from "drizzle-orm";
+import {
+  CLASSIFYING_STATUS,
+  CLASSIFY_RETRY_REPLY_KIND_PREFIX,
+  CLASSIFY_RETRY_WINDOW_SEC,
+} from "./inbound/classify-retry.js";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
 import { inboundEmails } from "./schema.js";
@@ -156,6 +161,13 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
   const receivedStaleUpper = new Date((nowSec - STALE_THRESHOLD_SEC) * 1000);
   const processingStaleUpper = new Date((nowSec - PROCESSING_STALE_THRESHOLD_SEC) * 1000);
   const olderThanLowerBound = new Date((nowSec - MAX_RECOVERY_AGE_SEC) * 1000);
+  // OPE-1615 — a row that waited out classifier retries starts dispatch up to
+  // CLASSIFY_RETRY_WINDOW_SEC after it arrived. Measuring its staleness from
+  // `received_at` alone would re-run a live workflow (a second reply), so it
+  // gets the retry window on top of the normal threshold.
+  const retryStaleUpper = new Date(
+    (nowSec - PROCESSING_STALE_THRESHOLD_SEC - CLASSIFY_RETRY_WINDOW_SEC) * 1000
+  );
 
   // Select stale rows from BOTH recovery patterns in one query:
   //   (A) status='received' AND workflow_instance_id IS NULL — entrypoint
@@ -202,7 +214,23 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
             and(
               eq(inboundEmails.status, "processing"),
               isNotNull(inboundEmails.workflowInstanceId),
-              lt(inboundEmails.receivedAt, processingStaleUpper)
+              or(
+                and(
+                  or(
+                    isNull(inboundEmails.replyKind),
+                    notLike(inboundEmails.replyKind, `${CLASSIFY_RETRY_REPLY_KIND_PREFIX}%`)
+                  ),
+                  lt(inboundEmails.receivedAt, processingStaleUpper)
+                ),
+                lt(inboundEmails.receivedAt, retryStaleUpper)
+              )
+            ),
+            // OPE-1615 — a row whose workflow died mid-retry. Recovered like a
+            // stalled `processing` row, once the whole retry window has passed.
+            and(
+              eq(inboundEmails.status, CLASSIFYING_STATUS),
+              isNotNull(inboundEmails.workflowInstanceId),
+              lt(inboundEmails.receivedAt, retryStaleUpper)
             )
           )
         )
@@ -211,7 +239,8 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
     stale = rawStale.map((r) => ({
       id: r.id,
       intent: r.intent,
-      pattern: r.status === "processing" ? "processing" : "received",
+      // OPE-1615 — a stranded `classifying` row has a workflow id, like (B).
+      pattern: r.status === "received" ? "received" : "processing",
       recoveryAttemptN: r.recoveryAttemptN ?? 0,
       fromAddress: r.fromAddress,
       subject: r.subject,

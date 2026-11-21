@@ -18,14 +18,24 @@ import {
   SNAP_SYNC_TAG,
   type QueuedShot,
 } from "./snap-queue";
+import { LOCATION_BLOCKED_HELP, locationLine, type GeoState } from "@/lib/snap/location-status";
 
 interface NearbyEvent {
   id: string;
   slug: string;
   name: string;
   venueName: string;
-  distanceMiles: number;
+  /** null in the location-free day list. */
+  distanceMiles: number | null;
   atVenue: boolean;
+}
+
+/** A position copied into plain numbers the moment it arrives (OPE-1549). */
+interface Fix {
+  latitude: number;
+  longitude: number;
+  accuracyM: number;
+  at: number;
 }
 
 interface Pin {
@@ -72,9 +82,14 @@ const rowId = (clientId: string) => `snap-${clientId}`;
 
 export function SnapCapture() {
   const fileInput = useRef<HTMLInputElement>(null);
-  const fix = useRef<GeolocationPosition | null>(null);
-  const [geoState, setGeoState] = useState<"pending" | "ok" | "denied" | "unavailable">("pending");
+  const fix = useRef<Fix | null>(null);
+  const [geoState, setGeoState] = useState<GeoState>("pending");
+  const [accuracyM, setAccuracyM] = useState<number | null>(null);
+  const [geoAttempt, setGeoAttempt] = useState(0);
+  const [showBlockedHelp, setShowBlockedHelp] = useState(false);
   const [nearby, setNearby] = useState<NearbyEvent[] | null>(null);
+  const [today, setToday] = useState<NearbyEvent[] | null>(null);
+  const [query, setQuery] = useState("");
   const [pin, setPin] = useState<Pin | null>(null);
   const [pinChoice, setPinChoice] = useState<"unset" | "pinned" | "server">("unset");
   const [showPicker, setShowPicker] = useState(false);
@@ -147,39 +162,101 @@ export function SnapCapture() {
     return undefined;
   }, [flush, refreshQueue]);
 
+  // OPE-1549 — today's full list for "Pick the fair". Location-free on purpose:
+  // the manual pin must work with location denied or unavailable.
+  useEffect(() => {
+    fetch(`/api/admin/snap/nearby?${new URLSearchParams({ date: localDate() })}`, {
+      credentials: "same-origin",
+    })
+      .then((r) => (r.ok ? (r.json() as Promise<{ events?: NearbyEvent[] }>) : { events: [] }))
+      .then((j) => setToday(j.events ?? []))
+      .catch(() => setToday([]));
+  }, []);
+
   // Keep a fresh location fix and offer the nearest event running today.
+  // OPE-1549: a cold GPS fix indoors can take well over 10 s, so the precise
+  // watch gets 30 s and a 60 s maximumAge; on timeout/unavailable a one-shot
+  // coarse (network) fix is tried rather than giving up with nothing.
+  // `geoAttempt` re-runs this when "Location blocked: tap to fix" is tapped.
   useEffect(() => {
     if (!("geolocation" in navigator)) {
       setGeoState("unavailable");
       return;
     }
+    setGeoState((g) => (g === "ok" ? g : "pending"));
     let asked = false;
-    const id = navigator.geolocation.watchPosition(
-      (pos) => {
-        fix.current = pos;
-        setGeoState("ok");
-        if (asked) return;
-        asked = true;
-        const q = new URLSearchParams({
-          lat: String(pos.coords.latitude),
-          lng: String(pos.coords.longitude),
-          date: localDate(),
+    let triedCoarse = false;
+    const onFix = (pos: GeolocationPosition) => {
+      fix.current = {
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        accuracyM: pos.coords.accuracy,
+        at: pos.timestamp || Date.now(),
+      };
+      setAccuracyM(pos.coords.accuracy);
+      setGeoState("ok");
+      setShowBlockedHelp(false);
+      if (asked) return;
+      asked = true;
+      const q = new URLSearchParams({
+        lat: String(pos.coords.latitude),
+        lng: String(pos.coords.longitude),
+        date: localDate(),
+      });
+      fetch(`/api/admin/snap/nearby?${q}`, { credentials: "same-origin" })
+        .then((r) => (r.ok ? (r.json() as Promise<{ events?: NearbyEvent[] }>) : { events: [] }))
+        .then((j) => setNearby(j.events ?? []))
+        .catch(() => setNearby([]));
+    };
+    const onError = (err: GeolocationPositionError) => {
+      if (err.code === err.PERMISSION_DENIED) {
+        setGeoState("denied");
+        return;
+      }
+      if (fix.current) return; // a later watch error keeps the last good fix
+      setGeoState("unavailable");
+      if (!triedCoarse) {
+        triedCoarse = true;
+        navigator.geolocation.getCurrentPosition(onFix, () => undefined, {
+          enableHighAccuracy: false,
+          maximumAge: 5 * 60_000,
+          timeout: 30_000,
         });
-        fetch(`/api/admin/snap/nearby?${q}`, { credentials: "same-origin" })
-          .then((r) => (r.ok ? (r.json() as Promise<{ events?: NearbyEvent[] }>) : { events: [] }))
-          .then((j) => setNearby(j.events ?? []))
-          .catch(() => setNearby([]));
-      },
-      (err) => setGeoState(err.code === err.PERMISSION_DENIED ? "denied" : "unavailable"),
-      { enableHighAccuracy: true, maximumAge: 30_000, timeout: 20_000 }
-    );
+      }
+    };
+    const id = navigator.geolocation.watchPosition(onFix, onError, {
+      enableHighAccuracy: true,
+      maximumAge: 60_000,
+      timeout: 30_000,
+    });
     return () => navigator.geolocation.clearWatch(id);
-  }, []);
+  }, [geoAttempt]);
 
   // Suggest (do not force) the nearest event at this venue as the pin.
   const suggested = nearby?.find((e) => e.atVenue) ?? null;
   const effectivePin: Pin | null =
     pinChoice === "pinned" ? pin : pinChoice === "server" ? null : suggested;
+
+  // Nearest first when there is a fix, then every other event running today
+  // (alphabetical); the search box filters both.
+  const nearIds = new Set((nearby ?? []).map((e) => e.id));
+  const q = query.trim().toLowerCase();
+  const pickList = [...(nearby ?? []), ...(today ?? []).filter((e) => !nearIds.has(e.id))].filter(
+    (e) => !q || e.name.toLowerCase().includes(q) || e.venueName.toLowerCase().includes(q)
+  );
+  const line = locationLine({
+    geo: geoState,
+    accuracyM,
+    atEventName: suggested?.name ?? null,
+  });
+  const onLineTap = () => {
+    if (line.action === "retry") {
+      setShowBlockedHelp(true);
+      setGeoAttempt((n) => n + 1);
+    } else if (line.action === "pick") {
+      setShowPicker(true);
+    }
+  };
 
   const choosePin = (p: Pin | "server") => {
     if (p === "server") {
@@ -191,6 +268,7 @@ export function SnapCapture() {
     }
     writeJson(() => sessionStorage, PIN_KEY, p);
     setShowPicker(false);
+    setQuery("");
   };
 
   const onFiles = async (files: FileList | null) => {
@@ -200,7 +278,7 @@ export function SnapCapture() {
       for (const file of Array.from(files)) {
         const clientId = newClientId();
         const pos = fix.current;
-        const fresh = pos && Date.now() - pos.timestamp < FIX_MAX_AGE_MS ? pos : null;
+        const fresh = pos && Date.now() - pos.at < FIX_MAX_AGE_MS ? pos : null;
         const { blob, thumb } = await prepareImage(file);
         const shot: QueuedShot = {
           clientId,
@@ -211,9 +289,9 @@ export function SnapCapture() {
           meta: {
             clientId,
             capturedAt: new Date().toISOString(),
-            latitude: fresh ? fresh.coords.latitude : null,
-            longitude: fresh ? fresh.coords.longitude : null,
-            accuracyM: fresh ? Math.round(fresh.coords.accuracy) : null,
+            latitude: fresh ? fresh.latitude : null,
+            longitude: fresh ? fresh.longitude : null,
+            accuracyM: fresh ? Math.round(fresh.accuracyM) : null,
             takenOnLocalDate: localDate(),
             eventId: effectivePin?.id ?? null,
             eventSlug: effectivePin?.slug ?? null,
@@ -302,6 +380,27 @@ export function SnapCapture() {
       <section className="px-4 pb-3" aria-label="Which fair">
         <button
           type="button"
+          onClick={onLineTap}
+          disabled={line.action === "none"}
+          aria-live="polite"
+          data-testid="snap-location-line"
+          className={`mb-2 w-full rounded-lg px-4 py-2 text-left text-sm disabled:cursor-default ${
+            line.tone === "good"
+              ? "bg-green-900/60 text-green-200"
+              : line.tone === "bad"
+                ? "bg-red-900/60 text-red-200"
+                : line.tone === "warn"
+                  ? "bg-amber-900/60 text-amber-200"
+                  : "bg-gray-800 text-gray-300"
+          }`}
+        >
+          {line.text}
+        </button>
+        {showBlockedHelp && geoState === "denied" && (
+          <p className="mb-2 text-xs text-gray-300">{LOCATION_BLOCKED_HELP}</p>
+        )}
+        <button
+          type="button"
           onClick={() => setShowPicker((v) => !v)}
           className="w-full rounded-lg bg-gray-800 px-4 py-3 text-left"
         >
@@ -319,41 +418,54 @@ export function SnapCapture() {
               ? effectivePin.name
               : pinChoice === "server"
                 ? "Let the server decide"
-                : geoState === "pending"
-                  ? "Finding your location…"
-                  : geoState === "denied"
-                    ? "Location off — tap to pick the fair"
-                    : nearby && nearby.length === 0
-                      ? "No fair found here today — tap to choose"
-                      : "Tap to choose the fair"}
+                : "Tap to pick the fair"}
           </span>
         </button>
         {showPicker && (
-          <ul className="mt-2 max-h-56 overflow-y-auto rounded-lg bg-gray-800">
-            {(nearby ?? []).map((e) => (
-              <li key={e.id}>
+          <div className="mt-2 rounded-lg bg-gray-800">
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search today's fairs"
+              aria-label="Search today's fairs"
+              className="w-full rounded-t-lg bg-gray-700 px-4 py-3 text-base placeholder-gray-400"
+            />
+            <ul className="max-h-56 overflow-y-auto">
+              {today === null && nearby === null && (
+                <li className="px-4 py-3 text-sm text-gray-400">Loading today&apos;s fairs…</li>
+              )}
+              {today !== null && pickList.length === 0 && (
+                <li className="px-4 py-3 text-sm text-gray-400">
+                  {q ? "No fair today matches that." : "No public fairs are listed for today."}
+                </li>
+              )}
+              {pickList.map((e) => (
+                <li key={e.id}>
+                  <button
+                    type="button"
+                    className="w-full px-4 py-3 text-left hover:bg-gray-700"
+                    onClick={() => choosePin({ id: e.id, slug: e.slug, name: e.name })}
+                  >
+                    {e.name}
+                    <span className="block text-xs text-gray-400">
+                      {e.venueName}
+                      {e.distanceMiles !== null ? ` · ${e.distanceMiles} mi` : ""}
+                    </span>
+                  </button>
+                </li>
+              ))}
+              <li>
                 <button
                   type="button"
-                  className="w-full px-4 py-3 text-left hover:bg-gray-700"
-                  onClick={() => choosePin({ id: e.id, slug: e.slug, name: e.name })}
+                  className="w-full px-4 py-3 text-left text-gray-300 hover:bg-gray-700"
+                  onClick={() => choosePin("server")}
                 >
-                  {e.name}
-                  <span className="block text-xs text-gray-400">
-                    {e.venueName} · {e.distanceMiles} mi
-                  </span>
+                  Let the server decide
                 </button>
               </li>
-            ))}
-            <li>
-              <button
-                type="button"
-                className="w-full px-4 py-3 text-left text-gray-300 hover:bg-gray-700"
-                onClick={() => choosePin("server")}
-              >
-                Let the server decide
-              </button>
-            </li>
-          </ul>
+            </ul>
+          </div>
         )}
       </section>
 

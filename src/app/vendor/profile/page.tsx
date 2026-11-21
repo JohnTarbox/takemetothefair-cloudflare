@@ -216,6 +216,13 @@ export default function VendorProfilePage() {
         savedSnapshot.current = loaded;
         // Only now is it safe to render the form and arm saving.
         setProfile(data);
+      } else if (res.status !== 404) {
+        // OPE-1666 — only a 404 means "this account has no vendor row". A 500
+        // (the route's catch — e.g. a D1 overload, as on 11-13 and 11-17) or any
+        // other failure used to fall through to `!profile` and tell a vendor who
+        // HAS a profile that none exists, and to contact support. It is a failed
+        // read, so it gets the failed-read notice: reload, nothing is saved.
+        setLoadFailed(true);
       }
     } catch (error) {
       console.error("Failed to fetch profile:", error);
@@ -456,8 +463,18 @@ export default function VendorProfilePage() {
     <div className="max-w-2xl">
       <WelcomeBanner
         storageKey="mmatf.welcome.vendor"
-        title="Welcome to Meet Me at the Fair!"
-        body="Complete your vendor profile below so promoters have what they need to approve your event applications."
+        title="Your free directory listing is set up."
+        body={
+          // OPE-986 A1 — copy approved verbatim by John, 2026-10-17. A crafter
+          // read the old "approve your event applications" as having applied.
+          <p>
+            This is a listing on Meet Me at the Fair — it is not an application to any fair. Each
+            fair takes its own vendor applications, usually on the fair&apos;s website or by
+            contacting the organizer. We sent a verification link to{" "}
+            {profile.ownerEmail ? <strong>{profile.ownerEmail}</strong> : "your email address"}; if
+            that address is wrong, contact support@meetmeatthefair.com.
+          </p>
+        }
       />
       <VendorClaimWidget
         claimed={profile.claimed}

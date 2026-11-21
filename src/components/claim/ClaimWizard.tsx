@@ -69,10 +69,10 @@ export function ClaimWizard({
   // `claim_view` waits for a HUMAN (OPE-364 rework): fired on mount, it
   // counted every JS-rendering crawler that walked /claim/* — 23 rows
   // all-time became 282 in ~13h, each a different slug. The first pointer /
-  // key / touch / scroll / focus fires it; so does any step below, so a later
-  // step can never be recorded without its view.
-  const fireView = useOnFirstHumanInteraction(() =>
-    once("view", () => trackClaimView(entityType, slug, "wizard"))
+  // key / touch / wheel fires it; so does any step below, so a later step can
+  // never be recorded without its view.
+  const fireView = useOnFirstHumanInteraction((trigger) =>
+    once("view", () => trackClaimView(entityType, slug, "wizard", trigger))
   );
   function goTo(next: number) {
     fireView();

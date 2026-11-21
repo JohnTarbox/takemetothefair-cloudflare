@@ -519,3 +519,54 @@ body {
   max-height: 4.5rem;
   overflow-y: auto;
 }
+
+/* OPE-1488 — the day popover on a busy day (Sat Oct 24: 31 events) was ~1,850px tall
+   with no internal scroll: it is `position: fixed` and centred, so its date header and
+   × sat above the viewport and "View full day" below it, unreachable. Cap it to the
+   viewport, scroll only the event list, and keep header + footer pinned. Width is
+   capped too so it fits a 390px phone. */
+.cm-root .cm-popover[data-testid="cm-day-popover"] {
+  display: flex;
+  flex-direction: column;
+  max-height: min(80vh, calc(100dvh - 2rem));
+  max-width: calc(100vw - 2rem);
+  box-sizing: border-box;
+}
+.cm-root .cm-popover[data-testid="cm-day-popover"] > .cm-popover-head,
+.cm-root .cm-popover[data-testid="cm-day-popover"] > .cm-view-full-day {
+  flex: 0 0 auto;
+}
+.cm-root .cm-popover[data-testid="cm-day-popover"] > .cm-day-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* OPE-1488 — every date that opens Day view looks like it does: a pointer and a
+   circle on hover/focus (Google Calendar's affordance). The popover title is a link
+   to Day view too (role=link is set by use-calendar-day-links.ts). */
+.cm-root .cm-date-number,
+.cm-root .cm-tg-header,
+.cm-root .cm-year-cell[data-day-link] {
+  cursor: pointer;
+}
+.cm-root .cm-date-number:hover,
+.cm-root .cm-date-number:focus-visible {
+  border-radius: 9999px;
+  background: var(--cm-hover, rgba(0, 0, 0, 0.08));
+  outline: 2px solid transparent;
+}
+.cm-root .cm-date-number:focus-visible,
+.cm-root .cm-tg-header:focus-visible,
+.cm-root .cm-popover-title[data-day-link]:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.cm-root .cm-tg-header:hover,
+.cm-root .cm-popover-title[data-day-link]:hover {
+  text-decoration: underline;
+}
+.cm-root .cm-popover-title[data-day-link] {
+  cursor: pointer;
+}

@@ -114,6 +114,33 @@ export const FAULT_FAMILIES: readonly FaultFamily[] = [
     guardStatus: "partial",
   },
   {
+    // OPE-1615 — the intent classifier failed every retry for one inbound email,
+    // so the message got the neutral fallback (or was screened out) instead of
+    // a lane. Written by the inbound-email workflow's classify-retry/fallback.
+    key: "FAM-CLASSIFIER-UNAVAILABLE",
+    title: "Intent classifier unavailable after retries",
+    matchers: ["classifier-unavailable:"],
+    rootCauseClass: "classifier-unavailable",
+    fixPattern:
+      "if sustained >1% of inbound: longer limit, shorter input, or a faster/smaller model (OPE-1615 item 6)",
+    guardStatus: "present",
+    guardRef: "mcp-server/src/inbound/classify-retry.ts",
+  },
+  {
+    // OPE-1626 — an organizer feed failed 5 consecutive reads and the scheduled
+    // reader switched it off (`enabled = 0`, `disabled_reason`). Written once,
+    // at the disabling failure, by mcp-server/src/feeds/run.ts
+    // (FEED_READ_FAILED_FAULT, source `feeds:read-failed`).
+    key: "FAM-FEED-READ-FAILED",
+    title: "Organizer feed auto-disabled after repeated read failures",
+    matchers: ["feed-read-failed:"],
+    rootCauseClass: "feed-read-failed",
+    fixPattern:
+      "check the feed URL / organizer site; fix or re-register, then set_promoter_feed(enabled: true)",
+    guardStatus: "present",
+    guardRef: "mcp-server/src/feeds/run.ts",
+  },
+  {
     // Render throws off an empty/undefined collection (map/reduce/spread/access).
     key: "FAM-EMPTY-COLLECTION",
     title: "Empty-collection render throw",
@@ -154,6 +181,33 @@ export const FAULT_FAMILIES: readonly FaultFamily[] = [
     rootCauseClass: "external-deferral",
     fixPattern: "treat deferral as not-a-failure (circuit-breaker/kill-switch aware)",
     guardStatus: "n/a",
+  },
+  {
+    // OPE-1655 rework — the deploy-lag watch itself cannot read main's HEAD for
+    // more than 3 consecutive hourly ticks, so a freeze would not alert. Its
+    // message also contains "deploy-lag", so it MUST precede FAM-DEPLOY-LAG in
+    // this first-match-wins list.
+    key: "FAM-DEPLOY-LAG-WATCH-BLIND",
+    title: "Deploy-lag watch can't read main (alarm blind)",
+    matchers: ["deploy-lag-watch-blind"],
+    rootCauseClass: "monitor-blind",
+    fixPattern:
+      "set/renew the MCP Worker's GITHUB_TOKEN (fine-grained, contents:read on this repo)",
+    guardStatus: "present",
+    guardRef: "mcp-server/src/deploy-lag-watch.ts (blind counter)",
+  },
+  {
+    // OPE-1655 — production behind main's HEAD for > 2h. Logged hourly by the MCP
+    // deploy-lag watch while it lasts. Not a code bug in the failing route: the
+    // pipeline stopped delivering (red main CI skipping deploy.yml, or a failed
+    // deploy job). Its tokens are unique, so position cannot matter; appended.
+    key: "FAM-DEPLOY-LAG",
+    title: "Production behind main (deploys not landing)",
+    matchers: ["[deploy-lag]", "deploy-lag", "production is behind main"],
+    rootCauseClass: "deploy-pipeline-stalled",
+    fixPattern: "make main's CI green, then confirm the Deploy run's jobs ran (not skipped)",
+    guardStatus: "present",
+    guardRef: "scripts/deploy-gate.mjs (loud skip) + mcp-server/src/deploy-lag-watch.ts",
   },
 ] as const;
 

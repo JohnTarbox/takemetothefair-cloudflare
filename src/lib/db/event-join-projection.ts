@@ -115,6 +115,10 @@ export const publicEventColumns = {
   applicationUrl: events.applicationUrl,
   applicationInstructions: events.applicationInstructions,
   walkInsAllowed: events.walkInsAllowed,
+  // OPE-1564 — who may be a vendor; public by design (one plain line in the
+  // event page's vendor section). OPEN renders nothing.
+  vendorEligibility: events.vendorEligibility,
+  vendorEligibilityOrg: events.vendorEligibilityOrg,
   seriesId: events.seriesId,
   editionKey: events.editionKey,
   lifecycleStatus: events.lifecycleStatus,

@@ -44,6 +44,7 @@ import { registerSendTestEmailTool } from "./tools/admin-send-test-email.js";
 import { registerSendPromoterEmailTool } from "./tools/admin-send-promoter-email.js";
 import { registerPromoterOutreachQueueTool } from "./tools/admin-promoter-outreach-queue.js";
 import { registerPromoterOutreachMetricsTool } from "./tools/admin-promoter-outreach-metrics.js";
+import { registerContactScorecardTool } from "./tools/admin-contact-scorecard.js";
 import { registerPromoterOutreachLifecycleTools } from "./tools/admin-promoter-outreach-lifecycle.js";
 import { registerPromoterReplyIngestTools } from "./tools/admin-promoter-reply-ingest.js";
 import { registerGalleryPhotoTools } from "./tools/admin-gallery-photos.js";
@@ -60,6 +61,8 @@ import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
 import { registerClaimReviewTools, type ClaimReviewEnv } from "./tools/admin-claim-review.js";
 import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
 import { registerReplayInboundAttachmentTool } from "./tools/admin-replay-inbound-attachment.js";
+import { registerBackfillSkippedAttachmentsTool } from "./tools/admin-backfill-skipped-attachments.js";
+import { registerEventDocumentTools } from "./tools/admin-event-documents.js";
 import {
   registerReplayInboundEmailTool,
   type WorkflowCreateBinding,
@@ -76,13 +79,21 @@ import {
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledNearDuplicateSweep } from "./near-duplicate-sweep-cron.js";
+import { runScheduledFullDuplicateSweep } from "./full-duplicate-sweep-cron.js";
 import { runScheduledCiTriggerWatchdog } from "./ci-trigger-watchdog.js";
 import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
+import { runScheduledPendingContactAttach } from "./inbound/pending-promoter-contact-attach.js";
+import { runScheduledFeedPoll, runScheduledPingedFeedPass } from "./feeds/schedule.js";
+import { WEBSUB_CALLBACK_PATH, handleWebSubCallback } from "./feeds/websub.js";
+import { runScheduledPromoterOnboarding } from "./inbound/promoter-onboarding.js";
+import { runScheduledRepliedLedgerCheck } from "./inbound/replied-without-ledger.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
 import { runScheduledBurstCapSelfTest } from "./burst-cap-selftest-canary.js";
 import { runScheduledOperatorQueueNotice } from "./operator-queue-notice.js";
 import { runAgentSilenceWatchdog } from "./agent-silence-watchdog.js";
+import { isWatchedLane, recordHostHeartbeat, runHostSilenceWatch } from "./host-silence-watch.js";
+import { runDeployLagWatch } from "./deploy-lag-watch.js";
 import { runScheduledCpiScanWatchdog } from "./cpi-scan-watchdog.js";
 import {
   runScheduledHeroProposals,
@@ -94,6 +105,8 @@ import { runScheduledPageErrorCanary } from "./page-error-canary.js";
 import { runScheduledStandingFailureCanary } from "./standing-failure-canary.js";
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
+import { runTentativeAutopromote } from "./events/tentative-autopromote.js";
+import { runElapsedPendingExpiry } from "./events/elapsed-pending-expiry.js";
 
 import { runInboundExceptionNotice } from "./inbound-exception-notice.js";
 import { runUnterminatedCrossingNotice } from "./inbound/unterminated-crossing-notice.js";
@@ -168,6 +181,14 @@ type Env = WorkerEnv &
      * to admin; only the outbound question is withheld.
      */
     UNROUTED_ASK_ENABLED?: string;
+    /** OPE-1586 — "false" stops the daily TENTATIVE → SCHEDULED auto-promotion. */
+    TENTATIVE_AUTOPROMOTE_ENABLED?: string;
+    /** OPE-1596 — "false" stops the nightly elapsed-PENDING expiry. */
+    ELAPSED_PENDING_EXPIRY_ENABLED?: string;
+    /** OPE-1617 — scheduled organizer-feed polling. On since OPE-1626 (the OHTM pilot). */
+    FEED_POLLING_ENABLED?: string;
+    /** OPE-1626 — WebSub subscribe/renew; needs FEED_POLLING_ENABLED too. Ships "false". */
+    WEBSUB_ENABLED?: string;
     INDEXNOW_PINGS?: Queue;
     // GW1.1 (2026-06-03) — ingest_addverify discrepancy capture. Producer
     // here is used by the /api/admin/internal/enqueue-discrepancy proxy
@@ -243,6 +264,11 @@ type Env = WorkerEnv &
     // outbound MCP email. Independent of the Slack webhook — set either,
     // both, or neither.
     ALERT_EMAIL_TECHNICAL?: string;
+    // OPE-1637 — the ONE credential Battleship's queue-cron.sh holds. It can only
+    // upsert a `host:<watched lane>` heartbeat row (kind='host') via
+    // POST /host-heartbeat. Set with `wrangler secret put HOST_HEARTBEAT_TOKEN`;
+    // revoke with `wrangler secret delete HOST_HEARTBEAT_TOKEN`. Unset → 503.
+    HOST_HEARTBEAT_TOKEN?: string;
     // OPE-366 — recipient for the unterminated-crossing E2 alarm (committed
     // [vars]; John's 2026-09-30 ruling named john@pimboat.com).
     UNTERMINATED_CROSSING_ALERT_EMAIL?: string;
@@ -442,6 +468,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerSendPromoterEmailTool(this.server, db, auth, this.env);
         registerPromoterOutreachQueueTool(this.server, db, auth);
         registerPromoterOutreachMetricsTool(this.server, db, auth);
+        registerContactScorecardTool(this.server, db, auth);
         registerPromoterOutreachLifecycleTools(this.server, db, auth);
         registerPromoterReplyIngestTools(this.server, db, auth);
         registerGalleryPhotoTools(this.server, auth, this.env);
@@ -461,6 +488,8 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // photo lane can be tested against the 87 stored originals instead of
         // by attending a fair.
         registerReplayInboundAttachmentTool(this.server, db, auth, this.env);
+        registerBackfillSkippedAttachmentsTool(this.server, db, auth, this.env);
+        registerEventDocumentTools(this.server, db, auth, this.env);
         // OPE-954 — replay a failed submission with every send held.
         registerReplayInboundEmailTool(
           this.server,
@@ -600,6 +629,7 @@ async function handleLegacyMcpRequest(
       registerSendPromoterEmailTool(server, db, auth, env);
       registerPromoterOutreachQueueTool(server, db, auth);
       registerPromoterOutreachMetricsTool(server, db, auth);
+      registerContactScorecardTool(server, db, auth);
       registerPromoterOutreachLifecycleTools(server, db, auth);
       registerPromoterReplyIngestTools(server, db, auth);
       registerGalleryPhotoTools(server, auth, env);
@@ -616,6 +646,8 @@ async function handleLegacyMcpRequest(
       // is what happened on the first ship, and the `mmatf_` path is exactly the
       // one an agent uses for direct curl when the tool registry is frozen.
       registerReplayInboundAttachmentTool(server, db, auth, env);
+      registerBackfillSkippedAttachmentsTool(server, db, auth, env);
+      registerEventDocumentTools(server, db, auth, env);
       registerReplayInboundEmailTool(
         server,
         db,
@@ -725,7 +757,7 @@ async function runMainAppSweep(
         message: oom
           ? `cron task '${label}' killed by Worker memory limit`
           : emptyBody5xx
-            ? `cron task '${label}' returned ${response.status} with no body (unclassified — see OPE-641)`
+            ? `cron task '${label}' returned ${response.status} with no body (likely a Worker resource kill — check this invocation's outcome in Workers Logs; OPE-641, OPE-1600)`
             : `cron task '${label}' returned non-2xx`,
         statusCode: response.status,
         sessionId,
@@ -831,6 +863,26 @@ async function runScheduledBingInspectionSweep(env: Env): Promise<void> {
 }
 
 /**
+ * OPE-1664 — drain the main app's KV buffer of `error_logs` rows whose D1 insert
+ * failed (usually during an overload) back into `error_logs`, keeping their
+ * original timestamps. Every 10 minutes, so a buffered row lands within ~10
+ * minutes of D1 recovering. The endpoint stamps
+ * `watchdog:error-log-buffer-replay` when a drain completes (empty included);
+ * the `error-log-buffer-replay` probe watches that stamp. Failsoft via
+ * runMainAppSweep.
+ */
+async function runScheduledErrorLogBufferReplay(env: Env): Promise<void> {
+  await runMainAppSweep(
+    env,
+    "error-log-buffer replay",
+    "/api/internal/error-log-buffer/replay",
+    (r) =>
+      `replayed=${r.replayed ?? "?"} present=${r.alreadyPresent ?? "?"} discarded=${r.discarded ?? "?"}` +
+      ` stopped=${r.stoppedOnError ?? "?"} more=${r.more ?? "?"} drops=${JSON.stringify(r.recentDrops ?? {})}`
+  );
+}
+
+/**
  * Render-fault emitter (OPE-93) — POSTs the OPE-81 detect→dedup→emit endpoint so
  * error_logs render faults actually flow into fault_signatures. OPE-81 shipped
  * the endpoint + reconcile but nothing SCHEDULED it, so the ledger sat empty
@@ -840,12 +892,18 @@ async function runScheduledBingInspectionSweep(env: Env): Promise<void> {
  * filing separately. Failsoft via runMainAppSweep.
  */
 async function runScheduledFaultCandidatesEmit(env: Env): Promise<void> {
-  await runMainAppSweep(
-    env,
-    "fault-signatures emit",
-    "/api/internal/faults/candidates",
-    (r) =>
-      `toEmit=${(r.toEmit as unknown[])?.length ?? "?"} regressions=${(r.regressions as unknown[])?.length ?? "?"} existing=${(r.existing as unknown[])?.length ?? "?"}`
+  await runMainAppSweep(env, "fault-signatures emit", "/api/internal/faults/candidates", (r) =>
+    // OPE-1554 — backlog + health on the log line. They were in the response
+    // since OPE-811 and printed nowhere, so a starving rail logged as routine.
+    {
+      const h = (r.health ?? {}) as Record<string, unknown>;
+      return (
+        `toEmit=${(r.toEmit as unknown[])?.length ?? "?"} regressions=${(r.regressions as unknown[])?.length ?? "?"}` +
+        ` backlog=${(r.backlog as unknown[])?.length ?? "?"} existing=${(r.existing as unknown[])?.length ?? "?"}` +
+        ` healthy=${h.healthy ?? "?"} unfiled=${h.unfiledCandidates ?? "?"} stale=${h.staleUnfiled ?? "?"}` +
+        ` oldestDays=${h.oldestUnfiledDays ?? "?"}`
+      );
+    }
   );
 }
 
@@ -1045,6 +1103,36 @@ export { BurstCounter } from "./burst-counter.js";
 // instead. Auth: X-Internal-Key, same pattern used by cron sweeps + email
 // handler. Returns null if the path doesn't match — caller falls through
 // to the OAuth provider.
+/**
+ * OPE-1637 — `POST /host-heartbeat`, called by `~/open-engine/queue-cron.sh` on
+ * every cron fire. Body: `{ "agentCode": "developer-claude-code", "note"?: str }`.
+ * Auth: `Authorization: Bearer <HOST_HEARTBEAT_TOKEN>`, compared in constant time.
+ */
+async function handleHostHeartbeat(request: Request, env: Env): Promise<Response> {
+  const json = (body: unknown, status: number) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+  if (!env.HOST_HEARTBEAT_TOKEN) return json({ ok: false, error: "not_configured" }, 503);
+  const presented = (request.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!presented || !(await timingSafeEqualString(presented, env.HOST_HEARTBEAT_TOKEN))) {
+    return json({ ok: false, error: "unauthorized" }, 401);
+  }
+  let body: { agentCode?: unknown; note?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return json({ ok: false, error: "invalid_json" }, 400);
+  }
+  if (!isWatchedLane(body.agentCode)) return json({ ok: false, error: "lane_not_watched" }, 400);
+  const note = typeof body.note === "string" ? body.note.slice(0, 200) : null;
+  const now = new Date();
+  await recordHostHeartbeat(env.DB, body.agentCode, note, now);
+  return json({ ok: true, agentCode: body.agentCode, lastSeenAt: now.toISOString() }, 200);
+}
+
 async function handleWorkflowEndpoints(
   request: Request,
   env: Env,
@@ -1739,6 +1827,7 @@ export default {
     // ScheduledController carries which one fired in `controller.cron`.
     //   - "0 6 * * *"     → daily heavy work (recs, gsc, time-to-index)
     //   - "10 6 * * *"    → GW1.3 holdout-sampling (added 2026-06-03)
+    //   - "25 6 * * *"    → analytics ingest + photo coverage (OPE-1607)
     //   - "*/10 * * * *"  → §6.3 KPI state-machine recompute (light)
     //   - "0 * * * *"     → hourly: drain pending_search_pings older than 1h
     console.warn(
@@ -1781,8 +1870,15 @@ export default {
           ["kpi-recompute", () => runScheduledKpiRecompute(env)],
           ["inbound-email-stale-sweep", () => runScheduledInboundEmailStaleSweep(env)],
           ["page-error-canary", () => runScheduledPageErrorCanary(env)],
+          // OPE-1608 — enrich, draft, alert and follow up on onboarding requests.
+          ["promoter-onboarding", () => runScheduledPromoterOnboarding(env)],
           // OPE-1239 — main's HEAD must have a push CI run (else it never deployed).
           ["ci-trigger-watchdog", () => runScheduledCiTriggerWatchdog(env)],
+          // OPE-1621 — re-read feeds a change ping marked due; reads nothing
+          // unless FEED_POLLING_ENABLED = "true" (pings stay recorded).
+          ["pinged-feed-pass", () => runScheduledPingedFeedPass(env)],
+          // OPE-1664 — replay error_logs rows a D1 overload kept out of the table.
+          ["error-log-buffer-replay", () => runScheduledErrorLogBufferReplay(env)],
         ]).then(() => undefined)
       );
       return;
@@ -1797,6 +1893,17 @@ export default {
           // has sat destination-less past the age threshold. The standing
           // backlog stays in the Monday inventory. Failsoft (catches its own).
           ["unterminated-crossing-notice", () => runUnterminatedCrossingNotice(env, getDb(env.DB))],
+          // OPE-1610 — a pending contact joins its promoter once that row exists.
+          ["pending-contact-attach", () => runScheduledPendingContactAttach(env)],
+          // OPE-1609 — a `replied` row must have a ledger row behind it.
+          ["replied-ledger-check", () => runScheduledRepliedLedgerCheck(env)],
+          // OPE-1617 — organizer feed polling; reads nothing unless FEED_POLLING_ENABLED = "true".
+          ["organizer-feed-poll", () => runScheduledFeedPoll(env)],
+          // OPE-1637 — Battleship host silence (75 min). Mails once on silent, once on clear.
+          ["host-silence-watch", () => runHostSilenceWatch(env)],
+          // OPE-1655 — production behind main for > 2h (both Workers' live SHA vs
+          // main's HEAD). Mails once on lagging, once on caught-up.
+          ["deploy-lag-watch", () => runDeployLagWatch(env)],
         ]).then(() => undefined)
       );
       return;
@@ -1862,6 +1969,38 @@ export default {
       // SECOND time every day. That is why error_logs carries two identical
       // failure bursts per day, 06:01 and 08:31 — and it defeated this branch's
       // own stated intent ("after the 08:00 sweep so the two do not contend").
+      return;
+    }
+
+    if (controller.cron === "25 6 * * *") {
+      // OPE-1607 — analytics ingest and photo coverage, off the 06:00 batch.
+      //
+      // As siblings in that batch they lost a race for D1: on 2026-11-06, -09
+      // and -10 they failed with "D1 DB is overloaded" at 06:00:27–30, while
+      // ~30 sibling tasks were starting. All five heartbeat probes went red
+      // together. 06:25 is clear of the 06:00 batch, the 06:10 holdout sample,
+      // and the */10 and hourly fires.
+      //
+      // Sequenced so the two heaviest jobs (~2 min each) do not contend with
+      // each other, and so the scan reads the GSC demand this sync just wrote.
+      // sequenceCronTasks runs each stage even when the previous one failed.
+      //
+      // OPE-225 — coverage scan, THEN the rot sweep: the sweep reads rows the
+      // scan writes (run as siblings on day one, it checked nothing). OPE-227 —
+      // hero proposals read the scan's fresh demand ranking, so they follow it.
+      // The scan is guarded by the `image-coverage-scan` heartbeat probe.
+      ctx.waitUntil(
+        sequenceCronTasks(env.DB, controller.cron, [
+          // A12 — durable GSC+GA4 search-performance time-series. Incremental
+          // daily upsert; the helper also runs the OPE-456 milestone derive,
+          // which reads the dailies this sync writes. Failsoft via
+          // runMainAppSweep (a sync failure logs, never crashes the run).
+          ["gsc-metrics-sync", () => runScheduledGscMetricsSync(env)],
+          ["photo-coverage-scan", () => runScheduledPhotoCoverageScan(env)],
+          ["image-url-health-sweep", () => runScheduledImageUrlHealthSweep(env)],
+          ["hero-proposals", () => runScheduledHeroProposals(env)],
+        ]).then(() => undefined)
+      );
       return;
     }
 
@@ -1944,11 +2083,8 @@ export default {
         ["time-to-index-sweep", () => runScheduledTimeToIndexSweep(env)],
         ["ga4-liveness-check", () => runScheduledGa4LivenessCheck(env)],
         ["bing-liveness-check", () => runScheduledBingLivenessCheck(env)],
-        // A12 (analyst 2026-06-26) — durable GSC+GA4 search-performance
-        // time-series. Incremental daily upsert; first-run 16-month backfill
-        // is driven out-of-band by scripts/gsc-backfill.ts. Failsoft via
-        // runMainAppSweep (a sync failure logs, never crashes the batch).
-        ["gsc-metrics-sync", () => runScheduledGscMetricsSync(env)],
+        // OPE-1607 — gsc-metrics-sync and the photo-coverage sequence moved to
+        // the "25 6 * * *" branch above. Do not add them back to this batch.
         [
           "event-date-drift",
           () =>
@@ -1978,6 +2114,9 @@ export default {
         // PTTF / Scarborough fixtures) were never evaluated. Report-only: writes
         // possible_duplicate_of where NULL; the OPE-1117 queue is the reader.
         ["near-duplicate-sweep", () => runScheduledNearDuplicateSweep(env)],
+        // OPE-1597 — compare every venue, event, vendor and promoter, and store
+        // the candidate pairs /admin/duplicates reads. Proposals only.
+        ["full-duplicate-sweep", () => runScheduledFullDuplicateSweep(env)],
         // OPE-1205 — a synced row whose source went quiet (> N days, tunable)
         // stops claiming confirmed dates unless a qualifying citation backs it.
         ["sync-stale-sweep", () => runScheduledSyncStaleSweep(env)],
@@ -2018,30 +2157,41 @@ export default {
         // Silent when both queues are clear — an alert that fires daily
         // regardless becomes wallpaper, which is how the sibling canaries on
         // this rail stay useful.
-        ["operator-queue-notice", () => runScheduledOperatorQueueNotice(env)],
-        // OPE-225 (2026-07-20) — photo-coverage rails. Refreshes
-        // image_coverage_state for every live entity (coverage by demand tier,
-        // image_set_at first-observation, hotlink health) so the OPE-226
-        // scorecard and OPE-227 flywheel have numbers to stand on. Idempotent,
-        // so a retry is always safe. Guarded by the `image-coverage-scan`
-        // heartbeat probe — see the OPE-245 note below for why a rail with no
-        // caller is the failure mode this line exists to prevent.
-        // OPE-225 — coverage scan, THEN the rot sweep. Sequenced, not raced:
-        // as siblings in this Promise.all the sweep ran first against an empty
-        // table on day one and checked nothing (url_checked stayed 0). The
-        // sweep reads rows the scan writes, so it must follow it. Sequenced
-        // rather than merged so a sweep failure still cannot fail the scan.
-        // OPE-227 — hero proposals read the scan's fresh demand ranking, so
-        // they follow it too. OPE-1374 — sequenceCronTasks runs each stage even
-        // when the previous one rejected (a `.then` chain skipped the rest) and
-        // logs each rejection by name.
+        //
+        // OPE-1586 (2026-11-16) — TENTATIVE → SCHEDULED auto-promotion runs
+        // FIRST, sequenced rather than parallel, so the digest it feeds lists
+        // only what the rule could not confirm and carries its summary line.
+        // Promotes only when a fresh read of the cited organizer page agrees
+        // (John's option 2). Kill switch: TENTATIVE_AUTOPROMOTE_ENABLED="false".
         [
-          "photo-coverage-sequence",
+          "tentative-autopromote+elapsed-pending-expiry+operator-queue-notice",
           () =>
             sequenceCronTasks(env.DB, controller.cron, [
-              ["photo-coverage-scan", () => runScheduledPhotoCoverageScan(env)],
-              ["image-url-health-sweep", () => runScheduledImageUrlHealthSweep(env)],
-              ["hero-proposals", () => runScheduledHeroProposals(env)],
+              [
+                "tentative-autopromote",
+                async () => {
+                  if (env.TENTATIVE_AUTOPROMOTE_ENABLED === "false") {
+                    console.log("[cron] tentative-autopromote — disabled by flag");
+                    return;
+                  }
+                  await runTentativeAutopromote(getDb(env.DB), { env });
+                },
+              ],
+              // OPE-1596 (2026-11-16, John's option 1) — PENDING rows more than
+              // 3 days past their end date → REJECTED `elapsed_unreviewed`.
+              // Also before the digest, which carries its one summary line.
+              // Kill switch: ELAPSED_PENDING_EXPIRY_ENABLED="false".
+              [
+                "elapsed-pending-expiry",
+                async () => {
+                  if (env.ELAPSED_PENDING_EXPIRY_ENABLED === "false") {
+                    console.log("[cron] elapsed-pending-expiry — disabled by flag");
+                    return;
+                  }
+                  await runElapsedPendingExpiry(getDb(env.DB));
+                },
+              ],
+              ["operator-queue-notice", () => runScheduledOperatorQueueNotice(env)],
             ]),
         ],
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
@@ -2192,6 +2342,20 @@ export default {
         }),
         { headers: { "Content-Type": "application/json" } }
       );
+    }
+
+    // OPE-1621 — WebSub callback for organizer-feed hubs. Public by design: the
+    // GET only confirms a subscription we have pending, and a POST only marks a
+    // feed due after its HMAC signature checks out (the body is never parsed).
+    if (url.pathname.startsWith(WEBSUB_CALLBACK_PATH)) {
+      return handleWebSubCallback(request, getDb(env.DB));
+    }
+
+    // OPE-1637 — host heartbeat from Battleship's cron wrapper. Its own narrow
+    // token (HOST_HEARTBEAT_TOKEN), never INTERNAL_API_KEY or an mmatf_ token:
+    // the only write it allows is the host row the hourly silence watch reads.
+    if (url.pathname === "/host-heartbeat") {
+      return handleHostHeartbeat(request, env);
     }
 
     // Legacy mmatf_ tokens bypass OAuth and use the stateless handler

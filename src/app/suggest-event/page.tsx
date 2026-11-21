@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import Link from "next/link";
 import Script from "next/script";
 import {
@@ -30,7 +30,7 @@ import {
   trackFormSubmit,
   trackFunnelView,
   trackFunnelInteracted,
-  trackFunnelSubmitted,
+  makeSubmitAttemptTracker,
 } from "@/lib/analytics";
 import type { ExtractedEventData, FieldConfidence } from "@/lib/url-import/types";
 
@@ -222,6 +222,7 @@ export default function SuggestEventPage() {
   // limited to 60/hour per anonymous client, so re-firing would drop the very
   // steps being measured.
   const interactionTracked = useRef(false);
+  const trackSubmitAttempt = useMemo(() => makeSubmitAttemptTracker("submit"), []);
   const markInteracted = useCallback(() => {
     if (interactionTracked.current) return;
     interactionTracked.current = true;
@@ -491,7 +492,11 @@ export default function SuggestEventPage() {
     // It also made the step unprovable without creating a real production
     // event: the only way to emit it was to succeed. On the attempt, a
     // deliberately-invalid submission demonstrates the step and writes nothing.
-    trackFunnelSubmitted("submit");
+    // OPE-1500 — numbered per mount; the read path counts attempt 1 as the
+    // step. markInteracted() first, so `submitted <= interacted` holds by
+    // construction even for a submit no change/focus event preceded.
+    markInteracted();
+    trackSubmitAttempt();
 
     try {
       const res = await fetch("/api/suggest-event/submit", {

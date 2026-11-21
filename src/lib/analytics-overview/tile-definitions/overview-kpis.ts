@@ -55,15 +55,25 @@ export const OVERVIEW_KPI_TILES = {
   },
   "overview.conversion-rate": {
     measures:
-      "outbound_ticket_click plus outbound_application_click events from organic search visitors, divided by GA4 sessions whose medium is organic, over 7 days.",
+      "Ticket and application clicks — outbound_ticket_click (excluding the 'Official Event Website' fallback, ctaSource=source_url) plus outbound_application_click — from organic search visitors, divided by GA4 sessions whose medium is organic, over 7 days.",
     source:
       "D1 `analytics_events` (numerator; the click's trafficMedium, recorded GA4-style at landing) and the GA4 Data API (organic sessions).",
     window:
       "Fixed 7 days ending 48h ago (GA4 finalization lag); ignores the window selector. GA4 cached 10 min.",
     caveats:
-      "OPE-1165: clicks record their traffic source from the day it shipped. Until 21 days of attributed clicks exist the rate shows 'not measured' and the badge is INDETERMINATE (out of the action queue); the footer then counts clicks from all sources. Attribution is per browser tab (utm → referrer → direct), close to but not identical with GA4's 30-minute session. No bot filter on clicks. Thresholds reset 2026-09-30 (OPE-265, John) from 8%/5% to 4.5%/3%: no 28- or 90-day window had reached 8%. Since OPE-265 the event-page button also falls back to the organizer source page when there is no ticket URL; those clicks count here and carry ctaSource=source_url.",
+      "OPE-1165: clicks record their traffic source from the day it shipped. Until 21 days of attributed clicks exist the rate shows 'not measured' and the badge is INDETERMINATE (out of the action queue); the footer then counts clicks from all sources. Attribution is per browser tab (utm → referrer → direct), close to but not identical with GA4's 30-minute session. No bot filter on clicks. Thresholds reset 2026-09-30 (OPE-265, John) from 8%/5% to 4.5%/3%: no 28- or 90-day window had reached 8%. Since OPE-265 the event-page button also falls back to the organizer source page when there is no ticket URL; from 2026-10-01 to 2026-11-16 those clicks were counted here (~85% of the numerator by mid-November). OPE-1658 split them out to the Official-site click rate tile; clicks before 10-01 carry no ctaSource and count here.",
     thresholds:
-      "Badge: green at 4.5% or more, red below 3%, amber between. STALE if GA4 data is over 96h old, or if the badge recompute stopped over 1h ago. Red or stale enters the action queue as P0.",
+      "Held INDETERMINATE (value shown, no alert, out of the action queue) while the target is re-baselined (OPE-1658): the old 4.5%/3% pair was ruled on the combined numerator. STALE still applies if GA4 data is over 96h old or the badge recompute stopped over 1h ago.",
+  },
+  "overview.official-site-click-rate": {
+    measures:
+      "outbound_ticket_click events with ctaSource=source_url — the 'Official Event Website' fallback button shown when an event has no ticket URL — from organic search visitors, divided by the same GA4 organic sessions as the conversion rate, over 7 days.",
+    source:
+      "D1 `analytics_events` (numerator, trafficMedium=organic) and the GA4 Data API (organic sessions).",
+    window: "Same fixed 7 days ending 48h ago as the conversion rate; ignores the window selector.",
+    caveats:
+      "Split out of the conversion rate on 2026-11-16 (OPE-1658); it and the conversion rate sum to the old combined rate. The button links only to source URLs that pass the url_domain_classifications ticket gate, so third-party directory pages are excluded.",
+    thresholds: "None — value only until there is a baseline (OPE-1658).",
   },
   "overview.account-engagement": {
     measures:
@@ -84,6 +94,16 @@ export const OVERVIEW_KPI_TILES = {
       "DuckDuckGo hosts are not counted (duckduckgo.com is search; noai.duckduckgo.com has AI off). Bing Copilot chat arrives as www.bing.com and is not counted. Only hostnames on the list count.",
     thresholds:
       "Display-only colour, not in the KPI state machine or action queue: green at 10 or more, amber 5 to 9, red below 5.",
+  },
+  "overview.contact-scorecard": {
+    measures:
+      "OPE-1511 — share of contact emails (mail from a non-rejected promoter contact, one per email, not per intent row) that got a human reply within 1 New York business day, with the prior window beside it. The footer adds coverage, their reply rate to our outreach, and leakage counts.",
+    source:
+      "D1 promoter-contacts table, `inbound_emails`, `email_send_ledger` (reply:manual* / operator:outbound), `promoter_outreach_attempts`, `support_obligations`. The same computation as the MCP tool get_contact_scorecard, whose description lists every query.",
+    window:
+      "Fixed 28 days rolling from now, compared with the 28 days before. Ignores the window selector. Live D1 read.",
+    caveats:
+      "A FLOOR: replies sent from Gmail never reach email_send_ledger, so an email John answered from Gmail counts as unanswered here. Business days skip weekends and US federal holidays. Rates show — on an empty denominator, never 0%.",
   },
   "overview.facebook-traffic": {
     measures:
@@ -128,43 +148,30 @@ export const OVERVIEW_KPI_TILES = {
     thresholds:
       "Badge on the 30-day median, lower is better: green at 24h or less, red above 72h. STALE when no row admitted in 7 days, which is where it sits. Stale or red is a P0 action.",
   },
-  "overview.search-visibility-30d": {
+  "overview.search-visibility-trend": {
     measures:
       "Daily Google search clicks for the whole property, one point per day, with the chart's total.",
     source: "Google Search Console API (date dimension).",
     window:
-      "Last 30 calendar days, minus the unreported tail (usually the latest 3 days), so about 27 points. Ignores the window selector. Cached 15 min.",
-    caveats: "Google only; no Bing. The total is the sum of the days drawn, not a full 30 days.",
+      "The selected window (7 days when the selector is 1d), minus the unreported tail (usually the latest 3 days). Cached 15 min.",
+    caveats:
+      "Google only; no Bing. The total is the sum of the days drawn, so it covers fewer days than the title says.",
   },
-  "overview.conversions-30d": {
+  "overview.conversions-trend": {
     measures:
       "Daily count of outbound_ticket_click plus outbound_application_click events, one point per UTC day, with the chart's total.",
     source: "D1 `analytics_events`.",
-    window: "Last 30 UTC days including today; ignores the window selector. Live D1 read.",
+    window:
+      "The selected window in UTC days, today included (7 days when the selector is 1d). Live D1 read.",
     caveats:
       "Clicks out, not purchases or submitted applications. Contact clicks are not counted. No bot filter.",
   },
-  "overview.publishing-30d": {
+  "overview.publishing-trend": {
     measures: "Daily count of IndexNow submission rows with status success, one point per UTC day.",
     source: "D1 `indexnow_submissions`.",
-    window: "Last 30 UTC days including today; ignores the window selector. Live D1 read.",
+    window:
+      "The selected window in UTC days, today included (7 days when the selector is 1d, and at most 30). Live D1 read.",
     caveats:
       "Counts successful IndexNow pings, not content published. While the indexnow:paused kill-switch is set the total reads 'not measured — paused', not 0. There is no 90-day version: rows older than 30 days are deleted.",
-  },
-  "overview.search-visibility-90d": {
-    measures:
-      "Daily Google search clicks for the whole property, one point per day, with the chart's total.",
-    source: "Google Search Console API (date dimension).",
-    window:
-      "Last 90 calendar days, minus the unreported tail (usually the latest 3 days), so about 87 points. Ignores the window selector. Cached 15 min.",
-    caveats: "Google only; no Bing. The total is the sum of the days drawn, not a full 90 days.",
-  },
-  "overview.conversions-90d": {
-    measures:
-      "Daily count of outbound_ticket_click plus outbound_application_click events, one point per UTC day, with the chart's total.",
-    source: "D1 `analytics_events`.",
-    window: "Last 90 UTC days including today; ignores the window selector. Live D1 read.",
-    caveats:
-      "Clicks out, not purchases or submitted applications. Contact clicks are not counted. No bot filter.",
   },
 } satisfies Record<string, TileDefinition>;

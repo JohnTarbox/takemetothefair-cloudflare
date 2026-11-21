@@ -10,7 +10,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AI_EXTRACTION_OK_MESSAGE } from "@/lib/url-import/extract-telemetry";
 
 const extractMultipleEvents = vi.fn();
-vi.mock("@/lib/url-import/ai-extractor", () => ({
+vi.mock("@/lib/url-import/ai-extractor", async (importOriginal) => ({
+  // OPE-1316 Ask 2 — keep the real timeout constants the route now reads.
+  ...(await importOriginal<typeof import("@/lib/url-import/ai-extractor")>()),
   extractMultipleEvents: (...args: unknown[]) => extractMultipleEvents(...args),
 }));
 vi.mock("@/lib/cloudflare", () => ({
@@ -96,5 +98,26 @@ describe("OPE-1316 — success timing row", () => {
       caller: "email-workflow",
       contentLength: PAGE.length,
     });
+  });
+});
+
+describe("OPE-1316 Ask 2 — the AI limit follows the caller", () => {
+  const limitFor = async (body: Record<string, unknown>, userId: string | null = null) => {
+    sessionUserId = userId;
+    extractMultipleEvents.mockResolvedValue({ events: [oneEvent], confidence: {} });
+    await post({ content: PAGE, ...body });
+    return extractMultipleEvents.mock.calls.at(-1)?.[4];
+  };
+
+  it("unattended callers (email workflow, free-text, holdout sampler) get 90 s", async () => {
+    expect(await limitFor({ caller: "email-workflow" })).toBe(90_000);
+    expect(await limitFor({ caller: "email-free-text" })).toBe(90_000);
+    expect(await limitFor({ caller: "holdout-sampler" })).toBe(90_000);
+  });
+
+  it("the admin import (a person waiting) keeps 20 s, and so does an unnamed caller", async () => {
+    expect(await limitFor({}, "u-admin")).toBe(20_000);
+    expect(await limitFor({})).toBe(20_000);
+    expect(await limitFor({ caller: "photo-intake" })).toBe(20_000);
   });
 });

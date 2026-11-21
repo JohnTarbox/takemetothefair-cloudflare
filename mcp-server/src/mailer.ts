@@ -32,6 +32,8 @@ export interface LedgerEntry {
   /** OPE-155 — the rendered body that went out (for the admin Sent viewer). */
   bodyHtml?: string | null;
   bodyText?: string | null;
+  /** OPE-1579 — JSON of the files this email carried. */
+  attachmentsJson?: string | null;
 }
 
 /**
@@ -52,6 +54,7 @@ export async function ledgerEmailSend(db: Db, e: LedgerEntry): Promise<void> {
     provider: e.provider ?? null,
     bodyHtml: e.bodyHtml ?? null,
     bodyText: e.bodyText ?? null,
+    attachmentsJson: e.attachmentsJson ?? null,
   };
   try {
     await db

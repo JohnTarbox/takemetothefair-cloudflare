@@ -17,6 +17,7 @@ import type { ReplyKind, ReplyParams } from "./email-handlers/types.js";
 import { resolveReplyKind, type InboundFacts } from "./email-handlers/template-assertions.js";
 // OPE-431 — one definition of "may this event URL go in an email".
 import { isEmailableEventStatus } from "./email-handlers/public-event-url.js";
+import { replySubject } from "@takemetothefair/utils";
 
 interface EmailJobMessage {
   to: string;
@@ -68,7 +69,7 @@ export function buildReply(
   params: ReplyParams = {}
 ): EmailJobMessage {
   const subjectIn = (params.subject as string | undefined) ?? "";
-  const replySubject = `Re: ${subjectIn || "your message"}`.slice(0, 200);
+  const replySubjectLine = replySubject(subjectIn).slice(0, 200);
 
   // OPE-771 — refuse to render a template whose factual claim about the inbound
   // is contradicted by the inbound row itself.
@@ -98,7 +99,7 @@ export function buildReply(
 
   return {
     to,
-    subject: replySubject,
+    subject: replySubjectLine,
     text,
     html,
     // The ledger records what was actually SENT, not what was asked for.
@@ -170,6 +171,7 @@ const FANOUT_INTENT_LABELS: Record<string, string> = {
   claim_request: "a request to claim a listing",
   vendor_inquiry: "a vendor question",
   source_suggestion: "a suggestion for a source to follow",
+  promoter_onboarding: "a question about listing your events",
   press: "a press inquiry",
   support: "a general question",
   unsubscribe: "an unsubscribe request",
@@ -424,15 +426,44 @@ ${SIGN_OFF}`;
       //
       // `no-url` says "we couldn't find a link in your message." When a URL is
       // sitting in `inbound_emails.parsed_url`, that sentence is false, and it
-      // is false in the direction that blames the sender for our failure. One
-      // contributor received it eight times across five weeks for a link they
-      // included every single time.
+      // is false in the direction that blames the sender for our failure.
       //
-      // So: name the URL we actually tried (they can see we had it), take the
-      // failure, and ask for the thing that would genuinely help — the
-      // destination page — rather than re-asking for a link they already sent.
+      // OPE-1316 — split by what actually happened to the link, per John's
+      // 2026-11-03 ruling (texts B and C verbatim, closing "If you didn't mean
+      // to email us…" line removed: everyone here sent us a link on purpose).
+      // `linkOutcome` is set by the branch that observed it (link-reply.ts):
+      //   fetched-no-event → B. The row is flagged for review in the same
+      //                      pass, which is what makes "a person will take a
+      //                      look" true.
+      //   fetch-failed     → C. The cause sentence names a shortener only when
+      //                      one was detected.
+      //   unset            → the link was never fetched (the GH #244 free-text
+      //                      override). Neither B nor C is true there, so the
+      //                      pre-ruling copy stays until that case is ruled on.
       const tried = typeof params.attemptedUrl === "string" ? params.attemptedUrl : null;
       const triedLine = tried ? `The link we tried was:\n  ${tried}\n\n` : "";
+      if (params.linkOutcome === "fetched-no-event") {
+        return `Thanks for emailing Meet Me at the Fair!
+
+We opened the page you sent but couldn't pick out the event details from it automatically. A person on our side will take a look.
+
+${triedLine}If it's quicker, reply with the event's name, dates and town in a line of text and we'll add it from that.
+
+${SIGN_OFF}`;
+      }
+      if (params.linkOutcome === "fetch-failed") {
+        const cause =
+          typeof params.causeSentence === "string"
+            ? params.causeSentence
+            : "The site didn't let our reader in.";
+        return `Thanks for emailing Meet Me at the Fair!
+
+We found a link in your message but couldn't open it. ${cause}
+
+${triedLine}If you can, reply with the event's own page — the fair's website, a ticket page, or the organizer's post — or just the event's name, dates and town in a line of text.
+
+${SIGN_OFF}`;
+      }
       return `Thanks for emailing Meet Me at the Fair!
 
 We found a link in your message but couldn't read the event details from it — some links (shorteners, redirects, and pages that need JavaScript) don't open for us.
@@ -440,6 +471,45 @@ We found a link in your message but couldn't read the event details from it — 
 ${triedLine}If you can, reply with the event's own page — the fair's website, a ticket page, or the organizer's post — and we'll take it from there. The date and town in a plain sentence works too.
 
 ${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
+    case "ai-answer-link": {
+      // OPE-1591 — text approved by John 2026-11-08, option 1, "as written".
+      // The "may already list" paragraph appears only on a text match, and says
+      // "may" because a text match is weaker than reply A's exact link match.
+      const matchedName =
+        typeof params.textMatchedEventName === "string" ? params.textMatchedEventName : null;
+      const matchedUrl =
+        typeof params.textMatchedEventUrl === "string" ? params.textMatchedEventUrl : null;
+      const maybeListed =
+        matchedName && matchedUrl
+          ? `It looks like we may already list this one: ${matchedName}\n  ${matchedUrl}\n\n`
+          : "";
+      return `Thanks for emailing Meet Me at the Fair!
+
+${maybeListed}That link is a Google AI answer, so we can't see the organizer's page from it, and we don't use AI answers as a source.
+
+If you can, reply with the organizer's own website or Facebook event, or just the event's name, dates and town in a line of text.
+
+${SIGN_OFF}`;
+    }
+    case "already-listed-link": {
+      // OPE-1316 reply A, approved 2026-11-03 (closing line removed). Reached
+      // only on an EXACT link match against a public event's source_url
+      // (link-reply.ts) — never on a text match, which named the wrong fair on
+      // de188d66.
+      const name = String(params.listedEventName ?? "");
+      const dates = String(params.listedEventDates ?? "");
+      const url = String(params.listedEventUrl ?? "");
+      const heading = dates ? `${name} — ${dates}` : name;
+      return `Thanks for emailing Meet Me at the Fair!
+
+That event is already listed with us:
+  ${heading}
+  ${url}
+
+If anything there is wrong or out of date, or you have dates for a new year, just reply to this email and we'll update it.
 
 ${SIGN_OFF}`;
     }
@@ -490,6 +560,28 @@ We want to make sure this reaches the right place, and your message did not ment
 Could you reply with the name of the fair or event (and the town, if you know it)? If you were sending photos, a link, or vendor details, just reply to this email and include them again — everything you already sent is saved and waiting.
 
 ${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
+    // OPE-1505 Ask 4 — copy approved by John, 2026-11-10. Trusted senders only.
+    case "trusted-listing-match": {
+      const applied = params.appliedFields as string | undefined;
+      const outcome = [
+        ...(applied ? [`We filled in these empty fields from the email: ${applied}.`] : []),
+        ...(params.staged ? ["The rest is queued for review in the admin inbox."] : []),
+      ].join("\n");
+      return `Thanks for emailing Meet Me at the Fair!
+
+This matches our listing for ${params.eventName as string}: ${params.eventUrl as string}
+${outcome ? `\n${outcome}\n` : ""}
+Nothing on the listing that already had a value was changed.
+
+${SIGN_OFF}`;
+    }
+    case "trusted-no-match": {
+      return `Thanks for emailing Meet Me at the Fair!
+
+We couldn't match this to a listing we have, and couldn't read enough from it to draft a new one. It's saved in the admin inbox for a manual look.
 
 ${SIGN_OFF}`;
     }
@@ -631,6 +723,9 @@ You can claim a business listing for free yourself from its page on our site —
 
 ${SIGN_OFF}`;
     }
+    // OPE-1615 — the fallback after every classifier retry failed reuses the
+    // approved support-ack copy verbatim; no new wording (John's ruling).
+    case "ack-after-classifier-failure":
     case "support-ack": {
       // OPE-367 (R3) — copy approved by John 2026-08-13, submission pointer
       // dropped on his call.

@@ -11,7 +11,7 @@
 import { occurrencePath, occurrenceYear } from "@takemetothefair/utils";
 import type { OccurrenceForSchema } from "./series-schema-org";
 import type { PlaceVenue } from "@/lib/seo/place-jsonld";
-import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
+import { columnDateForJsonLd, type JsonLdEventDay } from "@/lib/seo/column-date-jsonld";
 
 /** Minimal occurrence shape — a public, non-tombstone event under the series. */
 export interface OccurrenceRow {
@@ -40,6 +40,31 @@ export interface OccurrenceRow {
   ticketPriceMaxCents?: number | null;
   /** OPE-1326 — the stored edition key; addresses the member on a multi-edition series. */
   editionKey?: string | null;
+  /**
+   * OPE-1547 — the occurrence's day rows and venue zone, so its JSON-LD dates go
+   * through `columnDateForJsonLd` exactly as the event page's do. Absent ⇒ a
+   * date-only (noon) column stays a bare date; a real instant keeps its time.
+   */
+  eventDays?: JsonLdEventDay[];
+  venueTimezone?: string | null;
+}
+
+/**
+ * OPE-1547 — an occurrence's JSON-LD start/end. Same rule as the event page
+ * (EventSchema → columnDateForJsonLd): a real instant keeps its time in the
+ * venue zone; the noon date-only sentinel takes that day's hours from
+ * event_days, else stays a bare date.
+ */
+export function occurrenceJsonLdDates(
+  o: Pick<OccurrenceRow, "startDate" | "endDate" | "eventDays" | "venueTimezone">
+): { startDateIso: string | null; endDateIso: string | null } {
+  const tz = o.venueTimezone ?? undefined;
+  return {
+    startDateIso: o.startDate
+      ? (columnDateForJsonLd(o.startDate, "start", o.eventDays, tz) ?? null)
+      : null,
+    endDateIso: o.endDate ? (columnDateForJsonLd(o.endDate, "end", o.eventDays, tz) ?? null) : null,
+  };
 }
 
 export interface OccurrenceView extends OccurrenceRow {
@@ -166,9 +191,8 @@ export function resolveSeriesLandingContent(
 }
 
 /**
- * Map occurrences to schema.org `subEvent` inputs (chronological). Emits date-
- * only ISO from the UTC Date; P2.3 may substitute venue-zone formatting, which
- * is why the caller owns the final EventSchema wiring.
+ * Map occurrences to schema.org `subEvent` inputs (chronological). Dates go
+ * through `occurrenceJsonLdDates` (OPE-1547) — the same rule the event page uses.
  */
 export function toSchemaOccurrences(occurrences: OccurrenceRow[]): OccurrenceForSchema[] {
   return [...occurrences].sort(byStartAsc).map((o) => ({
@@ -177,11 +201,11 @@ export function toSchemaOccurrences(occurrences: OccurrenceRow[]): OccurrenceFor
     // OPE-1326 — the subEvent url uses it on a multi-edition series.
     editionKey: o.editionKey ?? null,
     name: o.name,
-    // OPE-482 follow-up — Eastern calendar date. These feed the subEvent
-    // `startDate`/`endDate` in the series JSON-LD; the UTC slice put an
-    // end-of-day-Eastern occurrence on the following day.
-    startDateIso: o.startDate ? toIsoDateOnlyInVenueZone(o.startDate) : null,
-    endDateIso: o.endDate ? toIsoDateOnlyInVenueZone(o.endDate) : null,
+    // OPE-1547 — the event page's rule, not a date-only slice: a real instant
+    // keeps its time (venue-zone offset, so OPE-482's end-of-day-Eastern case
+    // still lands on the right calendar day), the noon sentinel takes its hours
+    // from event_days. Feeds the subEvent `startDate`/`endDate`.
+    ...occurrenceJsonLdDates(o),
     venue: o.venue ?? null,
     // OPE-18 — pass the WARNING-set sources through to the builder (emit-when-known).
     imageUrl: o.imageUrl ?? null,

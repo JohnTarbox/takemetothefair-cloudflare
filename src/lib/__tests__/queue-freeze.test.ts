@@ -30,8 +30,38 @@ describe("assessQueueFreeze", () => {
     expect(assessQueueFreeze(flow({ depth: 0, outflow7d: 0 }), NOW)).toBeNull();
   });
 
-  it("returns null when outflow is not yet computable (inbound w/o history)", () => {
-    expect(assessQueueFreeze(flow({ outflow7d: null, outflow14d: null }), NOW)).toBeNull();
+  it("returns null when outflow is not yet computable AND that is declared (inbound w/o history)", () => {
+    expect(
+      assessQueueFreeze(
+        flow({ outflow7d: null, outflow14d: null, flowExclusion: "pending snapshot history" }),
+        NOW
+      )
+    ).toBeNull();
+  });
+
+  it("OPE-1556 ACCEPTANCE: an UNDECLARED null outflow on a non-empty queue is a probe-gap RED", () => {
+    // promoter_needs_enrichment / undelivered_auth_email sat 74/77 days like
+    // this, and the alarm read them exactly as it reads a healthy queue.
+    const red = assessQueueFreeze(
+      flow({ queueName: "undelivered_auth_email", depth: 6, outflow7d: null, outflow14d: null }),
+      NOW
+    );
+    expect(red).not.toBeNull();
+    expect(red!.priority).toBe("P1");
+    expect(red!.title).toMatch(/6 open, outflow NOT MEASURED .*probe gap/);
+  });
+
+  it("OPE-1556: a DECLARED exclusion is skipped deliberately, however deep", () => {
+    expect(
+      assessQueueFreeze(
+        flow({ depth: 647, outflow7d: null, outflow14d: null, flowExclusion: "untimestamped" }),
+        NOW
+      )
+    ).toBeNull();
+  });
+
+  it("OPE-1556 LANDMARK: an undeclared null on an EMPTY queue stays quiet", () => {
+    expect(assessQueueFreeze(flow({ depth: 0, outflow7d: null }), NOW)).toBeNull();
   });
 
   it("FROZEN: depth>0 and zero outflow over the window → P1 red", () => {
@@ -82,7 +112,11 @@ describe("assessAllQueueFreeze", () => {
       [
         flow({ queueName: "event_discrepancies", depth: 5890, outflow7d: 0 }), // frozen
         flow({ queueName: "vendor_enrichment", outflow7d: 10, outflow14d: 25, inflow14d: 40 }), // healthy
-        flow({ queueName: "inbound_exceptions", outflow7d: null }), // unknown → skip
+        flow({
+          queueName: "inbound_exceptions",
+          outflow7d: null,
+          flowExclusion: "pending snapshot history",
+        }), // declared unknown → skip
       ],
       NOW
     );
@@ -133,10 +167,17 @@ describe("queue-freeze thresholds are overridable (OPE-497)", () => {
     expect(red!.title).toMatch(/0 closed in 30d \(frozen\)/);
   });
 
-  it("still refuses to fire on a null outflow, whatever the thresholds say", () => {
+  it("still refuses to fire on a DECLARED null outflow, whatever the thresholds say", () => {
     // The entity-level promoter queue is exactly this shape: 485 deep, and no
     // computable outflow until OPE-496 makes last_enriched_at reliable.
-    const unknown = { ...base, depth: 485, outflow7d: null, outflow14d: null };
+    // OPE-1556 — the refusal is now conditional on the exclusion being declared.
+    const unknown = {
+      ...base,
+      depth: 485,
+      outflow7d: null,
+      outflow14d: null,
+      flowExclusion: "untimestamped status flip (OPE-496)",
+    };
     expect(assessQueueFreeze(unknown, new Date(), { slowDrainRatio: 0.99 })).toBeNull();
   });
 });

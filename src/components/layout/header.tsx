@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { GlobalSearch } from "./global-search";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { ListEventCtaLink } from "@/components/list-your-event/list-event-cta";
 
 export function Header() {
   const { data: session, status } = useSession();
@@ -107,6 +108,14 @@ export function Header() {
                 </Link>
               );
             })}
+            {/* OPE-1559 (John, 2026-11-02) — the free-listing CTA, promoted from
+                the footer into the primary nav. */}
+            <ListEventCtaLink
+              placement="nav_desktop"
+              className="hidden lg:inline-flex whitespace-nowrap rounded-lg bg-royal px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-navy"
+            >
+              List your event free
+            </ListEventCtaLink>
           </div>
 
           <div className="hidden md:flex md:items-center md:space-x-4">
@@ -261,6 +270,14 @@ export function Header() {
         {mobileMenuOpen && (
           <div className="md:hidden py-4 border-t border-border">
             <div className="space-y-2">
+              {/* OPE-1559 — first item in the mobile menu. */}
+              <ListEventCtaLink
+                placement="nav_mobile"
+                className="block px-3 py-2 rounded-lg bg-royal font-semibold text-white hover:bg-navy"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                List your event free
+              </ListEventCtaLink>
               {navigation.map((item) => {
                 const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
                 return (

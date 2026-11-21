@@ -690,9 +690,14 @@ export async function submitCheckDuplicate(
     venueAddress?: string;
     venueCity?: string;
     venueState?: string;
-  } = {
-    sourceUrl: extracted.url,
-  };
+  } = {};
+  // OPE-1286 — only a real URL. The free-text path (and the newsletter lane)
+  // carries `url: ""`, and the route's schema is `z.string().url()`: an empty
+  // string 400s the whole check, which this function reads as "not a
+  // duplicate". Every free-text email submission was compared to nothing —
+  // 0 of 26 ever came back already-exists or ok-medium-dup, against 6 of 52
+  // `ai` and 5 of 10 `json-ld` (prod, 2026-10-20).
+  if (extracted.url) body.sourceUrl = extracted.url;
   if (extracted.event.name) body.name = extracted.event.name;
   if (extracted.event.startDate) body.startDate = extracted.event.startDate;
   if (extracted.event.venueName) body.venueName = extracted.event.venueName;
@@ -824,6 +829,12 @@ export interface SubmitEventContext {
    * a fetch failure never becomes a data-loss event.
    */
   sourceTexts?: string[];
+  /**
+   * OPE-1286 — the promoter the newsletter lane attributed this item to. The
+   * main app honours it only from an internal caller, and only when the row
+   * exists; absent, it resolves the owner from the source URL as before.
+   */
+  promoterId?: string | null;
 }
 
 /**
@@ -1044,6 +1055,9 @@ export async function submitEvent(
     }
     if (possibleDuplicateOf) {
       submitBody.possibleDuplicateOf = possibleDuplicateOf;
+    }
+    if (context.promoterId) {
+      submitBody.promoterId = context.promoterId;
     }
     res = await fetch(`${env.MAIN_APP_URL}/api/suggest-event/submit`, {
       method: "POST",

@@ -128,10 +128,17 @@ export function trackApiError(endpoint: string, statusCode: number, detail?: str
 
 type BeaconCategory = "funnel" | "engagement" | "conversion";
 
-/** OPE-1165 — `{trafficMedium, trafficSource}` for a click beacon, or nothing. */
+/** OPE-1165 — `{trafficMedium, trafficSource}` for a click beacon, or nothing.
+ *  OPE-1496 — plus `campaign` (the landing `utm_campaign`) when there was one,
+ *  the same key the `/go/` redirect writes, so both report the same way. */
 function trafficProps(): Record<string, string> {
   const a = getTrafficAttribution();
-  return a ? { trafficMedium: a.medium, trafficSource: a.source } : {};
+  if (!a) return {};
+  return {
+    trafficMedium: a.medium,
+    trafficSource: a.source,
+    ...(a.campaign ? { campaign: a.campaign } : {}),
+  };
 }
 
 function sendBeacon(name: string, category: BeaconCategory, properties?: Record<string, unknown>) {
@@ -666,7 +673,9 @@ export function trackNewsletterConfirm() {
 export function trackClaimView(
   entityType: "VENDOR" | "PROMOTER",
   entitySlug: string,
-  surface?: ClaimSurface
+  surface?: ClaimSurface,
+  // OPE-364 — which input admitted the view (see use-first-human-interaction).
+  trigger?: string
 ) {
   const params = {
     category: "funnel" as const,
@@ -675,7 +684,12 @@ export function trackClaimView(
     entity_slug: entitySlug,
   };
   trackEvent("claim_view", params);
-  sendBeacon("claim_view", "funnel", { entityType, entitySlug, ...(surface ? { surface } : {}) });
+  sendBeacon("claim_view", "funnel", {
+    entityType,
+    entitySlug,
+    ...(surface ? { surface } : {}),
+    ...(trigger ? { trigger } : {}),
+  });
 }
 
 // ── OPE-364 (2026-10-14) — claim-funnel steps from the claim WIZARD ─────────
@@ -719,7 +733,7 @@ export function trackClaimStep(
 // forgotten.
 
 /** Fire once when a funnel's entry page renders. */
-export function trackFunnelView(funnel: "register" | "submit") {
+export function trackFunnelView(funnel: "register" | "submit" | "list") {
   sendBeacon(`${funnel}_view`, "funnel");
 }
 
@@ -731,11 +745,39 @@ export function trackFunnelView(funnel: "register" | "submit") {
  * client (see funnel-steps.ts). Re-firing per keystroke would exhaust that
  * budget and start dropping the very steps we are trying to measure.
  */
-export function trackFunnelInteracted(funnel: "register" | "claim" | "submit") {
+export function trackFunnelInteracted(funnel: "register" | "claim" | "submit" | "list") {
   sendBeacon(`${funnel}_form_interacted`, "funnel");
 }
 
-/** Fire when the funnel's form is actually submitted by the user. */
-export function trackFunnelSubmitted(funnel: "register" | "submit") {
-  sendBeacon(`${funnel}_submitted`, "funnel");
+/**
+ * Fire when the funnel's form is actually submitted by the user.
+ *
+ * OPE-1500 — `attempt` numbers the submits within one page mount. Step 2
+ * (`*_form_interacted`) is latched to first touch, but every submit ATTEMPT
+ * beacons step 3, so a visitor who retries after a validation or Turnstile
+ * error counted once on step 2 and N times on step 3. Real-visitor register read
+ * interacted→submitted = 125% (7d to 2026-10-19), and every excess row was a
+ * retry inside one visit. Retries are still beaconed, because a visitor
+ * resubmitting three times in a minute is a friction signal. The funnel read path
+ * counts only `attempt = 1` as the step.
+ */
+export function trackFunnelSubmitted(funnel: "register" | "submit" | "list", attempt: number) {
+  sendBeacon(`${funnel}_submitted`, "funnel", { attempt });
+}
+
+/**
+ * OPE-1500 — one per page mount (`useMemo(() => makeSubmitAttemptTracker(…), [])`):
+ * each call beacons the next attempt number, starting at 1. A re-mount is a new
+ * visit and starts again at 1. `send` is injectable for tests.
+ */
+export function makeSubmitAttemptTracker(
+  funnel: "register" | "submit" | "list",
+  send: typeof trackFunnelSubmitted = trackFunnelSubmitted
+): () => number {
+  let attempts = 0;
+  return () => {
+    attempts += 1;
+    send(funnel, attempts);
+    return attempts;
+  };
 }

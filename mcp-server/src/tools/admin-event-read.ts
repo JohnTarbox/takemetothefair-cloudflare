@@ -26,6 +26,7 @@ import {
   centsToDollars,
   classifyVendorCapacity,
   normalizeName,
+  parseVendorCategories,
 } from "@takemetothefair/utils";
 import { isOpenToVendorApplications } from "@takemetothefair/constants";
 import {
@@ -126,10 +127,14 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           applicationDeadline: events.applicationDeadline,
           walkInsAllowed: events.walkInsAllowed,
           commercialVendorsAllowed: events.commercialVendorsAllowed,
+          vendorEligibility: events.vendorEligibility,
+          vendorEligibilityOrg: events.vendorEligibilityOrg,
           estimatedAttendance: events.estimatedAttendance,
           eventScale: events.eventScale,
           indoorOutdoor: events.indoorOutdoor,
           petFriendly: events.petFriendly,
+          parkingNotes: events.parkingNotes,
+          accessibilityNotes: events.accessibilityNotes,
           imageUrl: events.imageUrl,
           imageFocalX: events.imageFocalX,
           imageFocalY: events.imageFocalY,
@@ -228,6 +233,10 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           capacityStatus: eventApplications.capacityStatus,
           capacityAsOf: eventApplications.capacityAsOf,
           capacityNote: eventApplications.capacityNote,
+          // OPE-1512 — the "vendors wanted" call, same reasoning.
+          categoriesWanted: eventApplications.categoriesWanted,
+          categoriesFull: eventApplications.categoriesFull,
+          categoriesAsOf: eventApplications.categoriesAsOf,
         })
         .from(eventApplications)
         .where(eq(eventApplications.eventId, event.id));
@@ -409,6 +418,9 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
               : null,
             walk_ins_allowed: event.walkInsAllowed,
             commercial_vendors_allowed: event.commercialVendorsAllowed,
+            // OPE-1564 — who may be a vendor; cited via update_event(citation).
+            vendor_eligibility: event.vendorEligibility,
+            vendor_eligibility_org: event.vendorEligibilityOrg,
             estimated_attendance: event.estimatedAttendance,
             event_scale: event.eventScale,
             indoor_outdoor: event.indoorOutdoor,
@@ -416,6 +428,9 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             // (the OPE-497 shape). The event's OWN value; the venue's is under
             // `venue.pet_friendly` and must not be substituted for it.
             pet_friendly: event.petFriendly,
+            // OPE-1481 — the organizer's own notes; each value is cited.
+            parking_notes: event.parkingNotes,
+            accessibility_notes: event.accessibilityNotes,
             image_url: event.imageUrl,
             image_focal_x: event.imageFocalX,
             image_focal_y: event.imageFocalY,
@@ -458,6 +473,15 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
               notes: a.notes,
               opens_at: a.opensAt ? new Date(a.opensAt).toISOString() : null,
               closes_at: a.closesAt ? new Date(a.closesAt).toISOString() : null,
+              // OPE-1512 — OPE-794's capacity columns were SELECTed above but
+              // never returned here, so the stored value was invisible to the
+              // one reader built to show it. Returned now, beside the call.
+              capacity_status: a.capacityStatus,
+              capacity_as_of: a.capacityAsOf ? new Date(a.capacityAsOf).toISOString() : null,
+              capacity_note: a.capacityNote,
+              categories_wanted: parseVendorCategories(a.categoriesWanted),
+              categories_full: parseVendorCategories(a.categoriesFull),
+              categories_as_of: a.categoriesAsOf ? new Date(a.categoriesAsOf).toISOString() : null,
             })),
             schedule: days.map((d) => ({
               date: d.date ? new Date(d.date).toISOString().slice(0, 10) : null,

@@ -3,53 +3,35 @@ import { isD1PlatformFault } from "@/lib/db/degraded";
 import { DegradedPanel } from "@/components/layout/degraded-panel";
 import { Suspense } from "react";
 import Link from "next/link";
+import { notFound } from "next/navigation";
+import { parseListingPage } from "@/lib/listing-page-param";
 import { Search, Filter, Store, Heart, X } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { CalendarSSR } from "@/components/events/calendar-ssr";
-import {
-  upcomingEndPredicate,
-  whenWindowEnd,
-  hasOccurrenceInWindowOrUndated,
-} from "@/lib/event-dates";
-import { getCloudflareDb } from "@/lib/cloudflare";
-import {
-  events,
-  venues,
-  promoters,
-  eventVendors,
-  vendors,
-  userFavorites,
-  eventDays,
-  eventInStateWhere,
-} from "@/lib/db/schema";
-import {
-  eq,
-  and,
-  or,
-  count,
-  inArray,
-  sql,
-  notLike,
-  isNull,
-  isNotNull,
-  lte,
-  asc,
-  desc,
-} from "drizzle-orm";
-import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
-import { isPublicEventStatus } from "@/lib/event-status";
-import { attachEventDayDates } from "@/lib/event-days-attach";
-import { eventJoinProjection } from "@/lib/db/event-join-projection";
-import { auth } from "@/lib/auth";
+import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { eq } from "drizzle-orm";
+import { vendors } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
-import { containsCI } from "@/lib/db/contains-ci";
-import { searchTrigrams, trigramMinMatches } from "@/lib/events/search-trigrams";
+import {
+  canServeEventsFromCache,
+  getCachedEventCategories,
+  getCachedEventStates,
+  loadEventsListingCached,
+  loadEventsListingLive,
+} from "@/lib/events/events-listing";
+import { auth } from "@/lib/auth";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ItemListTracker } from "@/components/analytics/ItemListTracker";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
 import { countPublicFilteredEvents, hasPublicFilters } from "@/lib/events-filter-count";
 import { withD1ReadLogged } from "@/lib/db/d1-resilience";
+import {
+  DAYS_FILTERS,
+  DAYS_FILTER_LABELS,
+  DAYS_FILTER_SHORT_LABELS,
+  parseDaysFilter,
+} from "@/lib/events/days-filter";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -99,7 +81,18 @@ export async function generateMetadata({
   if (!hasPublicFilters(resolved)) return BASE_METADATA;
   try {
     const db = getCloudflareDb();
-    const matchCount = await countPublicFilteredEvents(db, resolved);
+    // OPE-1668 — the same cached set the page body reads, so a crawled filter
+    // URL costs no D1 count of its own (and the noindex decision now agrees
+    // with what the page renders, including the week/weekend occurrence test).
+    const matchCount = canServeEventsFromCache(resolved, { isCalendarView: false })
+      ? (
+          await loadEventsListingCached(db, getCloudflareRateLimitKv(), resolved, {
+            page: 1,
+            limit: 1,
+            isCalendarView: false,
+          })
+        ).total
+      : await countPublicFilteredEvents(db, resolved);
     if (matchCount > 0) return BASE_METADATA;
     return {
       ...BASE_METADATA,
@@ -123,6 +116,8 @@ interface SearchParams {
   includePast?: string;
   includeTBD?: string;
   when?: string;
+  /** OPE-1487 — day-of-week filter: weekday-only | weekday-any | weekend-only | weekend-any. */
+  days?: string;
   myEvents?: string;
   favorites?: string;
   indoorOutdoor?: string;
@@ -138,6 +133,8 @@ interface SearchParams {
   cal_year?: string;
   /** CAL2 — anchor date ("YYYY-MM-DD") for the Week/Day/Custom time-grid views; default today. */
   cal_date?: string;
+  /** OPE-1488 — the calendar's focus date ("YYYY-MM-DD"), shared by every sub-view. */
+  date?: string;
   /** CAL2 — day count (2–7) for the Custom time-grid view; default 3. */
   cal_days?: string;
 }
@@ -192,348 +189,43 @@ async function getEventsOnce(
 ) {
   const viewMode = parseView(searchParams.view);
   const isCalendarView = viewMode === "calendar";
-  const page = parseInt(searchParams.page || "1");
+  // Validated by the page component before this runs (OPE-1573).
+  const page = parseListingPage(searchParams.page) ?? 1;
   const limit = 30;
-  const offset = (page - 1) * limit;
   const sort = searchParams.sort || "date-asc";
 
   const db = getCloudflareDb();
 
-  // OPE-548 — diagnostic holders, populated inside the try so the catch can
-  // describe the query that failed. Declared out here only because `query` and
-  // `conditions` are block-scoped to the try; nothing is computed eagerly.
+  // OPE-548 — diagnostic holders, populated by the live loader so the catch can
+  // describe the query that failed.
   let builtQuery: { toSQL: () => { sql: string; params: unknown[] } } | undefined;
   let conditionCount = 0;
 
   try {
-    // Build conditions
-    const conditions = [isPublicEventStatus()];
-
-    // Date filtering logic:
-    // - includePast=true: show all events (past, future, and TBD)
-    // - default: only events with a real start date that hasn't ended yet.
-    //   Excluding NULL start_date keeps undated TENTATIVE rows out of the
-    //   upcoming feed (where ORDER BY start_date ASC otherwise floats them).
-    if (searchParams.includePast !== "true") {
-      conditions.push(isNotNull(events.startDate));
-      // A2 (Dev backlog 2026-06-05): give every event a 24h grace so an
-      // evening event whose stored end_date sits at noon UTC the same
-      // calendar day doesn't drop out of the upcoming feed at 8am EDT.
-      conditions.push(upcomingEndPredicate(new Date()));
-    }
-
-    // C2 P2 — "this week / this weekend / this month" date window (homepage chips → ?when=).
-    const whenEnd = whenWindowEnd(searchParams.when);
-    if (whenEnd) {
-      conditions.push(lte(events.startDate, whenEnd));
-      // OPE-48 — for week/weekend, additionally require an actual event_days
-      // occurrence within the window (or no event_days at all), so a season-long
-      // recurring event whose next day is weeks out doesn't leak in. Keeps this
-      // surface in agreement with the homepage "Happening This Week" module that
-      // links here via "See all". (month keeps the plain 30-day start cap.)
-      if (searchParams.when === "week" || searchParams.when === "weekend") {
-        conditions.push(hasOccurrenceInWindowOrUndated(new Date(), whenEnd));
-      }
-    }
-
-    if (searchParams.query) {
-      // OPE-548 — `instr()` via containsCI, not LIKE. Two reasons, and the
-      // second is the one that bit:
-      //
-      //  1. A LIKE pattern has a complexity ceiling in D1 and `instr()` has
-      //     none, so no user input can make this throw
-      //     `LIKE or GLOB pattern too complex` however long or wildcard-dense
-      //     it is. That error has now hit five call sites in 27 days.
-      //  2. `sanitizeLikeInput` did not do what its comment claimed. It
-      //     REPLACED `%` with `\\%` — an escape that only works with an
-      //     `ESCAPE` clause, which Drizzle's `like()` cannot emit. So the
-      //     wildcard survived into the pattern AND the pattern got longer.
-      //     `instr()` needs no escaping at all: `%` and `_` are literal to it,
-      //     so a search for "100% off" now finds the text "100% off" instead
-      //     of behaving as two wildcards.
-      const query = searchParams.query.toLowerCase().trim();
-
-      const searchConditions = [
-        // Exact substring match (case-insensitive)
-        containsCI(events.name, query),
-        containsCI(events.description, query),
-      ];
-
-      // Add fuzzy matching using trigrams for typo tolerance
-      // For words > 4 chars, generate overlapping 3-char patterns
-      // "Choclate" -> cho, hoc, ocl, cla, lat, ate
-      // This will match "Chocolate" which contains most of these
-      //
-      // OPE-548 — bounded by TRIGRAM_MAX_QUERY_LEN. Every trigram is one bound
-      // parameter, and D1 caps a statement at 100 of them, so an unbounded
-      // fan-out is the SECOND D1 limit this block could trip: a 200-character
-      // query generated 198 conditions. Past ~32 characters a query is a phrase
-      // rather than a word, the exact substring match above is already the
-      // signal, and typo tolerance over that many trigrams matches noise — so
-      // skipping fuzzy matching there costs nothing real.
-      const trigrams = searchTrigrams(query);
-      if (trigrams.length > 0) {
-        // Require at least 60% of trigrams to match (allows for typos)
-        const minMatches = trigramMinMatches(trigrams.length);
-
-        // Build a condition that counts matching trigrams
-        const trigramConditions = trigrams.map(
-          (t) => sql`(CASE WHEN ${containsCI(events.name, t)} THEN 1 ELSE 0 END)`
-        );
-
-        searchConditions.push(sql`(${sql.join(trigramConditions, sql` + `)}) >= ${minMatches}`);
-      }
-
-      conditions.push(or(...searchConditions)!);
-    }
-
-    if (searchParams.category) {
-      // OPE-548 — same treatment: this was `like(categories, '%' + category + '%')`
-      // straight from the query string, with no length cap at all.
-      conditions.push(containsCI(events.categories, searchParams.category));
-    }
-
-    if (searchParams.featured === "true") {
-      conditions.push(eq(events.featured, true));
-    }
-
-    if (searchParams.commercialVendors === "true") {
-      conditions.push(eq(events.commercialVendorsAllowed, true));
-    }
-
-    if (searchParams.excludeFarmersMarkets === "true") {
-      // Match BOTH the categories array AND the event name. Many farmers-market
-      // events are imported without the "Farmers Market" category tag
-      // (e.g. "Bath Farmers Market" with categories=["Market"]), so the category
-      // test alone misses them. NULL categories pass the categories test (we
-      // only filter out positive matches), and events.name is NOT NULL so the
-      // name notLike applies cleanly to every row.
-      conditions.push(
-        and(
-          or(notLike(events.categories, "%Farmers Market%"), isNull(events.categories)),
-          notLike(events.name, "%Farmers Market%")
-        )!
-      );
-    }
-
-    if (searchParams.indoorOutdoor) {
-      conditions.push(eq(events.indoorOutdoor, searchParams.indoorOutdoor));
-    }
-
-    if (searchParams.scale) {
-      conditions.push(eq(events.eventScale, searchParams.scale));
-    }
-
-    // Filter by vendor's events using subquery (avoids D1 bind parameter limit)
-    if (searchParams.myEvents === "true" && vendorId) {
-      conditions.push(
-        sql`${events.id} IN (SELECT ${eventVendors.eventId} FROM ${eventVendors} WHERE ${eventVendors.vendorId} = ${vendorId})`
-      );
-    } else if (searchParams.myEvents === "true" && !vendorId) {
-      // Vendor has no events, return empty
-      return { events: [], total: 0, page, limit };
-    }
-
-    // Filter by favorites using subquery (avoids D1 bind parameter limit)
-    if (searchParams.favorites === "true" && favoriteUserId) {
-      conditions.push(
-        sql`${events.id} IN (SELECT ${userFavorites.favoritableId} FROM ${userFavorites} WHERE ${userFavorites.userId} = ${favoriteUserId} AND ${userFavorites.favoritableType} = 'EVENT')`
-      );
-    } else if (searchParams.favorites === "true" && !favoriteUserId) {
-      // User has no favorites, return empty
-      return { events: [], total: 0, page, limit };
-    }
-
-    // Get events with joins
-    // Build separate queries for calendar (no pagination) vs cards/table (paginated)
-    const stateConditions = searchParams.state
-      ? [...conditions, eventInStateWhere(searchParams.state)]
-      : conditions;
-
-    // COALESCE protects ORDER BY against NULL start_date even though the
-    // default (no includePast) WHERE clause already excludes them. When
-    // includePast=true, NULL-start TBD rows are present and would otherwise
-    // float to the top under plain ASC; 9999999999 (year 2286) sorts them last.
-    const startDateAsc = sql`COALESCE(${events.startDate}, 9999999999) ASC`;
-    const orderByMap = {
-      "date-asc": startDateAsc,
-      "date-desc": desc(events.startDate),
-      "name-asc": asc(events.name),
-      "name-desc": desc(events.name),
-      popular: desc(events.viewCount),
-    };
-    const orderBy = orderByMap[sort as keyof typeof orderByMap] || startDateAsc;
-
-    // Narrow projection — D1 caps result rows at 100 columns; the
-    // default `db.select()` over events+venues+promoters emits 104
-    // columns and fails every render. See eventJoinProjection's
-    // docblock for the audit + maintenance contract.
-    let query;
-    if (isCalendarView) {
-      query = db
-        .select(eventJoinProjection)
-        .from(events)
-        .leftJoin(venues, eq(events.venueId, venues.id))
-        .leftJoin(promoters, eq(events.promoterId, promoters.id))
-        .where(and(...stateConditions))
-        .orderBy(orderBy);
-    } else {
-      query = db
-        .select(eventJoinProjection)
-        .from(events)
-        .leftJoin(venues, eq(events.venueId, venues.id))
-        .leftJoin(promoters, eq(events.promoterId, promoters.id))
-        .where(and(...stateConditions))
-        .orderBy(orderBy)
-        .limit(limit)
-        .offset(offset);
-    }
-
-    // OPE-548 — hand the catch a handle on the finished builder. `toSQL()` is
-    // only ever called on the failure path, so this costs a reference.
-    builtQuery = query;
-    conditionCount = conditions.length;
-
-    const results = await query;
-
-    // Get all event IDs from results
-    const eventIds = results.map((r) => r.events.id);
-
-    // Single query: Fetch all vendors for all events at once
-    const allEventVendors: {
-      eventId: string;
-      vendorId: string;
-      businessName: string;
-      slug: string;
-      logoUrl: string | null;
-      vendorType: string | null;
-    }[] = [];
-
-    if (eventIds.length > 0) {
-      // D1 has a limit on SQL bind variables, so batch large arrays
-      const BATCH_SIZE = 50;
-      for (let i = 0; i < eventIds.length; i += BATCH_SIZE) {
-        const batch = eventIds.slice(i, i + BATCH_SIZE);
-        const batchResults = await db
-          .select({
-            eventId: eventVendors.eventId,
-            vendorId: vendors.id,
-            businessName: vendors.businessName,
-            slug: vendors.slug,
-            logoUrl: vendors.logoUrl,
-            vendorType: vendors.vendorType,
-          })
-          .from(eventVendors)
-          .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-          .where(and(inArray(eventVendors.eventId, batch), isPubliclyVisibleVendorLink()));
-        allEventVendors.push(...batchResults);
-      }
-    }
-
-    // Group vendors by event ID in memory
-    const vendorsByEvent = new Map<string, typeof allEventVendors>();
-    for (const ev of allEventVendors) {
-      const existing = vendorsByEvent.get(ev.eventId) || [];
-      existing.push(ev);
-      vendorsByEvent.set(ev.eventId, existing);
-    }
-
-    // For calendar view, fetch eventDays for discontinuous events. We collect
-    // both the date list (legacy `eventDayDates`, used by EventCard) and the
-    // per-day hours (`eventDayHours`), which the calendar adapter turns into
-    // TIMED occurrences for the Week/Day grid when a day has open+close times.
-    const daysByEvent = new Map<string, string[]>();
-    const hoursByEvent = new Map<
-      string,
-      Array<{ date: string; openTime: string | null; closeTime: string | null }>
-    >();
-    if (isCalendarView) {
-      const discontinuousIds = results
-        .filter((r) => r.events.discontinuousDates)
-        .map((r) => r.events.id);
-
-      if (discontinuousIds.length > 0) {
-        const BATCH_SIZE = 50;
-        for (let i = 0; i < discontinuousIds.length; i += BATCH_SIZE) {
-          const batch = discontinuousIds.slice(i, i + BATCH_SIZE);
-          const dayConditions = [inArray(eventDays.eventId, batch)];
-          if (!includeVendorDays) {
-            dayConditions.push(eq(eventDays.vendorOnly, false));
-          }
-          const dayResults = await db
-            .select({
-              eventId: eventDays.eventId,
-              date: eventDays.date,
-              openTime: eventDays.openTime,
-              closeTime: eventDays.closeTime,
-            })
-            .from(eventDays)
-            .where(and(...dayConditions));
-          for (const row of dayResults) {
-            const existing = daysByEvent.get(row.eventId) || [];
-            existing.push(row.date);
-            daysByEvent.set(row.eventId, existing);
-            const hrs = hoursByEvent.get(row.eventId) || [];
-            hrs.push({ date: row.date, openTime: row.openTime, closeTime: row.closeTime });
-            hoursByEvent.set(row.eventId, hrs);
-          }
-        }
-      }
-    }
-
-    // Combine events with their vendors. `venue`/`promoter` here are the
-    // lite projections from eventJoinProjection, cast back to the full
-    // schema type so EventCard/EventsView's existing `Venue | null` /
-    // `Promoter | null` props compile unchanged. The cast is sound:
-    // every venue/promoter field consumers actually read is present in
-    // the projection (audited 2026-06-04). See event-join-projection.ts
-    // for the maintenance contract.
-    type FullVenue = typeof venues.$inferSelect;
-    type FullPromoter = typeof promoters.$inferSelect;
-    // EventRow is derived from the actual query result so any change
-    // to eventJoinProjection (or its replacement) flows through here
-    // automatically — no hand-typed parameter to drift.
-    type EventRow = (typeof results)[number];
-    const eventsBase = results.map((r: EventRow) => ({
-      ...r.events,
-      venue: r.venue as FullVenue | null,
-      promoter: r.promoter as FullPromoter | null,
-      vendors: (vendorsByEvent.get(r.events.id) || []).map((ev) => ({
-        id: ev.vendorId,
-        businessName: ev.businessName,
-        slug: ev.slug,
-        logoUrl: ev.logoUrl,
-        vendorType: ev.vendorType,
-      })),
-      // Include specific dates for discontinuous events (calendar view).
-      // The calendar view already pre-loaded these into daysByEvent; for
-      // the cards view we fall through to attachEventDayDates below
-      // (which the discontinuous path will short-circuit on, since the
-      // map will already have entries from daysByEvent).
-      ...(r.events.discontinuousDates && daysByEvent.has(r.events.id)
-        ? { eventDayDates: daysByEvent.get(r.events.id) }
-        : {}),
-      // Per-day hours for the calendar adapter (timed occurrences in Week/Day).
-      ...(r.events.discontinuousDates && hoursByEvent.has(r.events.id)
-        ? { eventDayHours: hoursByEvent.get(r.events.id) }
-        : {}),
-    }));
-
-    // Cohort 7 follow-up (2026-06-01) — attach event_days for ALL events
-    // (not just calendar-view discontinuous ones) so EventCard's date
-    // badge resolves the next occurrence everywhere. Idempotent: if the
-    // event already has eventDayDates from the calendar-view path above,
-    // attachEventDayDates re-populates it with the same data (same SELECT
-    // shape, same sort). Small cost; one query per page render.
-    const eventsWithVendors = await attachEventDayDates(db, eventsBase);
-
-    // Count total (state filter now lives on events.state_code, so no venue join needed)
-    const countResult = await db
-      .select({ count: count() })
-      .from(events)
-      .where(and(...stateConditions));
-
-    const total = countResult[0]?.count || 0;
+    // OPE-1668 — a render with no free-text query, no per-user filter and no
+    // includePast is a filter/sort/slice of ONE cached set (see
+    // src/lib/events/events-listing.ts); everything else reads live.
+    const { events: eventsWithVendors, total } = canServeEventsFromCache(searchParams, {
+      isCalendarView,
+      includeVendorDays,
+    })
+      ? await loadEventsListingCached(db, getCloudflareRateLimitKv(), searchParams, {
+          page,
+          limit,
+          isCalendarView,
+        })
+      : await loadEventsListingLive(db, searchParams, {
+          page,
+          limit,
+          isCalendarView,
+          includeVendorDays,
+          vendorId,
+          favoriteUserId,
+          onQueryBuilt: (q, n) => {
+            builtQuery = q;
+            conditionCount = n;
+          },
+        });
 
     // REL1' §3 (2026-06-04): render-time invariant. When the result page
     // is empty AND the user applied no filters AND the total-count says
@@ -553,6 +245,7 @@ async function getEventsOnce(
       searchParams.includePast ||
       searchParams.includeTBD ||
       searchParams.when ||
+      searchParams.days ||
       searchParams.myEvents ||
       searchParams.favorites
     );
@@ -568,9 +261,8 @@ async function getEventsOnce(
 
     // NOTE: the visible card sort by next-occurrence date is applied CLIENT-side
     // in <EventsView> (sortData's startDate accessor → displayDate), because
-    // that component re-sorts the list it receives. A server-side ORDER BY can't
-    // express it anyway (the next date is computed from event_days, not a
-    // column). The DB orderBy above still drives pagination boundaries.
+    // that component re-sorts the list it receives. The server-side order
+    // still drives pagination boundaries.
 
     return {
       events: eventsWithVendors,
@@ -627,6 +319,7 @@ async function getEventsOnce(
           categoryLen: searchParams.category?.length ?? 0,
           state: searchParams.state ?? null,
           when: searchParams.when ?? null,
+          days: searchParams.days ?? null,
           view: searchParams.view ?? null,
           includePast: searchParams.includePast ?? null,
           includeTBD: searchParams.includeTBD ?? null,
@@ -654,22 +347,11 @@ async function getEventsOnce(
   }
 }
 
+// OPE-1668 — both were whole-table scans on every render; now KV-cached (300s).
+// A failure still degrades to an empty sidebar list, and is not cached.
 async function getCategories() {
   try {
-    const db = getCloudflareDb();
-    const results = await db
-      .select({ categories: events.categories })
-      .from(events)
-      .where(isPublicEventStatus());
-
-    const categories = new Set<string>();
-    results.forEach((e) => {
-      try {
-        const cats = JSON.parse(e.categories || "[]");
-        cats.forEach((c: string) => categories.add(c));
-      } catch {}
-    });
-    return Array.from(categories).sort();
+    return await getCachedEventCategories(getCloudflareDb(), getCloudflareRateLimitKv());
   } catch (error) {
     console.error("Failed to fetch event categories", { error });
     return [];
@@ -678,21 +360,7 @@ async function getCategories() {
 
 async function getStates() {
   try {
-    const db = getCloudflareDb();
-    // Union active-venue states with any event state_code so statewide-only
-    // events (venue_id NULL) still surface their state in nav/filters.
-    const [venueStates, eventStates] = await Promise.all([
-      db.selectDistinct({ state: venues.state }).from(venues).where(eq(venues.status, "ACTIVE")),
-      db
-        .selectDistinct({ state: events.stateCode })
-        .from(events)
-        .where(and(isPublicEventStatus(), isNotNull(events.stateCode))),
-    ]);
-
-    const all = new Set<string>();
-    for (const { state } of venueStates) if (state) all.add(state);
-    for (const { state } of eventStates) if (state) all.add(state);
-    return Array.from(all).sort();
+    return await getCachedEventStates(getCloudflareDb(), getCloudflareRateLimitKv());
   } catch (error) {
     console.error("Failed to fetch venue states", { error });
     return [];
@@ -734,6 +402,7 @@ function EventsFilter({
       {searchParams.cal_date && (
         <input type="hidden" name="cal_date" value={searchParams.cal_date} />
       )}
+      {searchParams.date && <input type="hidden" name="date" value={searchParams.date} />}
       {searchParams.cal_days && (
         <input type="hidden" name="cal_days" value={searchParams.cal_days} />
       )}
@@ -820,6 +489,29 @@ function EventsFilter({
             </option>
           ))}
         </select>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-foreground mb-1" htmlFor="events-days">
+          Days
+        </label>
+        <select
+          id="events-days"
+          name="days"
+          defaultValue={parseDaysFilter(searchParams.days) ?? ""}
+          aria-describedby="events-days-hint"
+          className="w-full px-3 py-2 border border-input rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+        >
+          <option value="">Any day</option>
+          {DAYS_FILTERS.map((f) => (
+            <option key={f} value={f}>
+              {DAYS_FILTER_LABELS[f]}
+            </option>
+          ))}
+        </select>
+        <p id="events-days-hint" className="text-xs text-muted-foreground mt-1">
+          &ldquo;Only&rdquo; means every open day; &ldquo;Open on&rdquo; means at least one.
+        </p>
       </div>
 
       <div>
@@ -947,6 +639,9 @@ export default async function EventsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
+
+  // OPE-1573 — a malformed ?page= 404s here, before auth() and any D1 query.
+  if (parseListingPage(params.page) === null) notFound();
 
   // Get session to check if user is a vendor
   const session = await auth();
@@ -1120,7 +815,9 @@ export default async function EventsPage({
               emptyMessage={
                 params.myEvents === "true"
                   ? "You are not participating in any events yet. Apply to events to see them here."
-                  : "No events match your filters. Try adjusting your search."
+                  : parseDaysFilter(params.days)
+                    ? `No events match “${DAYS_FILTER_SHORT_LABELS[parseDaysFilter(params.days)!]}” with your other filters. Try “Any day” or the other weekday/weekend option.`
+                    : "No events match your filters. Try adjusting your search."
               }
               currentPage={page}
               totalPages={totalPages}

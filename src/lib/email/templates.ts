@@ -78,7 +78,7 @@ export function emailVerificationTemplate(args: { verifyUrl: string; name: strin
   const greeting = args.name ? `Hi ${args.name},` : "Hi,";
   const html = baseLayout({
     heading: "Verify your email",
-    body: `<p style="margin:0 0 12px;">${escapeHtml(greeting)}</p><p style="margin:0 0 12px;">Welcome to Meet Me at the Fair. Please confirm this email address so we can keep you in the loop about events, applications, and updates. This link expires in 24 hours.</p>`,
+    body: `<p style="margin:0 0 12px;">${escapeHtml(greeting)}</p><p style="margin:0 0 12px;">Welcome to Meet Me at the Fair. Please confirm this email address so we can keep you in the loop about events and updates. This link expires in 24 hours.</p>`,
     cta: { url: args.verifyUrl, label: "Verify email" },
   });
   const text = `${greeting}\n\nWelcome to Meet Me at the Fair. Please confirm this email address by opening the link below. It expires in 24 hours.\n\n${args.verifyUrl}\n\nIf you didn't sign up, you can safely ignore this email.`;

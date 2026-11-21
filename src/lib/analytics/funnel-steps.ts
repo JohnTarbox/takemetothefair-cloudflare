@@ -37,8 +37,13 @@
  * by 65% and it was caught only by Google's own monthly email.
  */
 
-/** The three funnels OPE-363/364 care about. */
-export const FUNNELS = ["register", "claim", "submit"] as const;
+/**
+ * The funnels OPE-363/364 care about, plus OPE-1558's no-login `list` funnel
+ * (`/list-your-event`). `list` is kept apart from `submit` on purpose: the two
+ * are different entry points with different friction (a URL-first wizard vs one
+ * typed screen), and summing them would hide which one an organizer abandons.
+ */
+export const FUNNELS = ["register", "claim", "submit", "list"] as const;
 export type Funnel = (typeof FUNNELS)[number];
 
 /**
@@ -60,6 +65,12 @@ export const FUNNEL_STEPS: Record<Funnel, readonly string[]> = {
   // funnel's last step reading zero in D1 forever. The registry-vs-allowlist
   // drift test caught exactly that on its first run.
   submit: ["submit_view", "submit_form_interacted", "submit_submitted"],
+  // OPE-1558 — the one-screen no-login form. Terminal step is the ATTEMPT,
+  // beaconed before the POST (same rule as `submit_submitted`), so a server-side
+  // rejection still counts as "tried". The ticket's fourth step, `published`, is
+  // not a client event: it is the event row reaching a public status, which only
+  // a review decision causes — read it from `events` (source = list-your-event).
+  list: ["list_view", "list_form_interacted", "list_submitted"],
 } as const;
 
 /** Every step name, for the beacon allowlist. */
@@ -74,6 +85,10 @@ export const NEW_FUNNEL_STEP_NAMES = [
   "submit_view",
   "submit_form_interacted",
   "submit_submitted",
+  // OPE-1558
+  "list_view",
+  "list_form_interacted",
+  "list_submitted",
 ] as const;
 
 export type DeviceClass = "mobile" | "tablet" | "desktop" | "unknown";

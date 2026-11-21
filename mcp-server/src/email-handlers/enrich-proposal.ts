@@ -26,12 +26,29 @@
  * was staged, and flags the inbound row when content was dropped.
  *
  * NOT in scope because the extractor does not produce them (follow-up, not
- * invented here): `access_notes`, `pet_friendly`, performers. The roster is
- * linked on the keeper by OPE-847 on the multi-source path only.
+ * invented here): `access_notes`, performers. The roster is linked on the
+ * keeper by OPE-847 on the multi-source path only.
+ *
+ * OPE-1484 — `parking_notes`, `accessibility_notes` and `pet_friendly` are
+ * staged from the extract route's deterministic `visitorFacts` (verbatim page
+ * sentences, src/lib/url-import/visitor-facts.ts). Each proposal is
+ * `{ value, excerpt }` — exactly the evidence `update_event` requires to apply
+ * it (OPE-1061 / OPE-1481), with the payload's `source` as the source_url.
  */
 import { and, eq, isNotNull } from "drizzle-orm";
-import { adminActions, eventDays, events, inboundEmails } from "../schema.js";
+import { adminActions, eventDays, events, inboundEmails, promoters } from "../schema.js";
 import type { Db } from "../db.js";
+import {
+  AUTO_APPLY_FIELDS,
+  OVERWRITE_FIELDS,
+  applyEmptyFields,
+  isTrustedVenueDatePath,
+  isUnambiguousMatch,
+  venueDateMatchIsSingle,
+  recordEnrichApplied,
+  resolveAutoApplyBasis,
+  type AutoApplyBasis,
+} from "./enrich-auto-apply.js";
 
 export const ENRICH_PROPOSED_ACTION = "dedup.enrich_proposed";
 /** OPE-1152 — a match that staged zero proposals. One row per match, always. */
@@ -64,6 +81,16 @@ export interface ExistingEnrichFields {
   categories?: string | null;
   /** True when any event_days row of the event already carries an open time. */
   hasDayHours?: boolean;
+  /** OPE-1484 — the organizer-published visitor fields. */
+  parkingNotes?: string | null;
+  accessibilityNotes?: string | null;
+  petFriendly?: string | null;
+}
+
+/** OPE-1484 — one verbatim page sentence, and (pets) the rule it states. */
+export interface IncomingVisitorFact {
+  value: string;
+  excerpt: string;
 }
 
 /** Values carried by the inbound submission, in the EXTRACTOR's units
@@ -89,6 +116,9 @@ export interface IncomingEnrichFields {
   endTime?: string | null;
   hoursNotes?: string | null;
   dayHours?: unknown[] | null;
+  parkingNotes?: IncomingVisitorFact | null;
+  accessibilityNotes?: IncomingVisitorFact | null;
+  petFriendly?: IncomingVisitorFact | null;
 }
 
 const toCents = (dollars: number | null | undefined): number | null =>
@@ -223,6 +253,43 @@ function fieldChecks(existing: ExistingEnrichFields, incoming: IncomingEnrichFie
     sameAsExisting: false,
   });
 
+  // OPE-1484 — visitor facts. Fill-empty like everything else; `pet_friendly`
+  // is empty when UNSET (NOT_PUBLISHED is an answer: we looked, they're silent).
+  const fact = (
+    col: string,
+    curEmpty: boolean,
+    cur: string | null | undefined,
+    next: IncomingVisitorFact | null | undefined
+  ): FieldCheck => {
+    const inc = next && !isEmpty(next.value) && !isEmpty(next.excerpt) ? next : null;
+    return {
+      col,
+      existingEmpty: curEmpty,
+      incoming: inc ? { value: inc.value.trim(), excerpt: inc.excerpt.trim() } : null,
+      sameAsExisting: inc != null && !curEmpty && cur === inc.value.trim(),
+    };
+  };
+  out.push(
+    fact(
+      "parking_notes",
+      isEmpty(existing.parkingNotes),
+      existing.parkingNotes,
+      incoming.parkingNotes
+    ),
+    fact(
+      "accessibility_notes",
+      isEmpty(existing.accessibilityNotes),
+      existing.accessibilityNotes,
+      incoming.accessibilityNotes
+    ),
+    fact(
+      "pet_friendly",
+      existing.petFriendly == null || existing.petFriendly === "UNSET",
+      existing.petFriendly,
+      incoming.petFriendly
+    )
+  );
+
   return out;
 }
 
@@ -235,6 +302,9 @@ export interface EnrichDisposition {
    *  value. This is the content a fill-empty rule drops on the floor — what an
    *  operator should compare by hand. */
   unstagedFields: string[];
+  /** The incoming value for each `unstagedFields` entry. Read only by the
+   *  OPE-1506 amendment: a validated contact's value replaces a filled field. */
+  differing: Record<string, unknown>;
 }
 
 export function computeEnrichDisposition(
@@ -244,13 +314,17 @@ export function computeEnrichDisposition(
   const proposals: Record<string, unknown> = {};
   const extractedFields: string[] = [];
   const unstagedFields: string[] = [];
+  const differing: Record<string, unknown> = {};
   for (const f of fieldChecks(existing, incoming)) {
     if (f.incoming == null) continue;
     extractedFields.push(f.col);
     if (f.existingEmpty) proposals[f.col] = f.incoming;
-    else if (!f.sameAsExisting) unstagedFields.push(f.col);
+    else if (!f.sameAsExisting) {
+      unstagedFields.push(f.col);
+      differing[f.col] = f.incoming;
+    }
   }
-  return { proposals, extractedFields, unstagedFields };
+  return { proposals, extractedFields, unstagedFields, differing };
 }
 
 /** Map an extractor event (+ submission URL) onto the incoming shape. */
@@ -281,6 +355,33 @@ export function incomingFromExtracted(
     endTime: s("endTime"),
     hoursNotes: s("hoursNotes"),
     dayHours: Array.isArray(event.dayHours) ? (event.dayHours as unknown[]) : null,
+    ...visitorFactsFromExtracted(event.visitorFacts),
+  };
+}
+
+/** OPE-1484 — the extract route's `visitorFacts` (verbatim sentences) onto the
+ *  incoming shape. Anything malformed reads as absent; nothing is inferred. */
+function visitorFactsFromExtracted(raw: unknown): {
+  parkingNotes: IncomingVisitorFact | null;
+  accessibilityNotes: IncomingVisitorFact | null;
+  petFriendly: IncomingVisitorFact | null;
+} {
+  const f = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const excerptOf = (v: unknown): string | null => {
+    const e = v && typeof v === "object" ? (v as { excerpt?: unknown }).excerpt : null;
+    return typeof e === "string" && e.trim().length > 0 ? e.trim() : null;
+  };
+  const parking = excerptOf(f.parking);
+  const access = excerptOf(f.accessibility);
+  const pet = excerptOf(f.pets);
+  const petValue =
+    f.pets && typeof f.pets === "object" ? (f.pets as { value?: unknown }).value : null;
+  return {
+    // A note's value IS the organizer's sentence, so value and excerpt match.
+    parkingNotes: parking ? { value: parking, excerpt: parking } : null,
+    accessibilityNotes: access ? { value: access, excerpt: access } : null,
+    petFriendly:
+      pet && (petValue === "YES" || petValue === "NO") ? { value: petValue, excerpt: pet } : null,
   };
 }
 
@@ -292,7 +393,8 @@ export type EnrichMatchPath =
   | "multi-source" // body + URLs, a candidate matched
   | "multi-url" // N URLs, one matched
   | "occurrence-exists" // submit route: the edition already exists under its series
-  | "possible-duplicate"; // submit route created a PENDING row tagged possible_duplicate_of
+  | "possible-duplicate" // submit route created a PENDING row tagged possible_duplicate_of
+  | "text-match"; // OPE-1505 — no URL, extraction failed, the email's TEXT named a listed event
 
 export interface StageEnrichInput {
   existingEventId: string;
@@ -305,8 +407,13 @@ export interface StageEnrichInput {
 }
 
 export type StageEnrichOutcome =
-  | { outcome: "proposed"; disposition: EnrichDisposition }
-  | { outcome: "nothing-staged"; disposition: EnrichDisposition; flagged: boolean }
+  | { outcome: "proposed"; disposition: EnrichDisposition; applied?: string[] }
+  | {
+      outcome: "nothing-staged";
+      disposition: EnrichDisposition;
+      flagged: boolean;
+      applied?: string[];
+    }
   | { outcome: "event-missing" };
 
 /**
@@ -340,8 +447,15 @@ export async function stageEnrichOnMatch(
       applicationInstructions: events.applicationInstructions,
       walkInsAllowed: events.walkInsAllowed,
       categories: events.categories,
+      parkingNotes: events.parkingNotes,
+      accessibilityNotes: events.accessibilityNotes,
+      petFriendly: events.petFriendly,
+      promoterId: events.promoterId,
+      promoterWebsite: promoters.website,
+      venueId: events.venueId,
     })
     .from(events)
+    .leftJoin(promoters, eq(promoters.id, events.promoterId))
     .where(eq(events.id, input.existingEventId))
     .limit(1);
   if (!existing) return { outcome: "event-missing" };
@@ -356,12 +470,115 @@ export async function stageEnrichOnMatch(
     { ...existing, hasDayHours: !!hoursRow },
     incomingFromExtracted(input.url, input.event)
   );
+  // OPE-1506 — trusted senders and verified organizers: the allowed, empty
+  // fields are WRITTEN (with citations) instead of staged; the rest stays a
+  // proposal exactly as before. See enrich-auto-apply.ts for the predicate.
+  let autoApply: {
+    basis: AutoApplyBasis | null;
+    reason: string;
+    eligible: string[];
+    applied: string[];
+    overwritten?: string[];
+    errors?: Record<string, string>;
+  } | null = null;
+  const eligible = Object.keys(disposition.proposals).filter((f) => AUTO_APPLY_FIELDS.has(f));
+  // OPE-1529 — one timestamp for this match's audit rows. The applied row is
+  // written BEFORE the staged row and `created_at` has whole-second resolution,
+  // so separate clocks could put the staged row a second later, and the
+  // enrich-auto-apply probe (evidence >= demand) would read a working writer as
+  // silent.
+  const auditAt = new Date();
+  // The amendment's candidates — decided below, once the basis is known.
+  const overwriteCandidates = Object.keys(disposition.differing).filter((f) =>
+    OVERWRITE_FIELDS.has(f)
+  );
+  if (input.inboundEmailId && eligible.length + overwriteCandidates.length > 0) {
+    const unambiguous = isUnambiguousMatch(input.path, input.matchType);
+    if (!unambiguous && !isTrustedVenueDatePath(input.path, input.matchType)) {
+      autoApply = {
+        basis: null,
+        reason: `match not unambiguous (${input.path}/${input.matchType})`,
+        eligible,
+        applied: [],
+      };
+    } else {
+      const b = await resolveAutoApplyBasis(db, {
+        inboundEmailId: input.inboundEmailId,
+        promoterId: existing.promoterId ?? null,
+        promoterWebsite: existing.promoterWebsite ?? null,
+      });
+      // John, 2026-11-10 — a venue+date match qualifies for a TRUSTED sender
+      // only, and only when it is provably the one overlapping event there.
+      const venueDateRefusal =
+        unambiguous || !b.basis
+          ? null
+          : b.basis !== "trusted"
+            ? "a venue+date match qualifies for trusted senders only"
+            : await venueDateMatchIsSingle(db, {
+                eventId: input.existingEventId,
+                venueId: existing.venueId ?? null,
+                incoming: input.event,
+              }).then((v) => (v.ok ? null : v.reason));
+      if (!b.basis) {
+        autoApply = { basis: null, reason: b.reason, eligible, applied: [] };
+      } else if (venueDateRefusal) {
+        autoApply = { basis: null, reason: venueDateRefusal, eligible, applied: [] };
+      } else {
+        // Amendment (John 2026-10-20 12:42 ET): ONLY a validated contact of this
+        // promoter replaces filled fields; every other basis stays empty-only.
+        const overwrites =
+          b.basis === "verified-contact"
+            ? Object.fromEntries(overwriteCandidates.map((f) => [f, disposition.differing[f]]))
+            : {};
+        const r = await applyEmptyFields(db, {
+          eventId: input.existingEventId,
+          proposals: disposition.proposals,
+          inboundEmailId: input.inboundEmailId,
+          receivedAt: b.receivedAt ?? null,
+          overwrites,
+          eventSourceUrl: existing.sourceUrl ?? null,
+          promoterWebsite: existing.promoterWebsite ?? null,
+        });
+        if (r.applied.length > 0) {
+          await recordEnrichApplied(db, {
+            eventId: input.existingEventId,
+            applied: r.applied,
+            basis: b.basis,
+            inboundEmailId: input.inboundEmailId,
+            path: input.path,
+            matchType: input.matchType,
+            createdAt: auditAt,
+          });
+        }
+        disposition.proposals = r.notApplied;
+        // A replaced field is no longer content a human must compare by hand.
+        const overwritten = r.applied.filter((a) => a.overwrote).map((a) => a.field);
+        if (overwritten.length > 0) {
+          disposition.unstagedFields = disposition.unstagedFields.filter(
+            (f) => !overwritten.includes(f)
+          );
+          for (const f of overwritten) delete disposition.differing[f];
+        }
+        autoApply = {
+          basis: b.basis,
+          reason: b.reason,
+          eligible: [...eligible, ...Object.keys(overwrites)],
+          applied: r.applied.map((a) => a.field),
+          ...(overwritten.length ? { overwritten } : {}),
+          ...(Object.keys(r.errors).length ? { errors: r.errors } : {}),
+        };
+      }
+    }
+  }
+
   const proposed = Object.keys(disposition.proposals).length > 0;
   // Flag when a human has something to do: review a proposal, or compare the
   // content that was carried but could not be staged. A match whose email
   // carried nothing new (or only what the event already says) is recorded but
   // not flagged — flagging it would be queue noise.
-  const flag = proposed || disposition.unstagedFields.length > 0;
+  // OPE-1506 — an auto-applied write is also something a human should see.
+  const flag =
+    proposed || disposition.unstagedFields.length > 0 || (autoApply?.applied.length ?? 0) > 0;
 
   await db.insert(adminActions).values({
     action: proposed ? ENRICH_PROPOSED_ACTION : ENRICH_NOTHING_STAGED_ACTION,
@@ -377,8 +594,11 @@ export async function stageEnrichOnMatch(
       source: input.url || null,
       inboundEmailId: input.inboundEmailId,
       fromAddress: input.fromAddress,
+      // OPE-1506 — the auto-apply verdict, on every match that had an eligible
+      // field: the probe reads `basis` + `eligible` here as its DEMAND.
+      ...(autoApply ? { autoApply } : {}),
     }),
-    createdAt: new Date(),
+    createdAt: auditAt,
   });
 
   if (flag && input.inboundEmailId) {
@@ -389,7 +609,8 @@ export async function stageEnrichOnMatch(
       .where(eq(inboundEmails.id, input.inboundEmailId));
   }
 
+  const applied = autoApply?.applied ?? [];
   return proposed
-    ? { outcome: "proposed", disposition }
-    : { outcome: "nothing-staged", disposition, flagged: flag };
+    ? { outcome: "proposed", disposition, applied }
+    : { outcome: "nothing-staged", disposition, flagged: flag, applied };
 }

@@ -94,6 +94,7 @@ Body:
     {
       "eventId": "b8a29714-8dad-4c8b-9d40-d055be700a53",
       "eventVersion": 7,
+      "sentAt": "2026-08-10T14:03:27.512Z",
       "name": "Gray Wild Blueberry Festival",
       "slug": "gray-wild-blueberry-festival",
       "startDate": "2026-08-15T00:00:00.000Z",
@@ -112,6 +113,11 @@ Body:
 - **\`eventId\`** — your join key. Stable, never changes, always present.
 - **\`eventVersion\`** — monotonic integer per event. Higher = newer. This is how
   you decide whether to apply an update (see §3).
+- **\`sentAt\`** — ISO 8601 UTC time this delivery was sent. It is inside the
+  signed body, so it can't be rewritten without breaking the signature. Each
+  retry carries a fresh \`sentAt\`. Use it to refuse replays: reject a delivery
+  whose \`sentAt\` is more than a few minutes old (we suggest 10), alongside the
+  version gate in §3.
 - **\`name\`** — event name.
 - **\`slug\`** — our URL slug (handy for linking back); may be null.
 - **\`startDate\` / \`endDate\`** — ISO 8601 UTC, or null.
@@ -261,6 +267,7 @@ reproduce those three cases yourself.
 - [ ] You verify **every** request's HMAC over the **raw** body, constant-time, and reject mismatches with \`401\`.
 - [ ] You gate on \`eventId\`/\`eventVersion\` from the **signed body**, not the headers.
 - [ ] Your handler is **idempotent** and **version-gated**.
+- [ ] You refuse deliveries whose signed \`sentAt\` is older than your replay window.
 - [ ] Your endpoint is **HTTPS** and publicly reachable.
 - [ ] You return \`2xx\` only after durably storing the update.
 
@@ -273,6 +280,7 @@ reproduce those three cases yourself.
 | Signature algorithm | \`HMAC-SHA256(raw_body, signing_secret)\`, hex, constant-time |
 | Idempotency key | \`eventId\` |
 | Freshness rule | highest \`eventVersion\` wins |
+| Replay bound | signed \`sentAt\` (ISO 8601 UTC) — reject if older than ~10 min |
 | Mirrored fields | \`name\`, \`startDate\`, \`endDate\`, \`venue.{name,address,city,state,zip}\` |
 | Reconcile endpoint | \`POST /api/internal/syndication/batch-read\` (Bearer = signing secret) |
 | Reconcile batch limit | 200 event IDs per request |
@@ -376,6 +384,10 @@ const PROMOTER_FIX_DETAILS = `Found an error on one of your event pages? Two opt
 Because we aggregate events from public sources, occasional drift happens — a date change on your website that an old flyer contradicts, for example. We'd always rather hear it from you. That's also why claimed, promoter-maintained events carry more weight in our data-quality checks.`;
 
 const PROMOTER_SYNDICATION = `Yes — and that's good for you. Meet Me at the Fair offers a syndication system that lets approved partner sites mirror event data with live, signed updates, so listings stay correct wherever they appear. If you (or your web developer) want your own site to stay in sync with your Meet Me at the Fair listings, see the [Event Data Syndication developer guide](/help/event-data-syndication-developer-guide).`;
+
+// OPE-1621 — the change ping. Code samples are 4-space indented (see the
+// header note); the PHP has no `${`, so it is safe inside this template literal.
+
 
 // --- For Venues (placeholder — no seed content yet) ------------------------
 

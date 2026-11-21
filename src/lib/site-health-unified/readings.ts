@@ -47,6 +47,11 @@ export function technicalReading(counts: TechnicalCounts): InstrumentReading {
     detail = `${actionItems} technical issue${actionItems === 1 ? "" : "s"}`;
   }
 
+  // OPE-1604: a CRITICAL 645 made of 9 errors and 636 warnings has to say so.
+  if (errorCount > 0 && warningCount > 0) {
+    detail += ` (${errorCount} error${errorCount === 1 ? "" : "s"}, ${warningCount} warning${warningCount === 1 ? "" : "s"})`;
+  }
+
   return {
     key: "technical",
     label: "Technical / SEO",

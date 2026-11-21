@@ -36,6 +36,7 @@ import {
   computeNextOccurrence,
   deriveEditionKey,
   parseRecurrenceRule,
+  stripNameDateSuffix,
   unsafeSlug,
   type Slug,
 } from "@takemetothefair/utils";
@@ -192,7 +193,11 @@ export async function rolloverEventIfRecurring(
   const nextYear = next.start.getUTCFullYear();
   const yearStart = new Date(Date.UTC(nextYear, 0, 1));
   const yearEnd = new Date(Date.UTC(nextYear + 1, 0, 1));
-  const normalizedSourceName = normalizeName(source.name);
+  // OPE-1543 — roll from the name with any display-line suffix ("— Aug 27–30 in
+  // Cummington, MA") removed. A year swap on the raw name would publish 2026's
+  // dates under the 2027 edition's name.
+  const sourceName = stripNameDateSuffix(source.name);
+  const normalizedSourceName = normalizeName(sourceName);
 
   const candidates = await db
     .select({ id: events.id, name: events.name })
@@ -215,13 +220,13 @@ export async function rolloverEventIfRecurring(
   // computed year to the slug so the slug stays year-meaningful (not "-2").
   const sourceYear = source.startDate.getUTCFullYear();
   const yearTokenRe = new RegExp(`\\b${sourceYear}\\b`);
-  const nameHasYear = yearTokenRe.test(source.name);
+  const nameHasYear = yearTokenRe.test(sourceName);
   const newName = nameHasYear
-    ? source.name.replace(new RegExp(`\\b${sourceYear}\\b`, "g"), String(nextYear))
-    : source.name;
+    ? sourceName.replace(new RegExp(`\\b${sourceYear}\\b`, "g"), String(nextYear))
+    : sourceName;
   const baseSlug: Slug = nameHasYear
     ? createSlug(newName)
-    : appendSlugSegment(createSlug(source.name), nextYear);
+    : appendSlugSegment(createSlug(sourceName), nextYear);
 
   let finalSlug: Slug = baseSlug;
   let suffix = 0;
@@ -313,9 +318,16 @@ export async function rolloverEventIfRecurring(
     sourceUrl: null,
     sourceId: newEventId,
     syncEnabled: false,
-    vendorFeeMinCents: source.vendorFeeMinCents,
-    vendorFeeMaxCents: source.vendorFeeMaxCents,
-    vendorFeeNotes: source.vendorFeeNotes,
+    // OPE-1680 (option 1, the default taken when the policy ask went unanswered)
+    // — the vendor fee is dropped like the deadline below. Since OPE-1673 a fee
+    // is stored only with an active citation, and a rolled edition has no
+    // source of its own: copying last year's number would publish an uncited,
+    // possibly stale fee that reads as confirmed. The notes go with it because
+    // they usually restate the price ("$75 per 10x10 booth"). The fee returns
+    // when discovery, enrichment or the organizer supplies it with a citation.
+    vendorFeeMinCents: null,
+    vendorFeeMaxCents: null,
+    vendorFeeNotes: null,
     indoorOutdoor: source.indoorOutdoor,
     estimatedAttendance: source.estimatedAttendance,
     eventScale: source.eventScale,
@@ -325,6 +337,12 @@ export async function rolloverEventIfRecurring(
     applicationUrl: source.applicationUrl,
     applicationInstructions: source.applicationInstructions,
     walkInsAllowed: source.walkInsAllowed,
+    // OPE-1564 — a guild's members-only rule is a standing org rule, like the
+    // portal/instructions above (which, for the Craftworkers row, carry the
+    // same sentence); a rolled edition that dropped it would present a closed
+    // show as open vendor space.
+    vendorEligibility: source.vendorEligibility,
+    vendorEligibilityOrg: source.vendorEligibilityOrg,
     primaryAudience: source.primaryAudience,
     publicAccess: source.publicAccess,
     accessNotes: source.accessNotes,

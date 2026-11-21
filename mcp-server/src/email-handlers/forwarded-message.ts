@@ -49,6 +49,15 @@ import PostalMime from "postal-mime";
 import { verifyDkim, type DkimResult, type TxtResolver } from "./dkim-verify.js";
 
 /**
+ * OPE-1551 — the Content-Disposition token postal-mime reports on an attachment.
+ * postal-mime 4 types it as any token the message carries (`AttachmentDisposition`),
+ * not just "attachment" | "inline"; the parsed values are unchanged. Kept local
+ * (not imported from postal-mime) so the helpers stay unit-testable without it.
+ * Code compares against "inline" only, so an unusual token reads as "not inline".
+ */
+export type AttachmentDispositionToken = "attachment" | "inline" | (string & {});
+
+/**
  * OPE-976 — how deep an INLINE `message/rfc822` may nest before postal-mime
  * stops opening it and emits the part as an attachment instead.
  *
@@ -109,8 +118,7 @@ export interface NestedMessage {
     filename: string | null;
     mimeType: string;
     content: ArrayBuffer | Uint8Array | string;
-    // postal-mime 4 (OPE-1401): any string — only "inline" is ever compared.
-    disposition?: "attachment" | "inline" | (string & {}) | null;
+    disposition?: AttachmentDispositionToken | null;
     contentId?: string;
     related?: boolean;
   }>;
@@ -136,8 +144,7 @@ export interface ForwardCandidateAttachment {
   filename: string | null;
   mimeType: string;
   content: ArrayBuffer | Uint8Array | string;
-  // postal-mime 4 (OPE-1401): any string — only "inline" is ever compared.
-  disposition?: "attachment" | "inline" | (string & {}) | null;
+  disposition?: AttachmentDispositionToken | null;
   contentId?: string;
   related?: boolean;
   /** postal-mime sets this on an rfc822 part it refused to open at the depth cap. */

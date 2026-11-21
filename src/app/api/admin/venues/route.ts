@@ -10,11 +10,22 @@ import { getVenuesWithEventCounts, findVenueByGooglePlaceId } from "@/lib/querie
 import { venueCreateSchema, validateRequestBody } from "@/lib/validations";
 import { withoutGooglePlacesPhoto } from "@takemetothefair/utils";
 import { logError } from "@/lib/logger";
+import { venueList } from "@/lib/admin-list/lists";
+import { isPagedRequest, parseListParams } from "@/lib/admin-list/params";
+import { respondWithList } from "@/lib/admin-list/respond";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   try {
+    // OPE-1595 — the list page asks for one page; bare calls still get every row.
+    const searchParams = request.nextUrl.searchParams;
+    if (isPagedRequest(searchParams)) {
+      return await respondWithList(
+        venueList(db, searchParams, parseListParams(searchParams)),
+        searchParams
+      );
+    }
     const venuesWithCounts = await getVenuesWithEventCounts(db);
     return NextResponse.json(venuesWithCounts);
   } catch (error) {

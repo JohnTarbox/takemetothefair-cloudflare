@@ -90,6 +90,14 @@ export interface GuardedFetchOptions {
   method?: "GET" | "HEAD";
   /** The caller's own deadline. Its abort is re-thrown as-is, not wrapped. */
   signal?: AbortSignal;
+  /**
+   * OPE-1625 — an extra check run on EVERY hop (the first URL and each
+   * redirect target) after the protocol + host check, before the request goes
+   * out. Throw (ideally a `GuardedFetchError("blocked_host", …)`) to refuse the
+   * hop. The public calendar checker uses it to refuse non-default ports and
+   * hosts whose DNS answers are private.
+   */
+  checkHop?: (url: URL) => void | Promise<void>;
 }
 
 /** A fully-validated response whose body reads are size-capped. */
@@ -211,6 +219,7 @@ export async function guardedFetch(
   try {
     for (;;) {
       assertFetchableUrl(current);
+      if (opts.checkHop) await opts.checkHop(current);
       try {
         // Hop 0 goes out exactly as the caller spelled it (fetch normalizes it
         // the same way `new URL` just did for the check); later hops are the

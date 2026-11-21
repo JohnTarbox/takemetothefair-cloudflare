@@ -24,6 +24,58 @@ export function newsletterCitationConfidence(originalSenderAuth: string | null):
   return originalSenderAuth === "verified" ? 0.6 : 0.3;
 }
 
+/** The `email://` source key a newsletter's citations carry, unique per email. */
+export function newsletterSourceUrl(fromAddress: string | null, inboundEmailId: string): string {
+  return `email://${fromAddress}/newsletter/${inboundEmailId}`;
+}
+
+/**
+ * Writes date citations carrying a newsletter excerpt, skipping a field this
+ * same email already cited (idempotent on replay). Shared by the dispose step
+ * (corroborating an existing event, OPE-1285) and the candidate step (citing
+ * the row it just created, OPE-1286), so both carry one source key and one
+ * confidence cap.
+ */
+export function newsletterCitationWriter(
+  db: Db,
+  opts: { sourceUrl: string; fromAddress: string | null; confidence: number; receivedAt: Date }
+): DisposeDeps["writeCitations"] {
+  return async ({ eventId, fields, excerpt }) => {
+    let n = 0;
+    for (const f of fields) {
+      const [dupe] = await db
+        .select({ id: eventDataCitations.id })
+        .from(eventDataCitations)
+        .where(
+          and(
+            eq(eventDataCitations.eventId, eventId),
+            eq(eventDataCitations.fieldName, f.fieldName),
+            eq(eventDataCitations.sourceUrl, opts.sourceUrl)
+          )
+        )
+        .limit(1);
+      if (dupe) continue;
+      // One row per insert: well inside D1's 100-bound-parameter cap.
+      await db.insert(eventDataCitations).values({
+        eventId,
+        fieldName: f.fieldName,
+        value: f.value,
+        year: null,
+        sourceUrl: opts.sourceUrl,
+        sourceName: `Promoter newsletter (forwarded by ${opts.fromAddress})`,
+        sourceType: "user_submitted",
+        confidence: opts.confidence,
+        state: "active",
+        createdBy: null,
+        sourceExcerpt: excerpt.slice(0, 600),
+        sourceFetchedAt: opts.receivedAt,
+      });
+      n++;
+    }
+    return n;
+  };
+}
+
 export interface NewsletterItemsRecord {
   version: string;
   proposed: number;
@@ -79,7 +131,7 @@ export async function processNewsletter(
   const receivedAt = row.receivedAt ?? new Date();
   // Unique per email: idempotent on replay, and never collides with the submit
   // pipeline's `email://<sender>` body citations for the same event.
-  const sourceUrl = `email://${row.fromAddress}/newsletter/${inboundEmailId}`;
+  const sourceUrl = newsletterSourceUrl(row.fromAddress, inboundEmailId);
   const confidence = newsletterCitationConfidence(row.originalSenderAuth ?? null);
 
   const deps: DisposeDeps = {
@@ -93,40 +145,12 @@ export async function processNewsletter(
       const start = ymd(e?.start);
       return start ? { start, end: ymd(e?.end) } : null;
     },
-    writeCitations: async ({ eventId, fields, excerpt }) => {
-      let n = 0;
-      for (const f of fields) {
-        const [dupe] = await db
-          .select({ id: eventDataCitations.id })
-          .from(eventDataCitations)
-          .where(
-            and(
-              eq(eventDataCitations.eventId, eventId),
-              eq(eventDataCitations.fieldName, f.fieldName),
-              eq(eventDataCitations.sourceUrl, sourceUrl)
-            )
-          )
-          .limit(1);
-        if (dupe) continue;
-        // One row per insert: well inside D1's 100-bound-parameter cap.
-        await db.insert(eventDataCitations).values({
-          eventId,
-          fieldName: f.fieldName,
-          value: f.value,
-          year: null,
-          sourceUrl,
-          sourceName: `Promoter newsletter (forwarded by ${row.fromAddress})`,
-          sourceType: "user_submitted",
-          confidence,
-          state: "active",
-          createdBy: null,
-          sourceExcerpt: excerpt.slice(0, 600),
-          sourceFetchedAt: receivedAt,
-        });
-        n++;
-      }
-      return n;
-    },
+    writeCitations: newsletterCitationWriter(db, {
+      sourceUrl,
+      fromAddress: row.fromAddress,
+      confidence,
+      receivedAt,
+    }),
     writeDiscrepancy: async ({ eventId, stored, newsletter }) => {
       await captureDiscrepancy(db, {
         eventId,

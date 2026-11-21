@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 /**
  * OPE-1112 — a vendor can set, replace and remove her OWN logo, through the
@@ -40,6 +40,16 @@ async function loginAsVendor(page: Page) {
   ]);
 }
 
+// OPE-1669 — no per-assertion timeout overrides here, deliberately. OPE-1518
+// raised these waits to 20s (and the budget to 120s) because E2E ran on `next
+// dev`, where this test is the first to hit the vendor profile page, `GET
+// /api/vendor/profile` and the logo routes, and each compiled on that first
+// request. CI now serves a production build (playwright.config.ts), so nothing
+// compiles: locally the whole test takes ~2s. A 20s wait on "the form loaded"
+// only bought back the inability to tell a slow compile from the OPE-1112
+// defect (the form never rendering). Playwright's 5s expect default is ~50×
+// what a healthy page needs, and a stuck `loading` branch fails at it — that
+// failure was demonstrated on OPE-1669 by hanging `/api/vendor/profile`.
 test.describe.configure({ mode: "serial" });
 
 test.describe("OPE-1112 — vendor self-service logo", () => {

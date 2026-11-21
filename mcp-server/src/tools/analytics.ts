@@ -1180,7 +1180,7 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
 
   server.tool(
     "get_first_party_events",
-    "Query first-party analytics events stored in D1. Includes server-side admin actions (event_status_change, vendor_status_change) and beacon-captured client events (outbound_application_click, outbound_ticket_click, filter_applied, internal_search_performed). Filter by category or event name; default window is the last 30 days. Admin only.",
+    "Query first-party analytics events stored in D1. Includes server-side admin actions (event_status_change, vendor_status_change) and beacon-captured client events (outbound_application_click, outbound_ticket_click, filter_applied, internal_search_performed). Filter by category or event name; default window is the last 30 days. Synthetic rows (properties.synthetic=true: the funnel canary, production-verify, self-declared crawlers) are EXCLUDED unless include_synthetic=true (OPE-1498; marker exists from 2026-10-19). Admin only.",
     {
       category: z
         .string()
@@ -1204,11 +1204,18 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
         .max(500)
         .optional()
         .describe("Max recent rows returned. Default 100, max 500."),
+      include_synthetic: z
+        .boolean()
+        .optional()
+        .describe(
+          "Include synthetic rows (funnel canary, production-verify, crawlers). Default false."
+        ),
     },
     async (params) => {
       try {
         const qs = new URLSearchParams();
         if (params.category) qs.set("category", params.category);
+        if (params.include_synthetic) qs.set("include_synthetic", "true");
         if (params.name) qs.set("name", params.name);
         if (params.days) qs.set("days", String(params.days));
         if (params.limit) qs.set("limit", String(params.limit));

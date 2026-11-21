@@ -40,6 +40,15 @@ beforeEach(async () => {
   } as typeof events.$inferInsert);
 });
 
+// OPE-1673 — vendor fees are written only with a citation carrying the source's wording.
+const CITE = {
+  citation: {
+    source_url: "https://example.org/vendors",
+    source_type: "official_website",
+    notes: "Booth fee: $20",
+  },
+};
+
 async function call(name: string, args: Record<string, unknown>) {
   const res = (await server.invoke(name, args)) as { content: Array<{ text: string }> };
   return JSON.parse(res.content[0].text) as Record<string, unknown>;
@@ -59,7 +68,7 @@ function find(obj: unknown, key: string): unknown {
 
 describe("OPE-1124 — money is reported in the unit the caller wrote", () => {
   it("ACCEPTANCE: vendor_fee_max: 20 → the response and the reader both say 20", async () => {
-    const res = await call("update_event", { event_id: "ev-1", vendor_fee_max: 20 });
+    const res = await call("update_event", { event_id: "ev-1", ...CITE, vendor_fee_max: 20 });
     const read = await call("get_event_details_admin", { event_id: "ev-1" });
 
     expect(find(res, "newValues")).toMatchObject({ vendor_fee_max: 20 });
@@ -76,7 +85,7 @@ describe("OPE-1124 — money is reported in the unit the caller wrote", () => {
       ticket_price_min: 5,
       ticket_price_max: 19.99,
     };
-    const res = await call("update_event", { event_id: "ev-1", ...written });
+    const res = await call("update_event", { event_id: "ev-1", ...CITE, ...written });
     const read = await call("get_event_details_admin", { event_id: "ev-1" });
     const nv = find(res, "newValues") as Record<string, unknown>;
 
@@ -87,8 +96,8 @@ describe("OPE-1124 — money is reported in the unit the caller wrote", () => {
   });
 
   it("previousValues is in dollars too — and a no-op re-write reports no change (OPE-645 kept)", async () => {
-    await call("update_event", { event_id: "ev-1", vendor_fee_max: 20 });
-    const res = await call("update_event", { event_id: "ev-1", vendor_fee_max: 20 });
+    await call("update_event", { event_id: "ev-1", ...CITE, vendor_fee_max: 20 });
+    const res = await call("update_event", { event_id: "ev-1", ...CITE, vendor_fee_max: 20 });
 
     expect(find(res, "previousValues")).toMatchObject({ vendor_fee_max: 20 });
     expect(find(res, "newValues")).toMatchObject({ vendor_fee_max: 20 });

@@ -9,7 +9,8 @@ import * as schema from "@/lib/db/schema";
 import { sumSitemapContents } from "@/lib/search-console";
 import { resolveTabAlias } from "../tab-aliases";
 import { loadSiteCtr } from "../search-visibility";
-import { loadErrorGroups, loadIndexNowHealth } from "@/lib/diagnostics";
+import { loadIndexNowHealth } from "@/lib/diagnostics";
+import { loadErrorLogGroups } from "@/lib/admin/error-log-groups";
 
 let raw: InstanceType<typeof Database>;
 let db: never;
@@ -124,14 +125,14 @@ describe("#6 diagnostics", () => {
     expect(h.successMeasured).toMatchObject({ state: "ok", value: 0.5 });
   });
 
-  it("'Recent errors grouped' holds error-level rows only", async () => {
+  it("the grouped error view leaves info rows out", async () => {
     const ins = raw.prepare(
       "INSERT INTO error_logs (id,timestamp,level,message,source) VALUES (?,?,?,?,?)"
     );
     ins.run("1", sec(), "info", "AI extraction ok", "extract");
     ins.run("2", sec(), "info", "classifier result", "classify");
     ins.run("3", sec(), "error", "D1 timeout", "db");
-    const groups = await loadErrorGroups(db, since);
-    expect(groups.map((g) => g.message)).toEqual(["D1 timeout"]);
+    const { groups } = await loadErrorLogGroups(db, { since });
+    expect(groups.map((g) => g.example)).toEqual(["D1 timeout"]);
   });
 });

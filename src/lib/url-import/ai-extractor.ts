@@ -50,6 +50,32 @@ const SYSTEM_PROMPT = `You are an expert at extracting event information from we
 const MULTI_EVENT_SYSTEM_PROMPT = `You are an expert at extracting multiple event listings from webpage text. You find ALL events mentioned and return them as a JSON array. You always respond with valid JSON only, no explanations.`;
 
 /**
+ * OPE-1316 Ask 2 (John, 2026-10-20) — the AI call's wall-clock limit, per kind
+ * of caller. Measured 2026-10-06: the slow pages were slow because the model
+ * WROTE too much (every sub-activity as its own all-null event, to the 4,096-
+ * token cap), so the prompt now asks for top-level events and omits unknown
+ * fields; THEN the limit was raised for callers nobody is waiting on.
+ *
+ *  - INTERACTIVE (the admin import page): 20 s — a person is watching.
+ *  - UNATTENDED (the email workflow, its free-text path, the holdout sampler):
+ *    90 s — the measured tail was 100 s before the output cut, and a timed-out
+ *    extraction there costs a submission, not a spinner. The MCP workflow steps
+ *    that wait on it (`EXTRACT_STEP_TIMEOUT`) were raised to 120 s to match.
+ */
+export const INTERACTIVE_AI_EXTRACT_TIMEOUT_MS = 20_000;
+export const UNATTENDED_AI_EXTRACT_TIMEOUT_MS = 90_000;
+/** The `caller` names (mcp-server `ExtractCaller`) that get the longer limit. */
+export const UNATTENDED_EXTRACT_CALLERS: ReadonlySet<string> = new Set([
+  "email-workflow",
+  "email-free-text",
+  "holdout-sampler",
+]);
+
+/** OPE-1316 Ask 2 — shared by both multi-event prompts. */
+const TOP_LEVEL_ONLY_RULE = `TOP-LEVEL EVENTS ONLY: return the fair, festival, show, market or other event itself. Activities, contests, demonstrations, performances, competitions and exhibits that happen WITHIN an event (for example a tractor pull, sheep show, gymkhana or parade at a county fair) are NOT separate events — mention them in that event's description instead. Separate events on one page (a calendar listing several different shows, or several dates of a series) are still separate entries.`;
+const OMIT_UNKNOWN_FIELDS_RULE = `OMIT any field the source does not state. Do NOT write it out as null — leave the key out entirely. Keep each object to the fields you actually found.`;
+
+/**
  * OPE-531 — tell the model what day it is.
  *
  * The prompts ask for `"startDate": "YYYY-MM-DD"` and, until now, never said
@@ -82,7 +108,7 @@ PAGE METADATA (may be stale — many sites' SEO meta tags lag the current page b
 ${contextInfo}
 
 ---
-Return a JSON array where each event has these fields (use null for fields not found):
+Return a JSON array where each event has these fields (omit any field not found — see the rule below):
 
 [
   {
@@ -121,6 +147,8 @@ Return a JSON array where each event has these fields (use null for fields not f
 ${buildDateContext()}
 
 IMPORTANT RULES:
+0a. ${TOP_LEVEL_ONLY_RULE}
+0b. ${OMIT_UNKNOWN_FIELDS_RULE}
 1. Find ALL events on the page - there may be 1, 5, 10, or more events
 2. Each event listing should be a separate object in the array
 3. Convert ALL dates to YYYY-MM-DD format
@@ -136,7 +164,7 @@ IMPORTANT RULES:
 13. Classify the event into one or more categories from the provided list. Use "Agricultural Fair" for county/state fairs with livestock/produce, "Craft Fair" or "Craft Show" for handmade goods, "Farmers Market" for produce markets, "Flea Market" for secondhand goods, "Home Show" for home improvement, etc.
 
 EXAMPLE - if the page says "Springfield County Fair, June 12-15, 2025, Springfield Fairgrounds, 10am-8pm, $5-$10":
-[{"name":"Springfield County Fair","description":"Annual county fair in Springfield","startDate":"2025-06-12","endDate":"2025-06-15","startTime":"10:00","endTime":"20:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Springfield Fairgrounds","venueAddress":null,"venueCity":"Springfield","venueState":null,"ticketUrl":null,"ticketPriceMin":5,"ticketPriceMax":10,"imageUrl":null,"categories":["Agricultural Fair"],"vendorFeeMin":null,"vendorFeeMax":null,"vendorFeeNotes":null,"indoorOutdoor":"OUTDOOR","estimatedAttendance":null,"applicationUrl":null,"walkInsAllowed":null}]
+[{"name":"Springfield County Fair","description":"Annual county fair in Springfield","startDate":"2025-06-12","endDate":"2025-06-15","startTime":"10:00","endTime":"20:00","hoursVaryByDay":false,"venueName":"Springfield Fairgrounds","venueCity":"Springfield","ticketPriceMin":5,"ticketPriceMax":10,"categories":["Agricultural Fair"],"indoorOutdoor":"OUTDOOR"}]
 
 JSON array response:`;
 
@@ -170,7 +198,7 @@ CRITICAL DATE-PRIORITY RULES:
 - When ONLY the linked page mentions a date (no date in body), use the linked page's date but treat it as lower-confidence (it may be a season-start template).
 
 ---
-Return a JSON array where each event has these fields (use null for fields not found):
+Return a JSON array where each event has these fields (omit any field not found — see the rule below):
 
 [
   {
@@ -209,6 +237,8 @@ Return a JSON array where each event has these fields (use null for fields not f
 ${buildDateContext()}
 
 IMPORTANT RULES:
+0a. ${TOP_LEVEL_ONLY_RULE}
+0b. ${OMIT_UNKNOWN_FIELDS_RULE}
 1. Find ALL events mentioned in the body AND the linked page - there may be 1, 5, 10, or more.
 2. Each event listing is a separate object in the array.
 3. Convert ALL dates to YYYY-MM-DD format and ALL times to HH:MM 24-hour format.
@@ -377,7 +407,9 @@ export async function extractMultipleEvents(
   ai: Ai,
   content: string,
   metadata: PageMetadata,
-  emailBody?: string
+  emailBody?: string,
+  // OPE-1316 Ask 2 — see INTERACTIVE/UNATTENDED_AI_EXTRACT_TIMEOUT_MS.
+  timeoutMs: number = INTERACTIVE_AI_EXTRACT_TIMEOUT_MS
 ): Promise<{ events: ExtractedEvent[]; confidence: EventConfidence }> {
   // Build context with metadata if available
   let contextInfo = "";
@@ -428,7 +460,7 @@ export async function extractMultipleEvents(
       max_tokens: 4096, // More tokens for multiple events
       temperature: 0.1,
     }),
-    20000,
+    timeoutMs,
     "Workers AI multi-event extraction"
   );
 

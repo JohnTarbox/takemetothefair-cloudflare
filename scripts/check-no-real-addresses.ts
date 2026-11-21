@@ -107,7 +107,8 @@ export function scanText(file: string, text: string): Finding[] {
       const local = addr.slice(0, at);
       const domain = addr.slice(at + 1).toLowerCase();
       if (!CONSUMER_DOMAINS.has(domain)) continue;
-      if (OWNER_ADDRESSES.has(addr.toLowerCase())) continue;
+      // A plus-tag is the same mailbox, so `owner+tag@…` is still John's own.
+      if (OWNER_ADDRESSES.has(addr.toLowerCase().replace(/\+[^@]*@/, "@"))) continue;
       if (ALLOWED_LOCAL.test(local)) continue;
       out.push({ file, line: i + 1, domain });
     }

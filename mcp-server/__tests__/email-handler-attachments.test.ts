@@ -25,6 +25,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ATTACHMENT_MAX_COUNT,
+  isStoredSkip,
   captureAttachments,
   type AttachmentRef,
 } from "../src/email-handler.js";
@@ -113,10 +114,10 @@ describe("captureAttachments — media selection + refs", () => {
       [0, "agenda.docx", "unsupported-type"],
       [1, "invite.ics", "unsupported-type"],
     ]);
-    expect(refs.length + skipped.length).toBe(3);
+    expect(refs.length + skipped.filter((s) => !isStoredSkip(s)).length).toBe(3);
   });
 
-  it("caps at ATTACHMENT_MAX_COUNT image/PDF attachments", async () => {
+  it("stores past ATTACHMENT_MAX_COUNT, and marks those as not read (OPE-1578)", async () => {
     const { bucket } = mockBucket();
     const over = ATTACHMENT_MAX_COUNT + 3;
     const many = Array.from({ length: over }, (_, i) => ({
@@ -125,19 +126,17 @@ describe("captureAttachments — media selection + refs", () => {
       content: media("image/png", 50),
     }));
     const { refs, skipped } = await captureAttachments(bucket, "grp3", many);
-    expect(refs).toHaveLength(ATTACHMENT_MAX_COUNT);
-    // The live specimens: inbound_emails 2a09ef41 (8 claimed → 5 stored) and
-    // 4c536723 (6 → 5) — both at the old cap of 5, both with the overflow
-    // unrecorded. Three real attachments from a craft-show promoter went
-    // missing with nothing to show for them.
+    // Every file kept, which is the whole fix: UMF's application was lost here.
+    expect(refs).toHaveLength(over);
+    expect(refs.filter((r) => r.ocrSkipped)).toHaveLength(3);
     expect(skipped).toHaveLength(3);
-    expect(skipped.every((s) => s.reason === "over-count-cap")).toBe(true);
+    expect(skipped.every((s) => s.reason === "ocr-skipped:over-count-cap")).toBe(true);
     expect(skipped.map((s) => s.index)).toEqual([
       ATTACHMENT_MAX_COUNT,
       ATTACHMENT_MAX_COUNT + 1,
       ATTACHMENT_MAX_COUNT + 2,
     ]);
-    expect(refs.length + skipped.length).toBe(over);
+    expect(refs.length + skipped.filter((s) => !isStoredSkip(s)).length).toBe(over);
   });
 
   it("skips attachments over the 10 MB per-file cap", async () => {
@@ -272,7 +271,7 @@ describe("everything handed in is accounted for", () => {
     it(`accounts for every part — ${c.label}`, async () => {
       const { bucket } = mockBucket();
       const { refs, skipped } = await captureAttachments(bucket, "inv", c.input);
-      expect(refs.length + skipped.length).toBe(c.input!.length);
+      expect(refs.length + skipped.filter((s) => !isStoredSkip(s)).length).toBe(c.input!.length);
       // Every skip is explained; a reasonless skip is the thing being fixed.
       expect(skipped.every((s) => typeof s.reason === "string" && s.reason.length > 0)).toBe(true);
       // Indices are unique and in range, so a skip lines up against the stored
@@ -285,9 +284,7 @@ describe("everything handed in is accounted for", () => {
     });
   }
 
-  it("stores the earliest media parts, not an arbitrary five", async () => {
-    // The cap takes the FIRST five that pass the media filter — so a
-    // non-media part ahead of them does not consume a slot.
+  it("a non-media part ahead of the media does not consume a slot", async () => {
     const { bucket } = mockBucket();
     const { refs, skipped } = await captureAttachments(bucket, "order", [
       { filename: "sig.ics", mimeType: "text/calendar", content: bytes(10) },
@@ -297,8 +294,12 @@ describe("everything handed in is accounted for", () => {
         content: media("image/png", 50),
       })),
     ]);
-    expect(refs).toHaveLength(ATTACHMENT_MAX_COUNT);
-    expect(skipped.map((s) => s.reason).sort()).toEqual(["over-count-cap", "unsupported-type"]);
+    expect(refs).toHaveLength(ATTACHMENT_MAX_COUNT + 1);
+    expect(refs.filter((r) => !r.ocrSkipped)).toHaveLength(ATTACHMENT_MAX_COUNT);
+    expect(skipped.map((s) => s.reason).sort()).toEqual([
+      "ocr-skipped:over-count-cap",
+      "unsupported-type",
+    ]);
   });
 });
 

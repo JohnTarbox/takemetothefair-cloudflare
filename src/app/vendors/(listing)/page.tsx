@@ -3,7 +3,14 @@ import { isD1PlatformFault } from "@/lib/db/degraded";
 import { DegradedPanel } from "@/components/layout/degraded-panel";
 import Link from "next/link";
 import { Search, X, Heart, Calendar } from "lucide-react";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { kvReadThrough } from "@/lib/kv-read-through";
+import {
+  FEATURED_VENDORS_CACHE_KEY,
+  VENDOR_LISTING_CACHE_TTL_SECONDS,
+  VENDOR_TYPES_CACHE_KEY,
+  filterFeaturedByType,
+} from "@/lib/vendors/listing-cache";
 import { vendors, users } from "@/lib/db/schema";
 import { eq, and, isNotNull, isNull, sql } from "drizzle-orm";
 import { loadVendorListingPage } from "@/lib/vendors/listing-page";
@@ -133,8 +140,15 @@ async function getVendorsOnce(
  * inherits it, and so the diagnostic catch inside stays exactly as OPE-548 left
  * it. Only a PLATFORM fault is retried; a query defect fails the same way twice.
  */
-function getVendorTypes() {
-  return withD1ReadLogged("app/vendors/page.tsx:getVendorTypes", () => getVendorTypesOnce());
+function getVendorTypes(): Promise<string[]> {
+  // OPE-1573 — URL-independent, so cached ~1h in KV (src/lib/vendors/listing-cache.ts).
+  // A miss runs the D1 read exactly as before, retry and logging included.
+  return kvReadThrough(
+    getCloudflareRateLimitKv(),
+    VENDOR_TYPES_CACHE_KEY,
+    VENDOR_LISTING_CACHE_TTL_SECONDS,
+    () => withD1ReadLogged("app/vendors/page.tsx:getVendorTypes", () => getVendorTypesOnce())
+  );
 }
 
 async function getVendorTypesOnce() {
@@ -173,19 +187,26 @@ async function getVendorTypesOnce() {
  * inherits it, and so the diagnostic catch inside stays exactly as OPE-548 left
  * it. Only a PLATFORM fault is retried; a query defect fails the same way twice.
  */
-function getFeaturedVendors(typeFilter?: string) {
-  return withD1ReadLogged("app/vendors/page.tsx:getFeaturedVendors", () =>
-    getFeaturedVendorsOnce(typeFilter)
+async function getFeaturedVendors(typeFilter?: string): Promise<FeaturedVendor[]> {
+  // OPE-1573 — the whole Enhanced-Profile set is cached ONCE (~1h) and the
+  // `?type=` filter applied in memory, so a facet crawl neither scans vendors
+  // per URL nor mints a KV key per facet value.
+  const all = await kvReadThrough(
+    getCloudflareRateLimitKv(),
+    FEATURED_VENDORS_CACHE_KEY,
+    VENDOR_LISTING_CACHE_TTL_SECONDS,
+    () =>
+      withD1ReadLogged("app/vendors/page.tsx:getFeaturedVendors", () => getFeaturedVendorsOnce())
   );
+  return filterFeaturedByType(all, typeFilter);
 }
 
-async function getFeaturedVendorsOnce(typeFilter?: string): Promise<FeaturedVendor[]> {
+async function getFeaturedVendorsOnce(): Promise<FeaturedVendor[]> {
   const db = getCloudflareDb();
   const conditions: (ReturnType<typeof eq> | ReturnType<typeof isNull>)[] = [
     eq(vendors.enhancedProfile, true),
     isNull(vendors.deletedAt),
   ];
-  if (typeFilter) conditions.push(eq(vendors.vendorType, typeFilter));
 
   try {
     const rows = await db

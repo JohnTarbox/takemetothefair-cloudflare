@@ -281,6 +281,8 @@ async function inboundExceptionFlow(db: Db, now: Date): Promise<QueueDrainRow> {
     inflow1d,
     outflow1d,
     drainRatio7d: ratio(outflow7d, inflow7d),
+    // OPE-1556 — null only until snapshot history exists; declared, not silent.
+    flowExclusion: outflow7d === null ? "pending snapshot history" : undefined,
   };
 }
 
@@ -370,6 +372,8 @@ async function inboundHeldSubmissionFlow(db: Db, now: Date): Promise<QueueDrainR
     inflow1d,
     outflow1d,
     drainRatio7d: ratio(sumStored(6), inflow7d),
+    // OPE-1556 — null only until snapshot history exists; declared, not silent.
+    flowExclusion: sumStored(6) === null ? "pending snapshot history" : undefined,
   };
 }
 
@@ -448,6 +452,8 @@ async function inboundAwaitingDecisionFlow(db: Db, now: Date): Promise<QueueDrai
     inflow1d,
     outflow1d,
     drainRatio7d: ratio(sumStored(6), inflow7d),
+    // OPE-1556 — null only until snapshot history exists; declared, not silent.
+    flowExclusion: sumStored(6) === null ? "pending snapshot history" : undefined,
   };
 }
 
@@ -599,6 +605,7 @@ export async function undeliveredAuthEmailFlow(db: Db, now: Date): Promise<Queue
         flows: "no delivery events received yet",
         depth: "no delivery events received yet",
       },
+      flowExclusion: "no delivery events received yet",
     };
   }
 
@@ -636,6 +643,16 @@ export async function undeliveredAuthEmailFlow(db: Db, now: Date): Promise<Queue
     inflow1d,
     outflow1d: null,
     drainRatio7d: null,
+    // OPE-1556 — the "left the queue" event would be a later delivered auth
+    // email to the same recipient, or the row being retired by an operator.
+    // Neither exists as a workflow, so outflow is excluded ON PURPOSE, and the
+    // frozen-queue alarm skips this queue deliberately rather than silently.
+    unmeasured: {
+      flows:
+        "no exit event exists — nothing resends or retires an undelivered auth email until OPE-177 scope 4 (resend / mark verified) is built",
+    },
+    flowExclusion:
+      "no exit event exists — nothing resends or retires an undelivered auth email until OPE-177 scope 4 (resend / mark verified) is built",
   };
 }
 
@@ -862,6 +879,8 @@ async function venuesMissingCoordsFlow(db: Db, now: Date): Promise<QueueDrainRow
     inflow1d,
     outflow1d,
     drainRatio7d: ratio(sumStored(6), inflow7d),
+    // OPE-1556 — null only until snapshot history exists; declared, not silent.
+    flowExclusion: sumStored(6) === null ? "pending snapshot history" : undefined,
   };
 }
 
@@ -909,7 +928,17 @@ export async function promoterNeedsEnrichmentFlow(db: Db): Promise<QueueDrainRow
     outflow1d: null,
     drainRatio7d: null,
     // An entity status flag has no arrival/departure history to count.
-    unmeasured: { flows: "entity flag — no flow history" },
+    // OPE-1556 — "left the queue" = a promoter moving off NEEDS_ENRICHMENT
+    // (to ENRICHED / BLOCKED / NO_SOURCE). That transition carries no reliable
+    // timestamp (measured 2026-11-01: last_enriched_at on 8 of 59 ENRICHED, 0
+    // in the last 30 days), so outflow is EXCLUDED, declared, and skipped
+    // deliberately by the frozen-queue alarm until OPE-496 makes it countable.
+    unmeasured: {
+      flows:
+        "exit is an untimestamped status flip — last_enriched_at is set on 8 of 59 ENRICHED promoters (OPE-496), so outflow is not computable",
+    },
+    flowExclusion:
+      "exit is an untimestamped status flip — last_enriched_at is set on 8 of 59 ENRICHED promoters (OPE-496), so outflow is not computable",
   };
 }
 

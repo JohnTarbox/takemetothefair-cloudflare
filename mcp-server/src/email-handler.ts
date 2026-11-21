@@ -37,10 +37,12 @@ import { logError } from "./logger.js";
 import { stripQuotedReply } from "./email-handlers/strip-quoted-reply.js";
 import { storedMessageIdForms } from "./email-handlers/message-id-forms.js";
 import { dropInferredClaimSibling, senderTextOfReply } from "./email-handlers/claim-ask.js";
+import { classifyRetryReplyKind, shouldDeferClassification } from "./inbound/classify-retry.js";
 import {
   analyzeForward,
   isRfc822Attachment,
   POSTAL_MIME_OPTIONS,
+  type AttachmentDispositionToken,
   type ForwardAnalysis,
 } from "./email-handlers/forwarded-message.js";
 import { createDohResolver } from "./email-handlers/dkim-verify.js";
@@ -56,11 +58,13 @@ import {
 } from "./schema.js";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import {
+  htmlToPlainText,
   maskEmail,
   participantKey,
   normalizeThreadSubject,
   resolveThread,
   type ThreadBasis,
+  identifyUnsupportedImageFormat,
 } from "@takemetothefair/utils";
 import {
   isPhotoOnlySubmission,
@@ -198,7 +202,7 @@ const SOURCE = "mcp:email-handler";
 // OPE-68 attachment-capture caps. Per-attachment size ceiling (skip larger)
 // and a total-count ceiling (only the first N image/PDF attachments) so a
 // pathological many-attachment message can't blow the receive-time budget.
-const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per attachment
+export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per attachment
 /**
  * Payload image/PDF attachments stored per email.
  *
@@ -215,6 +219,15 @@ const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per attachment
  * step-output kill.
  */
 export const ATTACHMENT_MAX_COUNT = 8;
+/**
+ * OPE-1578 — the count above decides what gets READ, not what gets KEPT.
+ *
+ * It used to decide both, so a packet with many enclosures lost its last ones
+ * for good, and those are often the forms. Past ATTACHMENT_MAX_COUNT a payload
+ * is now stored with `ocrSkipped` and left unread. This ceiling is only a bound
+ * on R2 puts per message: Email Routing already rejects anything over 25 MiB.
+ */
+export const ATTACHMENT_MAX_STORED = 40;
 /**
  * OPE-760 — a forwarded message (`message/rfc822`) is a CONTAINER, not content:
  * its only consumer is the DKIM verifier, and OPE-944 hoists the documents
@@ -323,7 +336,15 @@ export async function handleInboundEmail(
     const mergedText = forward?.nested?.text
       ? `${parsed.text ?? ""}\n\n${forward.nested.text}`.trim()
       : (parsed.text ?? "");
-    const bodyText = mergedText.slice(0, MAX_BODY_LEN);
+    // OPE-1504 — a message with NO text/plain part (Apple Mail sends HTML-only)
+    // used to be stored with body_text NULL, so the classifier decided from the
+    // subject alone and every reader showed it as empty. Derive the text from
+    // the HTML here, before anything reads `bodyText`, so the classifier, the
+    // excerpt, the stored row and the workflow all see the same body. Recorded
+    // in `capture_meta` so a reader can tell the text was derived.
+    const bodyTextFromHtml = !mergedText.trim() && parsed.html ? htmlToPlainText(parsed.html) : "";
+    const bodyText = (bodyTextFromHtml || mergedText).slice(0, MAX_BODY_LEN);
+    const bodyCaptureMeta = bodyTextFromHtml ? JSON.stringify({ body_text_source: "html" }) : null;
     const bodyHtml = parsed.html || "";
     const bodyTextExcerpt = bodyText.slice(0, BODY_EXCERPT_LEN);
     // OPE-156 — full body persisted for the admin viewer (list preview stays
@@ -384,6 +405,7 @@ export async function handleInboundEmail(
           bodyTextExcerpt,
           bodyTextStored,
           bodyHtmlStored,
+          bodyCaptureMeta,
           senderSignals,
           senderIdentity,
           threadColumns,
@@ -424,6 +446,7 @@ export async function handleInboundEmail(
       bodyTextExcerpt,
       bodyTextStored,
       bodyHtmlStored,
+      bodyCaptureMeta,
       senderSignals,
       senderIdentity,
       threadColumns,
@@ -739,6 +762,7 @@ export async function handleInboundEmail(
               bodyTextExcerpt,
               bodyTextStored,
               bodyHtmlStored,
+              bodyCaptureMeta,
               senderSignals,
               senderIdentity,
               threadColumns,
@@ -810,6 +834,11 @@ export async function handleInboundEmail(
         .filter((t) => t.length > 0),
     });
 
+    // OPE-1615 — the classifier ran and never answered. That is "we don't know
+    // yet", so this row gets no verdict, no lane and no reply now: the workflow
+    // re-classifies on CLASSIFY_RETRY_DELAYS_SEC before it dispatches anything.
+    const deferClassification = shouldDeferClassification(routing);
+
     // 4. Spam quarantine (spec §C.6). When the classifier confidently
     //    flagged spam, we INSERT for audit then bail out — no forward,
     //    no workflow create, no auto-reply. Mirrors the rate-limit
@@ -824,6 +853,7 @@ export async function handleInboundEmail(
         bodyTextExcerpt,
         bodyTextStored,
         bodyHtmlStored,
+        bodyCaptureMeta,
         senderSignals,
         senderIdentity,
         threadColumns,
@@ -949,7 +979,8 @@ export async function handleInboundEmail(
         // cuts the other way here: the state IS recorded now (in
         // attachment_skips), so this line is the alert, not a substitute for a
         // fix. The OPE-464 `extract.attachment_lost` emitter reads this shape.
-        const accountedFor = refs.length + skipped.length;
+        // OPE-1578 — a read-only skip is already counted in `refs`.
+        const accountedFor = refs.length + skipped.filter((k) => !isStoredSkip(k)).length;
         if (accountedFor !== attachmentCount) {
           await logError(env.DB, {
             level: "warn",
@@ -1014,6 +1045,7 @@ export async function handleInboundEmail(
             bodyTextExcerpt: bodyTextExcerpt || null,
             bodyText: bodyTextStored,
             bodyHtml: bodyHtmlStored,
+            captureMeta: bodyCaptureMeta,
             // OPE-763 / OPE-764 — report-only capture; nothing branches on these.
             ...senderSignals,
             ...senderIdentity,
@@ -1088,6 +1120,7 @@ export async function handleInboundEmail(
             bodyTextExcerpt: bodyTextExcerpt || null,
             bodyText: bodyTextStored,
             bodyHtml: bodyHtmlStored,
+            captureMeta: bodyCaptureMeta,
             // OPE-763 / OPE-764 — report-only capture; nothing branches on these.
             ...senderSignals,
             ...senderIdentity,
@@ -1102,11 +1135,15 @@ export async function handleInboundEmail(
             // get null so the partial-unique on message_id doesn't
             // collide across the family.
             messageId: parentRowId ? null : messageId,
-            classifiedIntent: r.classifiedIntent,
-            classifiedSubIntent: r.classifiedSubIntent,
-            classifiedConfidence: r.confidence,
+            // OPE-1615 — a deferred row stores no intent and no confidence: it
+            // must never read `unclear`/0 while a retry is pending. The
+            // `classifier-error:` rationale stays as the evidence of why.
+            classifiedIntent: deferClassification ? null : r.classifiedIntent,
+            classifiedSubIntent: deferClassification ? null : r.classifiedSubIntent,
+            classifiedConfidence: deferClassification ? null : r.confidence,
             classifiedRationale: r.rationale,
-            classifiedAt: routing.classifierVersion ? now : null,
+            classifiedAt: routing.classifierVersion && !deferClassification ? now : null,
+            replyKind: deferClassification ? classifyRetryReplyKind(0) : null,
             classifierVersion: routing.classifierVersion,
             routingSource: r.routingSource,
             routedToWorkflow: null,
@@ -1167,7 +1204,32 @@ export async function handleInboundEmail(
           // OPE-202 — thread the sender trust tier + email-auth verdict computed
           // above so the per-intent handler (e.g. photo_intake) can gate on
           // "authenticated + trusted" without re-deriving.
-          params: { messageRowId: rowId, intent: r.intent, senderTrust, emailAuth },
+          params: {
+            messageRowId: rowId,
+            intent: r.intent,
+            senderTrust,
+            emailAuth,
+            // OPE-1615 — the classifier inputs the retry needs; the body is
+            // re-read from the row rather than carried in the params.
+            ...(deferClassification
+              ? {
+                  classifyRetry: {
+                    addressIntent: effectiveAddressIntent,
+                    toAddress: toAddr,
+                    fromAddress: fromAddr,
+                    senderTrustTier: senderTrust,
+                    isReplyToOurThread: isReplyToOurThread(
+                      parsed.inReplyTo ?? null,
+                      parsed.references ?? null
+                    ),
+                    attachmentCount,
+                    attachmentTypes: effectiveAttachments
+                      .map((a) => a.mimeType || "")
+                      .filter((t) => t.length > 0),
+                  },
+                }
+              : {}),
+          },
           retention: { successRetention: "7 days", errorRetention: "7 days" },
         });
         workflowInstanceIds.push(instance.id);
@@ -1360,6 +1422,9 @@ export interface AttachmentRef {
   name: string;
   mimeType: string;
   size: number;
+  /** OPE-1578 — stored but past ATTACHMENT_MAX_COUNT, so OCR and the photo lane
+   *  leave it alone. It can still be fetched. Absent means normal. */
+  ocrSkipped?: boolean;
 }
 
 /** Minimal attachment shape captured — matches postal-mime's Attachment
@@ -1384,8 +1449,7 @@ interface CapturableAttachment {
    * lost.
    */
   contentId?: string;
-  // postal-mime 4 (OPE-1401): any string — only "inline" is ever compared.
-  disposition?: "attachment" | "inline" | (string & {}) | null;
+  disposition?: AttachmentDispositionToken | null;
   related?: boolean;
 }
 
@@ -1504,7 +1568,7 @@ export async function discardStoredAttachments(
 
 /** Filesystem-safe attachment name for the R2 key. Collapses anything that
  *  isn't a safe filename char to a dash, trims, and caps length. */
-function sanitizeAttachmentName(name: string | null, index: number): string {
+export function sanitizeAttachmentName(name: string | null, index: number): string {
   const base = (name || `attachment-${index}`).trim();
   const cleaned = base
     .replace(/[^a-zA-Z0-9._-]+/g, "-")
@@ -1539,8 +1603,12 @@ function attachmentBytes(content: ArrayBuffer | Uint8Array | string): Uint8Array
  * `attachment_refs`.
  */
 export type AttachmentSkipReason =
-  /** Past ATTACHMENT_MAX_COUNT. The sender's later attachments are simply gone. */
+  /** Past a quota and NOT stored: furniture or container quota, or
+   *  ATTACHMENT_MAX_STORED. */
   | "over-count-cap"
+  /** OPE-1578 — stored and fetchable, but past ATTACHMENT_MAX_COUNT, so it was
+   *  not read. Deliberately a different string: nothing is lost. */
+  | "ocr-skipped:over-count-cap"
   /** Not image/* or application/pdf — a .docx roster, a calendar invite, a .eml. */
   | "unsupported-type"
   /** Over ATTACHMENT_MAX_BYTES. */
@@ -1554,6 +1622,11 @@ export type AttachmentSkipReason =
   /** The R2 put threw. The only reason here that is unambiguously a fault. */
   | "put-failed";
 
+/** OPE-1578 — true when this skip describes a file we DID store. */
+export function isStoredSkip(skip: Pick<AttachmentSkip, "reason">): boolean {
+  return skip.reason === "ocr-skipped:over-count-cap";
+}
+
 export interface AttachmentSkip {
   /** Position in the ORIGINAL attachment list, so a skip can be lined up
    *  against the stored keys (which embed the same index). */
@@ -1562,6 +1635,13 @@ export interface AttachmentSkip {
   mimeType: string;
   size: number;
   reason: AttachmentSkipReason;
+  /**
+   * OPE-1550 — on an `unrecognized-content` skip, the image format the bytes
+   * actually are when we can name it (e.g. "image/jxl" for JPEG XL, "image/avif",
+   * "image/tiff"). Absent when the bytes are nothing we recognise. Lets the
+   * operator notice say "a JPEG XL was refused" instead of "something was".
+   */
+  detectedFormat?: string;
   /**
    * OPE-760 — was this skip signature furniture rather than something the
    * sender meant to send?
@@ -1603,7 +1683,8 @@ export interface AttachmentCapture {
  * ── OPE-467: it returns the skips, and that is the point ─────────────────
  *
  * The filters did not change. What changed is that they now say so. The
- * function's contract is that `refs.length + skipped.length` equals the number
+ * function's contract is that `refs.length` plus the skips that were not
+ * stored (see `isStoredSkip`) equals the number
  * of attachments handed in — so "we kept fewer than arrived" becomes a
  * checkable statement instead of a subtraction somebody has to think to do.
  *
@@ -1730,6 +1811,11 @@ export async function captureAttachments(
     const storedType = item.container ? "message/rfc822" : sniffAttachmentType(bytes);
     if (!storedType) {
       note("unrecognized-content");
+      // OPE-1550 — name it when we can: JPEG XL (Chrome 155 / Firefox 158 open
+      // .jxl natively now), AVIF, TIFF, BMP. Cloudflare's transform can't read
+      // JXL, so this stays a refusal — but a named one.
+      const known = identifyUnsupportedImageFormat(bytes);
+      if (known) skipped[skipped.length - 1].detectedFormat = known.mime;
       continue;
     }
     // Two quotas, so furniture cannot consume a payload slot. This is the
@@ -1742,7 +1828,7 @@ export async function captureAttachments(
       ? storedContainers >= ATTACHMENT_MAX_CONTAINERS
       : item.furniture
         ? storedFurniture >= ATTACHMENT_MAX_FURNITURE
-        : stored >= ATTACHMENT_MAX_COUNT;
+        : stored >= ATTACHMENT_MAX_STORED;
     if (overQuota) {
       note("over-count-cap");
       continue;
@@ -1761,7 +1847,16 @@ export async function captureAttachments(
         // these is affected.
         httpMetadata: { contentType: storedType, contentDisposition: "attachment" },
       });
-      refs.push({ key, name, mimeType: storedType, size: bytes.byteLength });
+      // OPE-1578 — the count cap now only says whether this gets read.
+      const ocrSkipped = !item.container && !item.furniture && stored >= ATTACHMENT_MAX_COUNT;
+      refs.push({
+        key,
+        name,
+        mimeType: storedType,
+        size: bytes.byteLength,
+        ...(ocrSkipped ? { ocrSkipped: true } : {}),
+      });
+      if (ocrSkipped) note("ocr-skipped:over-count-cap");
       if (item.container) storedContainers++;
       else if (item.furniture) storedFurniture++;
       else stored++;
@@ -2797,6 +2892,9 @@ export async function insertSpamAuditRow(
      */
     bodyTextStored: string | null;
     bodyHtmlStored: string | null;
+    /** OPE-1504 — `{"body_text_source":"html"}` when body_text was derived from
+     *  the HTML part, else null. REQUIRED for the OPE-762 reason above. */
+    bodyCaptureMeta: string | null;
     /** OPE-763 — captured once by `extractSenderSignals`, spread into the row. */
     senderSignals: SenderSignals;
     /** OPE-764 — resolved once at ingest, spread into the row. */
@@ -2821,6 +2919,7 @@ export async function insertSpamAuditRow(
     bodyTextExcerpt,
     bodyTextStored,
     bodyHtmlStored,
+    bodyCaptureMeta,
     senderSignals,
     senderIdentity,
     threadColumns,
@@ -2847,6 +2946,7 @@ export async function insertSpamAuditRow(
         bodyTextExcerpt: bodyTextExcerpt || null,
         bodyText: bodyTextStored,
         bodyHtml: bodyHtmlStored,
+        captureMeta: bodyCaptureMeta,
         ...senderSignals,
         ...senderIdentity,
         ...threadColumns,
@@ -2972,6 +3072,9 @@ export async function insertAuditNoopRow(
      */
     bodyTextStored: string | null;
     bodyHtmlStored: string | null;
+    /** OPE-1504 — `{"body_text_source":"html"}` when body_text was derived from
+     *  the HTML part, else null. REQUIRED for the OPE-762 reason above. */
+    bodyCaptureMeta: string | null;
     /** OPE-763 — same object, same reason: a spread cannot be half-applied. */
     senderSignals: SenderSignals;
     /** OPE-764 — likewise. */
@@ -3012,6 +3115,7 @@ export async function insertAuditNoopRow(
       bodyTextExcerpt: args.bodyTextExcerpt || null,
       bodyText: args.bodyTextStored,
       bodyHtml: args.bodyHtmlStored,
+      captureMeta: args.bodyCaptureMeta,
       ...args.senderSignals,
       ...args.senderIdentity,
       ...args.threadColumns,
@@ -3123,7 +3227,7 @@ void CLASSIFIER_VERSION;
 export function looksLikeGscMilestone(fromAddr: string, subject: string): boolean {
   if (fromAddr.toLowerCase().includes("sc-noreply@google.com")) return true;
   // Milestone congrats mail.
-  if (/reaching\s+[\d.,]+\s*k?\s+(clicks|impressions)\s+in\s+\d+\s+days/i.test(subject)) {
+  if (/reaching\s+[\d.,]+\s*[km]?\s+(clicks|impressions)\s+in\s+\d+\s+days/i.test(subject)) {
     return true;
   }
   // OPE-344 — the monthly "Search performance" report, when a human forwards it

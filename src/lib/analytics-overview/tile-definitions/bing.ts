@@ -39,16 +39,6 @@ export const BING_TILES = {
     caveats: "Shows Unavailable rather than a green 0 when the crawl report fails.",
     thresholds: "Green at a measured 0; amber above 0. Any errors also add an Action item.",
   },
-  "bing.indexnow-health": {
-    measures:
-      "Whether IndexNow pings can go out right now (Active, Paused, Cooldown or Unknown), plus the last 24 hours of submissions: sent, failed and skipped.",
-    source: "RATE_LIMIT_KV breaker keys (indexnow:paused, cooldown); D1 indexnow_submissions.",
-    window: "State is read live. Counts cover the last 24 hours.",
-    caveats:
-      "While the indexnow:paused KV flag is set, nothing is sent: 0 failed means nothing was tried, and blocked pings count as skipped. Counts are submission batches, not URLs. If reading KV fails, it shows Unknown, not Active.",
-    thresholds:
-      "Green when Active; amber when Paused or in Cooldown; grey Unknown when there is no KV binding or the read failed.",
-  },
   "bing.top-queries": {
     measures:
       "Up to 25 Bing search queries with the most clicks, showing each one's impressions, CTR and average impression position.",
@@ -104,7 +94,7 @@ export const BING_TILES = {
   },
   "bing.indexnow-operations": {
     measures:
-      "IndexNow pipeline state and submission counts: sent in the last 24 hours and 7 days, failed and skipped in 24 hours, plus Bing's URL-submission quota left today.",
+      "IndexNow pipeline state and submission counts: sent and failed in the last 24 hours and 7 days, skipped in 24 hours, the 7-day success rate, plus Bing's URL-submission quota left today.",
     source: "D1 indexnow_submissions; RATE_LIMIT_KV breaker keys; Bing API GetUrlSubmissionQuota.",
     window: "24-hour and 7-day windows, read live. Quota cached 60 minutes.",
     caveats:

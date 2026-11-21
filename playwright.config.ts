@@ -9,6 +9,31 @@ const authenticatedPatterns = [
 // Patterns to exclude from local runs (no PLAYWRIGHT_BASE_URL)
 const localIgnore = process.env.PLAYWRIGHT_BASE_URL ? [] : ["**/smoke.spec.ts"];
 
+// OPE-1669 — which local server the suite runs against.
+//
+// CI (and `E2E_SERVER=start` locally) runs a PRODUCTION BUILD under `next
+// start`. Under `next dev` every route compiles on its first request, so the
+// first assertion on any not-yet-warmed route raced that compile: on a loaded
+// runner it lost (OPE-1518 — `vendor-logo` failed 3 of 4 runs and one failure
+// skipped every deploy job), and the 20s waits that papered over it could no
+// longer tell "slow compile" from "the form never rendered".
+//
+// Fidelity accepted: this is still the Node.js runtime, NOT the workerd
+// runtime production uses (`@opennextjs/cloudflare` → the meetmeatthefair-app
+// Worker). That is exactly what `next dev` tested too, so nothing is lost; what
+// changes is that the code under test is the optimised production bundle.
+// An OpenNext build served by `wrangler dev` was rejected: it adds the OpenNext
+// bundling step whose failures have already blocked deploys (OPE-1516), plus
+// local emulation of the R2 incremental cache, the DO queue and the
+// WORKER_SELF_REFERENCE service binding — each a new way for the deploy gate
+// to fail on runner conditions rather than on the app (OPE-1670). The Workers
+// runtime is exercised only against the real deploy: deploy.yml's post-deploy
+// smoke step and the weekly Production Verification workflow — not here, and
+// it wasn't before this change either.
+//
+// Local runs default to `next dev` (no build step, reuses a running server).
+const useProductionBuild = !!process.env.CI || process.env.E2E_SERVER === "start";
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
@@ -98,12 +123,26 @@ export default defineConfig({
   ],
   ...(!process.env.PLAYWRIGHT_BASE_URL
     ? {
-        webServer: {
-          command: "npm run dev",
-          url: "http://localhost:3000",
-          reuseExistingServer: !process.env.CI,
-          timeout: 120 * 1000,
-        },
+        webServer: useProductionBuild
+          ? {
+              // OPE-1669 — serve the production build. CI's "Build app for E2E"
+              // step runs `E2E_BUILD=1 next build` first; if it didn't, `next
+              // start` exits with "Could not find a production build" and the
+              // suite fails at startup instead of testing a stale build.
+              command: "npx next start -p 3000",
+              url: "http://localhost:3000",
+              reuseExistingServer: false,
+              timeout: 120 * 1000,
+              // Opts `next start` into the local miniflare D1/KV/R2 bindings
+              // (next.config.mjs). Playwright merges this over process.env.
+              env: { E2E_LOCAL_BINDINGS: "1" },
+            }
+          : {
+              command: "npm run dev",
+              url: "http://localhost:3000",
+              reuseExistingServer: true,
+              timeout: 120 * 1000,
+            },
       }
     : {}),
 });

@@ -39,7 +39,8 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors } from "@/lib/db/schema";
 import { authorizeVendorGallery } from "@/lib/vendor-photo-auth";
-import { runUploadPipeline } from "@/lib/upload-image-pipeline";
+import { runUploadPipeline, describeRefusedDeclaredType } from "@/lib/upload-image-pipeline";
+import { unsupportedImageFormatForMime } from "@takemetothefair/utils";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -79,7 +80,11 @@ export async function POST(request: Request) {
   }
   if (!ALLOWED_TYPES.has(file.type)) {
     return NextResponse.json(
-      { error: `Unsupported file type "${file.type || "unknown"}". Use JPEG, PNG or WebP.` },
+      {
+        error: unsupportedImageFormatForMime(file.type)
+          ? describeRefusedDeclaredType(file.type)
+          : `Unsupported file type "${file.type || "unknown"}". Use JPEG, PNG or WebP.`,
+      },
       { status: 400 }
     );
   }

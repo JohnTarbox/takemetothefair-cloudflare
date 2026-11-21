@@ -6,20 +6,13 @@
  * tells the operator needs to know whether the data plumbing is OK
  * BEFORE trusting any number on the analytics dashboard.
  */
-import { and, count, desc, eq, gte, sql } from "drizzle-orm";
+import { and, count, eq, gte, sql } from "drizzle-orm";
 import { rate, type Measurement } from "@/lib/analytics-overview/render-state";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
-import { enrichmentLog, errorLogs, indexnowSubmissions, timeToIndexLog } from "@/lib/db/schema";
+import { enrichmentLog, indexnowSubmissions, timeToIndexLog } from "@/lib/db/schema";
 
 type Db = DrizzleD1Database<typeof schema>;
-
-export type ErrorGroup = {
-  source: string;
-  message: string;
-  count: number;
-  lastSeenMs: number;
-};
 
 export type EnrichmentSourceHealth = {
   source: string;
@@ -53,70 +46,26 @@ export type TimeToIndexHealth = {
 
 export type DiagnosticsSnapshot = {
   generatedAt: Date;
-  errorGroups: ErrorGroup[];
   enrichmentBySource: EnrichmentSourceHealth[];
   indexnow: IndexNowHealth;
   timeToIndex: TimeToIndexHealth;
 };
 
-const ERROR_WINDOW_DAYS = 7;
 const ENRICHMENT_WINDOW_DAYS = 7;
 const INDEXNOW_WINDOW_DAYS = 7;
 
 export async function loadDiagnosticsSnapshot(db: Db): Promise<DiagnosticsSnapshot> {
   const now = new Date();
-  const errorSince = new Date(now.getTime() - ERROR_WINDOW_DAYS * 86400 * 1000);
   const enrichmentSince = new Date(now.getTime() - ENRICHMENT_WINDOW_DAYS * 86400 * 1000);
   const indexnowSince = new Date(now.getTime() - INDEXNOW_WINDOW_DAYS * 86400 * 1000);
 
-  const [errorGroups, enrichmentBySource, indexnow, timeToIndex] = await Promise.all([
-    loadErrorGroups(db, errorSince),
+  const [enrichmentBySource, indexnow, timeToIndex] = await Promise.all([
     loadEnrichmentBySource(db, enrichmentSince),
     loadIndexNowHealth(db, indexnowSince),
     loadTimeToIndexHealth(db),
   ]);
 
-  return { generatedAt: now, errorGroups, enrichmentBySource, indexnow, timeToIndex };
-}
-
-export async function loadErrorGroups(db: Db, sinceDate: Date): Promise<ErrorGroup[]> {
-  // Group by (source, first 80 chars of message) — message tail often has a
-  // unique id that would defeat grouping, so truncate.
-  const rows = await db
-    .select({
-      source: errorLogs.source,
-      message: errorLogs.message,
-      timestamp: errorLogs.timestamp,
-    })
-    .from(errorLogs)
-    // OPE-1347 #6 — errors only. Info rows ("AI extraction ok", "classifier
-    // result") were grouped here as "errors"; the Overview tile already filters
-    // the same way (health.ts loadRecentErrors, F1).
-    .where(and(gte(errorLogs.timestamp, sinceDate), eq(errorLogs.level, "error")))
-    .orderBy(desc(errorLogs.timestamp))
-    .limit(2000);
-
-  const groups = new Map<string, ErrorGroup>();
-  for (const r of rows) {
-    const src = r.source ?? "(unknown)";
-    const key = `${src}::${(r.message ?? "").slice(0, 80)}`;
-    const existing = groups.get(key);
-    const ts = r.timestamp.getTime();
-    if (existing) {
-      existing.count++;
-      if (ts > existing.lastSeenMs) existing.lastSeenMs = ts;
-    } else {
-      groups.set(key, {
-        source: src,
-        message: (r.message ?? "").slice(0, 80),
-        count: 1,
-        lastSeenMs: ts,
-      });
-    }
-  }
-  return Array.from(groups.values())
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 25);
+  return { generatedAt: now, enrichmentBySource, indexnow, timeToIndex };
 }
 
 async function loadEnrichmentBySource(db: Db, sinceDate: Date): Promise<EnrichmentSourceHealth[]> {

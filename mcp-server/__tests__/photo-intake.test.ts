@@ -89,6 +89,26 @@ describe("photo-intake handler gate (OPE-202/203)", () => {
     expect(res.resultingEventId).toBeNull();
   });
 
+  it("an external sender's held photo still gets the notice (OPE-1584)", async () => {
+    const res = await handlePhotoIntake(
+      envNoR2,
+      ctx("pass", "trusted"),
+      row({ subject: null, fromAddress: "user.alder@example.com" })
+    );
+    expect(res.replyKind).toBe("photo-intake-unresolved");
+    expect(res.suppressReply).toBeUndefined();
+  });
+
+  it("the operator's held photo stays classified but sends nothing (OPE-1584)", async () => {
+    const res = await handlePhotoIntake(
+      envNoR2,
+      ctx("pass", "trusted"),
+      row({ subject: null, fromAddress: "admin@takemetothefair.com" })
+    );
+    expect(res.replyKind).toBe("photo-intake-unresolved");
+    expect(res.suppressReply).toBe(true);
+  });
+
   it("counts image attachments from refs (PDF excluded)", async () => {
     const res = await handlePhotoIntake(
       envNoR2,
