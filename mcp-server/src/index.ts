@@ -93,6 +93,7 @@ import { runScheduledBurstCapSelfTest } from "./burst-cap-selftest-canary.js";
 import { runScheduledOperatorQueueNotice } from "./operator-queue-notice.js";
 import { runAgentSilenceWatchdog } from "./agent-silence-watchdog.js";
 import { isWatchedLane, recordHostHeartbeat, runHostSilenceWatch } from "./host-silence-watch.js";
+import { runDeployLagWatch } from "./deploy-lag-watch.js";
 import { runScheduledCpiScanWatchdog } from "./cpi-scan-watchdog.js";
 import {
   runScheduledHeroProposals,
@@ -104,6 +105,8 @@ import { runScheduledPageErrorCanary } from "./page-error-canary.js";
 import { runScheduledStandingFailureCanary } from "./standing-failure-canary.js";
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
+import { runTentativeAutopromote } from "./events/tentative-autopromote.js";
+import { runElapsedPendingExpiry } from "./events/elapsed-pending-expiry.js";
 
 import { runInboundExceptionNotice } from "./inbound-exception-notice.js";
 import { runUnterminatedCrossingNotice } from "./inbound/unterminated-crossing-notice.js";
@@ -178,6 +181,10 @@ type Env = WorkerEnv &
      * to admin; only the outbound question is withheld.
      */
     UNROUTED_ASK_ENABLED?: string;
+    /** OPE-1586 — "false" stops the daily TENTATIVE → SCHEDULED auto-promotion. */
+    TENTATIVE_AUTOPROMOTE_ENABLED?: string;
+    /** OPE-1596 — "false" stops the nightly elapsed-PENDING expiry. */
+    ELAPSED_PENDING_EXPIRY_ENABLED?: string;
     /** OPE-1617 — scheduled organizer-feed polling. On since OPE-1626 (the OHTM pilot). */
     FEED_POLLING_ENABLED?: string;
     /** OPE-1626 — WebSub subscribe/renew; needs FEED_POLLING_ENABLED too. Ships "false". */
@@ -852,6 +859,26 @@ async function runScheduledBingInspectionSweep(env: Env): Promise<void> {
       const d = (r.data ?? r) as Record<string, unknown>;
       return `inspected=${d.inspected ?? "?"} skipped=${d.skipped ?? "?"} throttled=${d.throttled ?? "?"}`;
     }
+  );
+}
+
+/**
+ * OPE-1664 — drain the main app's KV buffer of `error_logs` rows whose D1 insert
+ * failed (usually during an overload) back into `error_logs`, keeping their
+ * original timestamps. Every 10 minutes, so a buffered row lands within ~10
+ * minutes of D1 recovering. The endpoint stamps
+ * `watchdog:error-log-buffer-replay` when a drain completes (empty included);
+ * the `error-log-buffer-replay` probe watches that stamp. Failsoft via
+ * runMainAppSweep.
+ */
+async function runScheduledErrorLogBufferReplay(env: Env): Promise<void> {
+  await runMainAppSweep(
+    env,
+    "error-log-buffer replay",
+    "/api/internal/error-log-buffer/replay",
+    (r) =>
+      `replayed=${r.replayed ?? "?"} present=${r.alreadyPresent ?? "?"} discarded=${r.discarded ?? "?"}` +
+      ` stopped=${r.stoppedOnError ?? "?"} more=${r.more ?? "?"} drops=${JSON.stringify(r.recentDrops ?? {})}`
   );
 }
 
@@ -1850,6 +1877,8 @@ export default {
           // OPE-1621 — re-read feeds a change ping marked due; reads nothing
           // unless FEED_POLLING_ENABLED = "true" (pings stay recorded).
           ["pinged-feed-pass", () => runScheduledPingedFeedPass(env)],
+          // OPE-1664 — replay error_logs rows a D1 overload kept out of the table.
+          ["error-log-buffer-replay", () => runScheduledErrorLogBufferReplay(env)],
         ]).then(() => undefined)
       );
       return;
@@ -1872,6 +1901,9 @@ export default {
           ["organizer-feed-poll", () => runScheduledFeedPoll(env)],
           // OPE-1637 — Battleship host silence (75 min). Mails once on silent, once on clear.
           ["host-silence-watch", () => runHostSilenceWatch(env)],
+          // OPE-1655 — production behind main for > 2h (both Workers' live SHA vs
+          // main's HEAD). Mails once on lagging, once on caught-up.
+          ["deploy-lag-watch", () => runDeployLagWatch(env)],
         ]).then(() => undefined)
       );
       return;
@@ -2125,7 +2157,43 @@ export default {
         // Silent when both queues are clear — an alert that fires daily
         // regardless becomes wallpaper, which is how the sibling canaries on
         // this rail stay useful.
-        ["operator-queue-notice", () => runScheduledOperatorQueueNotice(env)],
+        //
+        // OPE-1586 (2026-11-16) — TENTATIVE → SCHEDULED auto-promotion runs
+        // FIRST, sequenced rather than parallel, so the digest it feeds lists
+        // only what the rule could not confirm and carries its summary line.
+        // Promotes only when a fresh read of the cited organizer page agrees
+        // (John's option 2). Kill switch: TENTATIVE_AUTOPROMOTE_ENABLED="false".
+        [
+          "tentative-autopromote+elapsed-pending-expiry+operator-queue-notice",
+          () =>
+            sequenceCronTasks(env.DB, controller.cron, [
+              [
+                "tentative-autopromote",
+                async () => {
+                  if (env.TENTATIVE_AUTOPROMOTE_ENABLED === "false") {
+                    console.log("[cron] tentative-autopromote — disabled by flag");
+                    return;
+                  }
+                  await runTentativeAutopromote(getDb(env.DB), { env });
+                },
+              ],
+              // OPE-1596 (2026-11-16, John's option 1) — PENDING rows more than
+              // 3 days past their end date → REJECTED `elapsed_unreviewed`.
+              // Also before the digest, which carries its one summary line.
+              // Kill switch: ELAPSED_PENDING_EXPIRY_ENABLED="false".
+              [
+                "elapsed-pending-expiry",
+                async () => {
+                  if (env.ELAPSED_PENDING_EXPIRY_ENABLED === "false") {
+                    console.log("[cron] elapsed-pending-expiry — disabled by flag");
+                    return;
+                  }
+                  await runElapsedPendingExpiry(getDb(env.DB));
+                },
+              ],
+              ["operator-queue-notice", () => runScheduledOperatorQueueNotice(env)],
+            ]),
+        ],
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and

@@ -182,6 +182,33 @@ export const FAULT_FAMILIES: readonly FaultFamily[] = [
     fixPattern: "treat deferral as not-a-failure (circuit-breaker/kill-switch aware)",
     guardStatus: "n/a",
   },
+  {
+    // OPE-1655 rework — the deploy-lag watch itself cannot read main's HEAD for
+    // more than 3 consecutive hourly ticks, so a freeze would not alert. Its
+    // message also contains "deploy-lag", so it MUST precede FAM-DEPLOY-LAG in
+    // this first-match-wins list.
+    key: "FAM-DEPLOY-LAG-WATCH-BLIND",
+    title: "Deploy-lag watch can't read main (alarm blind)",
+    matchers: ["deploy-lag-watch-blind"],
+    rootCauseClass: "monitor-blind",
+    fixPattern:
+      "set/renew the MCP Worker's GITHUB_TOKEN (fine-grained, contents:read on this repo)",
+    guardStatus: "present",
+    guardRef: "mcp-server/src/deploy-lag-watch.ts (blind counter)",
+  },
+  {
+    // OPE-1655 — production behind main's HEAD for > 2h. Logged hourly by the MCP
+    // deploy-lag watch while it lasts. Not a code bug in the failing route: the
+    // pipeline stopped delivering (red main CI skipping deploy.yml, or a failed
+    // deploy job). Its tokens are unique, so position cannot matter; appended.
+    key: "FAM-DEPLOY-LAG",
+    title: "Production behind main (deploys not landing)",
+    matchers: ["[deploy-lag]", "deploy-lag", "production is behind main"],
+    rootCauseClass: "deploy-pipeline-stalled",
+    fixPattern: "make main's CI green, then confirm the Deploy run's jobs ran (not skipped)",
+    guardStatus: "present",
+    guardRef: "scripts/deploy-gate.mjs (loud skip) + mcp-server/src/deploy-lag-watch.ts",
+  },
 ] as const;
 
 /** True when a single matcher hits the (already lowercased) error class. */

@@ -20,7 +20,11 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import { and, eq } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { findBrokenContentLinksInDb, resolveContentLinkTargetIds } from "../blog-links";
-import { repairBlogLinksForSlugChange, syncContentLinks } from "../content-links-sync";
+import {
+  repairBlogLinksForSlugChange,
+  rewriteSlugLinksInBody,
+  syncContentLinks,
+} from "../content-links-sync";
 
 type TestDb = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -234,6 +238,109 @@ describe("repairBlogLinksForSlugChange — K43 A3.3", () => {
       "nobody-links-here",
       "new-slug"
     );
-    expect(result).toEqual({ postsUpdated: 0, linksRewritten: 0 });
+    expect(result).toEqual({ postsUpdated: 0, linksRewritten: 0, posts: [] });
+  });
+});
+
+describe("OPE-1684 — repointing blog links after a blog slug move", () => {
+  const OLD = "your-complete-guide-to-maine-fairs-and-festivals-in-2026";
+  const NEW = "maine-fairs-and-festivals";
+  const BODY = [
+    `See [the Maine guide](/blog/${OLD}) and [its fairs](/blog/${OLD}#fairs).`,
+    `Absolute: <a href="https://meetmeatthefair.com/blog/${OLD}?ref=x">Maine guide</a>.`,
+    `Untouched: [2027 guide](/blog/${OLD}-2027) and [other](/blog/vermont-guide).`,
+  ].join("\n");
+
+  function seedLinker(id: string, slug: string, body: string, status = "PUBLISHED") {
+    raw
+      .prepare(
+        "INSERT INTO blog_posts (id, slug, body, status, updated_at) VALUES (?, ?, ?, ?, 1000)"
+      )
+      .run(id, slug, body, status);
+    raw
+      .prepare(
+        "INSERT INTO content_links (id, source_type, source_id, target_type, target_slug, target_id) VALUES (?, 'BLOG_POST', ?, 'BLOG_POST', ?, 'target')"
+      )
+      .run(`cl-${id}`, id, OLD);
+  }
+
+  it("rewriteSlugLinksInBody changes only link targets — relative, fragment, absolute+query — not a longer slug", () => {
+    const r = rewriteSlugLinksInBody(BODY, "blog", OLD, NEW);
+    expect(r.replacements).toBe(3);
+    expect(r.body).toBe(
+      [
+        `See [the Maine guide](/blog/${NEW}) and [its fairs](/blog/${NEW}#fairs).`,
+        `Absolute: <a href="https://meetmeatthefair.com/blog/${NEW}?ref=x">Maine guide</a>.`,
+        `Untouched: [2027 guide](/blog/${OLD}-2027) and [other](/blog/vermont-guide).`,
+      ].join("\n")
+    );
+    // Acceptance: the length change is exactly replacements × slug-length difference.
+    expect(r.body.length - BODY.length).toBe(3 * (NEW.length - OLD.length));
+    expect(r.before).toContain(`/blog/${OLD}`);
+    expect(r.after).toContain(`/blog/${NEW}`);
+  });
+
+  it("dry run plans every linker and writes nothing — body, updated_at and content_links unchanged", async () => {
+    seedLinker("p1", "nh-guide", BODY);
+    seedLinker("p2", "draft-post", `Draft link /blog/${OLD}.`, "DRAFT");
+    const before = raw.prepare("SELECT id, body, updated_at FROM blog_posts ORDER BY id").all();
+    const linksBefore = raw.prepare("SELECT * FROM content_links ORDER BY id").all();
+
+    const r = await repairBlogLinksForSlugChange(db as never, "BLOG_POST", OLD, NEW, {
+      dryRun: true,
+    });
+    expect(r.postsUpdated).toBe(0);
+    expect(r.linksRewritten).toBe(4);
+    expect(r.posts.map((p) => [p.slug, p.status, p.replacements, p.applied])).toEqual([
+      ["nh-guide", "PUBLISHED", 3, false],
+      ["draft-post", "DRAFT", 1, false],
+    ]);
+    expect(raw.prepare("SELECT id, body, updated_at FROM blog_posts ORDER BY id").all()).toEqual(
+      before
+    );
+    expect(raw.prepare("SELECT * FROM content_links ORDER BY id").all()).toEqual(linksBefore);
+  });
+
+  it("a real run rewrites the bodies, keeps status, bumps updated_at, and leaves 0 index rows on the old slug", async () => {
+    seedLinker("p1", "nh-guide", BODY);
+    raw
+      .prepare(
+        "INSERT INTO blog_posts (id, slug, body, status) VALUES ('target', ?, 'x', 'PUBLISHED')"
+      )
+      .run(NEW);
+
+    const r = await repairBlogLinksForSlugChange(db as never, "BLOG_POST", OLD, NEW);
+    expect(r).toMatchObject({ postsUpdated: 1, linksRewritten: 3 });
+    expect(r.posts[0]).toMatchObject({ applied: true, lengthDelta: 3 * (NEW.length - OLD.length) });
+
+    const post = raw
+      .prepare("SELECT body, status, updated_at FROM blog_posts WHERE id='p1'")
+      .get() as {
+      body: string;
+      status: string;
+      updated_at: number;
+    };
+    expect(post.body).toBe(rewriteSlugLinksInBody(BODY, "blog", OLD, NEW).body);
+    expect(post.status).toBe("PUBLISHED");
+    expect(post.updated_at).not.toBe(1000);
+    // Positive landmark: the post still has blog links indexed (the longer
+    // -2027 slug stays) — so "0 rows on the old slug" is not an empty index.
+    const rows = raw
+      .prepare(
+        "SELECT target_slug, target_id FROM content_links WHERE source_id='p1' ORDER BY target_slug"
+      )
+      .all() as Array<{ target_slug: string; target_id: string | null }>;
+    expect(rows.map((x) => x.target_slug)).toContain(NEW);
+    expect(rows.find((x) => x.target_slug === NEW)?.target_id).toBe("target");
+    expect(rows.filter((x) => x.target_slug === OLD)).toEqual([]);
+  });
+
+  it("is idempotent: a second run finds nothing to repoint", async () => {
+    seedLinker("p1", "nh-guide", BODY);
+    await repairBlogLinksForSlugChange(db as never, "BLOG_POST", OLD, NEW);
+    const again = await repairBlogLinksForSlugChange(db as never, "BLOG_POST", OLD, NEW, {
+      dryRun: true,
+    });
+    expect(again.posts).toEqual([]);
   });
 });

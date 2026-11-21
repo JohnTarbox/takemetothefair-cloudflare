@@ -14,11 +14,7 @@
  * Boundaries are inclusive on the GREEN side, strict on the RED side.
  */
 export type KpiName =
-  | "site_ctr"
-  | "conversion_rate"
-  | "brand_share"
-  | "sitemap_quality"
-  | "time_to_index_h";
+  "site_ctr" | "conversion_rate" | "brand_share" | "sitemap_quality" | "time_to_index_h";
 
 export type KpiState = "GREEN" | "YELLOW" | "RED" | "INDETERMINATE" | "STALE";
 
@@ -58,6 +54,13 @@ export type KpiThreshold = {
    * quiet night crossed the SLA. See the sitemap_quality entry below.
    */
   staleSlaSeconds: number;
+  /**
+   * OPE-1658 — set while the KPI's definition changed and its green/red pair
+   * has not been re-ruled. A measured value classifies INDETERMINATE (shown,
+   * never GREEN/YELLOW/RED, so no alert and no action-queue entry) and this
+   * string says why. STALE still wins. Remove it when John rules the pair.
+   */
+  awaitingRebaseline?: string;
 };
 
 const HOURS = 3600;
@@ -84,10 +87,17 @@ export const KPI_THRESHOLDS: Record<KpiName, KpiThreshold> = {
     // held the badge RED permanently and RED stopped meaning anything. Red at
     // 3% sits below that whole measured range: normal weeks read amber, and
     // RED means a real drop.
+    // OPE-1658 (2026-11-16) — the numerator went back to ticket + application
+    // clicks only ("Official Event Website" fallback clicks are their own
+    // tile). These 4.5%/3% were ruled on the combined numerator, so they are
+    // held (INDETERMINATE, value shown) until John rules a new pair from the
+    // 12-week split series posted on OPE-1658.
     green: 0.045,
     red: 0.03,
+    awaitingRebaseline:
+      "target held for re-baselining (OPE-1658): ticket + application clicks only since 2026-11-16",
     direction: "higher_better",
-    targetLabel: "≥ 4.5%",
+    targetLabel: "re-baselining (OPE-1658)",
     effort: "0.5 dev day",
     actionDescription: "Audit content quality; check destination engagement",
     href: "/admin/analytics",
@@ -184,6 +194,7 @@ export function classifyKpi(
   const t = KPI_THRESHOLDS[name];
   if (dataAgeSeconds != null && dataAgeSeconds > t.staleSlaSeconds) return "STALE";
   if (value == null || !Number.isFinite(value)) return "INDETERMINATE";
+  if (t.awaitingRebaseline) return "INDETERMINATE";
   if (t.direction === "higher_better") {
     if (value >= t.green) return "GREEN";
     if (value < t.red) return "RED";

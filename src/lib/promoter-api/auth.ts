@@ -51,6 +51,8 @@ export interface ApiKeyRecord {
   /** The promoter's own user account (citations' created_by), if any. */
   promoterUserId: string | null;
   revokedAt: Date | null;
+  /** OPE-1625 — a test key: decides, reports, never writes. */
+  isTest: boolean;
 }
 
 export interface AuthDeps {

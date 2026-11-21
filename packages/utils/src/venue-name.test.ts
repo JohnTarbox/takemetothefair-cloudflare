@@ -17,8 +17,38 @@ describe("looksLikeVenueStreetAddress", () => {
     expect(looksLikeVenueStreetAddress("123")).toBe(false);
     expect(looksLikeVenueStreetAddress("10X Studios")).toBe(false);
     expect(looksLikeVenueStreetAddress("Building 5")).toBe(false);
-    expect(looksLikeVenueStreetAddress("5 Star Hall")).toBe(true);
-    // ^ this is a known false positive — covered in the helper's comment.
+  });
+
+  // OPE-1688 — a leading number is not an address on its own. "450 Banquets"
+  // was renamed "Event venue in Chicopee, MA" at ingest on 2026-11-18.
+  it("OPE-1688: a real name that merely starts with a number is NOT an address", () => {
+    for (const n of ["450 Banquets", "5 Star Hall", "3 Rivers Fairgrounds", "4 H Park"]) {
+      expect(looksLikeVenueStreetAddress(n), n).toBe(false);
+    }
+  });
+
+  it("OPE-1688: a number plus a street-type word is still an address", () => {
+    for (const n of [
+      "1 Main St",
+      "1 Main St.",
+      "18 Spring Street, Portland",
+      "42 Elm Ave",
+      "1234 Route 9",
+      "88 Maple Rd",
+      "7 Fair Way",
+    ]) {
+      expect(looksLikeVenueStreetAddress(n), n).toBe(true);
+    }
+  });
+
+  it("OPE-1688: coerceVenueNameAtIngest keeps 450 Banquets named", () => {
+    const out = coerceVenueNameAtIngest({
+      name: "450 Banquets",
+      address: null,
+      city: "Chicopee",
+      state: "MA",
+    });
+    expect(out).toEqual({ name: "450 Banquets", address: "", wasCoerced: false });
   });
 
   it("handles empty / whitespace", () => {

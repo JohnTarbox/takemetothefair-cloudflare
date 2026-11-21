@@ -23,14 +23,20 @@ const PUBLIC_SURFACES = [
   // `loading.tsx` Suspense boundary no longer covers the sibling `[slug]`
   // routes (a boundary there froze the HTTP status at 200 on bogus slugs).
   // Route groups do not change URLs; only these source paths moved.
-  "src/app/events/(listing)/page.tsx",
-  "src/app/events/(listing)/past/page.tsx",
+  // OPE-1668 — the /events listing query moved out of the page into the module
+  // that also builds its cached set.
+  "src/lib/events/events-listing.ts",
+  // OPE-1668 — the /events/past and category-route queries moved out of their
+  // pages into the cached-set loader both now read.
+  "src/lib/events/listing-family-cache.ts",
   // OPE-1395 — the /vendors listing query moved out of the page into this loader.
   "src/lib/vendors/listing-page.ts",
   "src/app/vendors/[slug]/page.tsx",
   "src/app/api/events/[slug]/vendors/route.ts",
-  "src/components/events/state-events-page.tsx",
-  "src/components/events/category-events-page.tsx",
+  // OPE-1662 — the state listing's vendor query moved out of
+  // state-events-page.tsx into the cached-set loader both state and facet pages use.
+  "src/lib/events/state-listing-cache.ts",
+  "src/lib/events/facet-query.ts",
   "src/lib/vendors/vendor-events.ts",
 ];
 

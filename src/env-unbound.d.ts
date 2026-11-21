@@ -135,4 +135,12 @@ interface CloudflareEnv {
   GOODWILL_FLIP_ENABLED?: string;
   SITE_HEALTH_EXPIRE_DAYS?: string;
   NEXT_PUBLIC_SITE_URL?: string;
+
+  /**
+   * OPE-1655 — the 7-char SHA of the build that is live. Set ONLY at deploy time
+   * (`wrangler deploy --var GIT_SHA:<sha>` in deploy.yml's deploy-worker job), so
+   * it is not in `wrangler.toml` and generated types cannot carry it. Undefined in
+   * local dev and in a hand-run `cf:deploy`; /api/health then reports "unknown".
+   */
+  GIT_SHA?: string;
 }

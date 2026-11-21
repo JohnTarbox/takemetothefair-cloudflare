@@ -1,0 +1,23 @@
+-- OPE-1663 — an expression index for the case-insensitive recipient lookups.
+--
+-- The contact scorecard's "first human reply" (packages/db-schema/src/
+-- contact-scorecard.ts, `contact_emails`) runs a correlated
+--   SELECT MIN(l.sent_at) FROM email_send_ledger l
+--    WHERE lower(l.recipient) = lower(trim(i.from_address)) AND l.sent_at >= …
+-- once per inbound email in the window. `idx_email_send_ledger_recipient` is on
+-- the bare column, and SQLite cannot use it for `lower(recipient)`, so every
+-- probe was a full scan of the ledger. Measured on prod 2026-11-17 ~21:05Z with
+-- a 3,328-row ledger: the prior-28d window read 33,070 rows for 10 inbound
+-- rows, and the cost grows as (inbound in window × ledger size).
+--
+-- SQLite uses an index on an expression when the query spells the same
+-- expression, so `lower(recipient)` here serves `lower(l.recipient)` in the
+-- scorecard (`contact_emails`, `validated_silent_12mo`) and the other
+-- `lower(email_send_ledger.recipient) = …` lookups in the app and MCP Worker.
+-- `sent_at` second, so the `sent_at >= received_at` range narrows within one
+-- recipient. The query text is unchanged, so the results are too.
+--
+-- Additive; a no-op on an empty database. Rollback:
+--   DROP INDEX IF EXISTS idx_email_send_ledger_lower_recipient_sent_at;
+CREATE INDEX IF NOT EXISTS idx_email_send_ledger_lower_recipient_sent_at
+  ON email_send_ledger (lower(recipient), sent_at);

@@ -221,7 +221,12 @@ jobs:
 
   e2e:
     name: E2E Tests
-    runs-on: ubuntu-latest
+    # OPE-1652 — pinned. `ubuntu-latest` moved to ubuntu-26.04 (image
+    # 20261111) and the WebKit build Playwright runs links libicudata.so.74,
+    # which 26.04 does not ship: all 8 [mobile-safari] tests died at
+    # browserType.launch and every deploy was skipped. Move this only together
+    # with a Playwright version that supports the newer image.
+    runs-on: ubuntu-24.04
     needs: [test, lint]
 
     steps:
@@ -261,12 +266,23 @@ jobs:
       # Smoke-populated entry would register as a hit for E2E and webkit would
       # simply be absent — a missing-browser failure at test time rather than an
       # honest cache miss. Two entries, no cross-contamination.
+      # OPE-1652 — ImageOS (ubuntu24 / ubuntu26) is a runner PROCESS env var,
+      # not part of the `env` expression context: reading it there rendered
+      # empty, and the first fix's key read "Linux--playwright-…". Read it in a
+      # shell step, as the apt cache does for ImageVersion below.
+      - name: Resolve runner OS image
+        id: runner-os
+        run: echo "image=${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
+
       - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium-webkit
+          # OPE-1652 — ImageOS (ubuntu24/ubuntu26) is in the key: runner.os is
+          # "Linux" on every image, so a binary cached on one image was restored
+          # onto the next as a cache HIT, missing the libraries it linked.
+          key: ${{ runner.os }}-${{ steps.runner-os.outputs.image }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium-webkit
 
       # OPE-1287 — cache the apt .debs the Playwright installers fetch. The
       # browser cache above holds BINARIES only; the ~180 system packages
@@ -294,9 +310,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/playwright-apt-debs
-          key: ${{ runner.os }}-playwright-apt-${{ steps.playwright-version.outputs.version }}-chromium-webkit-${{ steps.runner-image.outputs.version }}
+          key: ${{ runner.os }}-${{ steps.runner-os.outputs.image }}-playwright-apt-${{ steps.playwright-version.outputs.version }}-chromium-webkit-${{ steps.runner-image.outputs.version }}
           restore-keys: |
-            ${{ runner.os }}-playwright-apt-${{ steps.playwright-version.outputs.version }}-chromium-webkit-
+            ${{ runner.os }}-${{ steps.runner-os.outputs.image }}-playwright-apt-${{ steps.playwright-version.outputs.version }}-chromium-webkit-
 
       # Best-effort: a missing or empty cache must never fail the job — the
       # install step below simply downloads what is not already present.
@@ -365,6 +381,17 @@ jobs:
           debs=(/var/cache/apt/archives/*.deb)
           echo "collecting ${#debs[@]} .deb file(s) for the apt cache"
           if (( ${#debs[@]} )); then cp "${debs[@]}" ~/.cache/playwright-apt-debs/; fi
+
+      # OPE-1669 — E2E serves a production build (`next start`, see
+      # playwright.config.ts) so no route compiles on its first request. Built
+      # here, once: no other CI job runs `next build`, and the deploy's OpenNext
+      # build runs in deploy.yml AFTER CI, with production NEXT_PUBLIC_* secrets,
+      # so it can't be reused here. E2E_BUILD=1 skips Next's in-build ESLint +
+      # tsc, which the Lint job already gates on (next.config.mjs).
+      - name: Build app for E2E
+        run: npx next build
+        env:
+          E2E_BUILD: "1"
 
       # mobile-safari is testMatch-scoped to *-mobile-*.spec.ts, so this adds
       # ~8 tests rather than a fourth full pass of the suite.

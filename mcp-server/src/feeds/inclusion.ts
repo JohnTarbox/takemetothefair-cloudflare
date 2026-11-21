@@ -6,9 +6,14 @@
  * so the MCP Worker's imports stay where they were.
  */
 export {
+  CAMP_WORKSHOP_PATTERNS,
   DEFAULT_INCLUSION_RULES,
+  campsWorkshopsOptInActive,
+  isRegisteredPromoter,
   decideInclusion,
   parseInclusionRules,
+  type CampsWorkshopsPromoter,
   type FeedInclusionRules,
+  type InclusionOptions,
   type InclusionVerdict,
 } from "@takemetothefair/utils/feeds";

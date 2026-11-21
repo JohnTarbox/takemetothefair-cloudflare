@@ -668,6 +668,8 @@ describe("new feed events reach the daily operator digest", () => {
     const c = await readOperatorQueues(w.db as never, T0, {});
     expect(c.feedItemsAwaitingReview).toBe(1);
     expect(c.lines.join("\n")).toContain("1 new organizer-feed event(s) awaiting review");
+    // OPE-1630 item 3: the line points at the admin queue, not only the MCP tools.
+    expect(c.lines.join("\n")).toContain("https://meetmeatthefair.com/admin/feed-review");
     expect(totalWaiting(c)).toBeGreaterThanOrEqual(1);
     expect(totalWaiting({ ...c, feedItemsAwaitingReview: undefined as never })).toBe(
       totalWaiting(c) - 1

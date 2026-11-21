@@ -21,9 +21,11 @@
  * review_operator_draft, on John's approval.
  */
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { storedMessageIdForms } from "../email-handlers/message-id-forms.js";
 import { extractEmailAddress, replySubject } from "@takemetothefair/utils";
 import {
   adminActions,
+  emailSendLedger,
   events,
   inboundEmails,
   operatorOutboundDrafts,
@@ -56,6 +58,33 @@ export const CONTACT_LANE_ACK_KINDS: readonly ReplyKind[] = [
   "claim-request-ack",
   "problem-report-ack",
 ];
+
+/**
+ * OPE-1681 — for a known contact, the lane takes EVERY reply kind (`ok-*`,
+ * `already-exists`, … as well as the list above) when the message is part of a
+ * conversation a person is already having with them:
+ *   - a child of a split multi-intent email (the split decides which child's
+ *     ack survives the fan-out, and that is usually an `ok-*` the list above
+ *     does not name: OHTM 2026-11-17 got `ok-multi` mid-conversation), or
+ *   - a reply to one of OUR OWN ledgered sends (In-Reply-To / References names
+ *     a provider message id we sent; OHTM was answering a claim invite).
+ * Outside those, Decision 1 (A)'s list stands: a known contact's standalone
+ * event submission still gets its `ok-*` confirmation.
+ */
+export async function repliesToOurOwnSend(
+  db: Db,
+  inReplyTo: string | null | undefined,
+  emailReferences: string | null | undefined
+): Promise<boolean> {
+  const forms = storedMessageIdForms(inReplyTo, emailReferences);
+  if (forms.length === 0) return false;
+  const [hit] = await db
+    .select({ id: emailSendLedger.messageId })
+    .from(emailSendLedger)
+    .where(inArray(emailSendLedger.providerMessageId, forms))
+    .limit(1);
+  return !!hit;
+}
 
 export const CONTACT_LANE_COMPOSER = "system:contact-lane";
 const SITE = "https://meetmeatthefair.com";
@@ -338,6 +367,8 @@ export async function runContactLane(
       receivedAt: inboundEmails.receivedAt,
       classifiedIntent: inboundEmails.classifiedIntent,
       classifiedConfidence: inboundEmails.classifiedConfidence,
+      inReplyTo: inboundEmails.inReplyTo,
+      emailReferences: inboundEmails.emailReferences,
     })
     .from(inboundEmails)
     .where(eq(inboundEmails.id, input.messageRowId))
@@ -358,7 +389,13 @@ export async function runContactLane(
     })
     .where(eq(inboundEmails.id, input.messageRowId));
 
-  if (!input.replyKind || !CONTACT_LANE_ACK_KINDS.includes(input.replyKind)) {
+  if (!input.replyKind) return skipped("not-a-generic-ack", known.basis);
+  if (
+    !CONTACT_LANE_ACK_KINDS.includes(input.replyKind) &&
+    // OPE-1681 — any kind, inside a live conversation (see repliesToOurOwnSend).
+    !row.parentEmailId &&
+    !(await repliesToOurOwnSend(db, row.inReplyTo, row.emailReferences))
+  ) {
     return skipped("not-a-generic-ack", known.basis);
   }
   if (input.closedBySender) return skipped("conversation-closed", known.basis);

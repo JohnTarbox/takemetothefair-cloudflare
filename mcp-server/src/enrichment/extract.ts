@@ -314,6 +314,21 @@ const PLATFORM_PLACEHOLDER_HANDLES = new Set([
   "yourbusiness",
   "yourpage",
   "username",
+  // OPE-1686 — WordPress THEME vendors, whose accounts ship in the demo footer
+  // of every site built on their theme. SoWa Boston staged AncoraThemes'
+  // Facebook/Twitter/Instagram (`ancora_themes` normalizes to `ancorathemes`).
+  // Whole-handle match, like the rest of this set.
+  "ancorathemes",
+  "themeforest",
+  "envato",
+  "envatomarket",
+  "elementor",
+  "elegantthemes",
+  "themeisle",
+  "themefusion",
+  "qodeinteractive",
+  "mikadothemes",
+  "studiopress",
 ]);
 
 /**
