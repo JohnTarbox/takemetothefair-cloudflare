@@ -26,8 +26,16 @@
  * `eventApprovalBlockReason` (no venue and not statewide). Passing it → APPROVED;
  * failing it → TENTATIVE. `approve` refuses an item whose venue does not match an
  * existing venue (returns candidates instead), so in practice approve → APPROVED.
+ *
+ * The two refusals have explicit reviewer answers (added after the first live
+ * use, 2026-11-12): `venueId` — the reviewer picks the venue (the feed spelled it
+ * differently, gave no town, or we hold two same-named rows); and
+ * `notDuplicateOf` — dedup's venue/town ±7-day stages matched a DIFFERENT show
+ * (Gurley's Bath Antique Sale vs the Bath Spirit of Christmas Fair a day apart),
+ * and the reviewer names that one event as not-the-same. Neither loosens dedup
+ * for anyone else.
  */
-import { and, asc, eq, isNull, like, or, type SQL } from "drizzle-orm";
+import { and, asc, eq, isNull, like, ne, or, type SQL } from "drizzle-orm";
 import type { getCloudflareDb } from "@/lib/cloudflare";
 import {
   adminActions,
@@ -46,6 +54,8 @@ import { parseApiRow } from "@/lib/promoter-api/fields";
 import { createEvent, previewRows, type CommitContext } from "@/lib/promoter-import/run";
 import { feedToCells } from "@/lib/test-submission/engine";
 import { trackEventStatusChange } from "@/lib/server-analytics";
+import { normalizeEventDate } from "@/lib/event-dates";
+import { toIsoDateOnlyInVenueZone } from "@takemetothefair/datetime";
 
 type Db = ReturnType<typeof getCloudflareDb>;
 
@@ -67,6 +77,20 @@ export interface ReviewInput {
   seriesId?: string | null;
   /** Required for reject (the reason); optional otherwise. */
   note?: string | null;
+  /**
+   * approve / approve_as_occurrence: the venue the reviewer PICKED — the answer to
+   * a `venue_unmatched` refusal (its venue_candidates). The listing takes this
+   * venue's name and location; the feed's venue text is not re-resolved.
+   */
+  venueId?: string | null;
+  /**
+   * approve / approve_as_occurrence: the event dedup matched, which the reviewer
+   * checked and says is a DIFFERENT event (same venue or town within a week, a
+   * different show). Overrides that one refusal only: a match on any other event
+   * still refuses, so a stale or blanket override cannot wave a real duplicate
+   * through.
+   */
+  notDuplicateOf?: string | null;
   actorUserId: string | null;
   now: Date;
 }
@@ -92,6 +116,8 @@ export type ReviewResult =
         | "listed_by_another_organizer"
         | "event_not_found"
         | "series_not_found"
+        | "venue_not_found"
+        | "venue_inactive"
         | "skipped";
       message: string;
       /** duplicate: the event to `link` instead. */
@@ -197,11 +223,15 @@ async function venueCandidates(db: Db, venue: FeedEvent["venue"]) {
     .filter((w) => w.length >= 4 && !/^(the|center|centre|hall|school|hotel)$/i.test(w))[0];
   if (word) conds.push(like(venues.name, `%${word}%`));
   if (!conds.length) return [];
-  return db
-    .select({ id: venues.id, name: venues.name, city: venues.city, state: venues.state })
-    .from(venues)
-    .where(or(...conds))
-    .limit(8);
+  return (
+    db
+      .select({ id: venues.id, name: venues.name, city: venues.city, state: venues.state })
+      .from(venues)
+      // OPE-1630: merged-away INACTIVE tombstones are not choices — the
+      // Thanksgiving item offered 3 "Royal Plaza" rows, 2 of them merged.
+      .where(and(or(...conds), ne(venues.status, "INACTIVE")))
+      .limit(8)
+  );
 }
 
 export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<ReviewResult> {
@@ -284,21 +314,66 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
       .limit(1);
     if (!s) return fail("series_not_found", "No series with that id.");
   }
+  let picked: {
+    id: string;
+    name: string;
+    address: string | null;
+    city: string | null;
+    state: string | null;
+    zip: string | null;
+  } | null = null;
+  if (input.venueId) {
+    const [v] = await db
+      .select({
+        id: venues.id,
+        name: venues.name,
+        address: venues.address,
+        city: venues.city,
+        state: venues.state,
+        zip: venues.zip,
+        status: venues.status,
+      })
+      .from(venues)
+      .where(eq(venues.id, input.venueId))
+      .limit(1);
+    if (!v) return fail("venue_not_found", "No venue with that id.");
+    if (v.status === "INACTIVE")
+      return fail(
+        "venue_inactive",
+        `"${v.name}" is INACTIVE (a merged-away venue keeps its row as a redirect). Pick the venue it was merged into.`
+      );
+    picked = v;
+  }
   const ev = parseSnapshot(item.snapshot);
   if (!ev) return fail("invalid_item", "The item has no readable snapshot; re-read the feed.");
   const cells = feedToCells(ev);
+  if (picked) {
+    // The picked venue replaces the feed's venue text whole — a feed that says
+    // only "Boothbay Railway Village" (no town) still gets a complete row.
+    for (const k of ["venue_name", "address", "city", "state", "zip"] as const) delete cells[k];
+    const put = (k: "venue_name" | "address" | "city" | "state" | "zip", val: string | null) => {
+      if (val?.trim()) cells[k] = val.trim();
+    };
+    put("venue_name", picked.name);
+    put("address", picked.address);
+    put("city", picked.city);
+    put("state", picked.state);
+    put("zip", picked.zip);
+  }
   const { row } = parseApiRow(cells);
   if (!row.value)
     return fail("invalid_item", "The item is missing fields a listing needs.", {
       errors: row.errors,
     });
 
-  const venue = await autoLinkVenue(db, {
-    venueName: row.value.venueName,
-    venueAddress: row.value.address,
-    venueCity: row.value.city,
-    venueState: row.value.state,
-  });
+  const venue = picked
+    ? { venueId: picked.id, decision: "picked" }
+    : await autoLinkVenue(db, {
+        venueName: row.value.venueName,
+        venueAddress: row.value.address,
+        venueCity: row.value.city,
+        venueState: row.value.state,
+      });
   if (!venue.venueId)
     return fail(
       "venue_unmatched",
@@ -312,7 +387,50 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
     fileHash: ledger,
     rows: [row],
   });
-  if (p.status === "match" && p.event)
+  // The reviewer checked THIS match and says it is a different event.
+  const overridden = !!p.event && !!input.notDuplicateOf && input.notDuplicateOf === p.event.id;
+
+  // OPE-1659 — approve_as_occurrence: a match that is ALREADY an occurrence of
+  // the requested series on a DIFFERENT date is a sibling, not a duplicate.
+  // Measured on the North Pole Express (2026-11-16): every run has its own
+  // source URL and they share one venue, so findDuplicate's stage 2
+  // (`venue_date`, ±7 days, identifiesSameEvent) matched each run to a sibling
+  // and only two of six went through without a hand-named not_duplicate_of.
+  // Exempted HERE, not in findDuplicate, which suggest_event and update_event
+  // share. The same calendar date anywhere in the series is still a duplicate.
+  let seriesSiblingOf: string | null = null;
+  if (
+    input.action === "approve_as_occurrence" &&
+    input.seriesId &&
+    p.status === "match" &&
+    p.event &&
+    !overridden
+  ) {
+    const itemDay = toIsoDateOnlyInVenueZone(normalizeEventDate(row.value.startDate));
+    const inSeries = await db
+      .select({ id: events.id, name: events.name, slug: events.slug, startDate: events.startDate })
+      .from(events)
+      .where(and(eq(events.seriesId, input.seriesId), isNull(events.mergedInto)));
+    const sameDay = inSeries.find(
+      (e) => itemDay !== "" && toIsoDateOnlyInVenueZone(e.startDate) === itemDay
+    );
+    if (sameDay)
+      return fail(
+        "duplicate",
+        `This series already has "${sameDay.name}" on ${itemDay}. Link it instead.`,
+        {
+          suggest: {
+            action: "link",
+            event_id: sameDay.id,
+            event_name: sameDay.name,
+            event_slug: String(sameDay.slug),
+          },
+        }
+      );
+    if (inSeries.some((e) => e.id === p.event!.id)) seriesSiblingOf = p.event.id;
+  }
+
+  if (p.status === "match" && p.event && !overridden && !seriesSiblingOf)
     return fail("duplicate", `This is already listed as "${p.event.name}". Link it instead.`, {
       suggest: {
         action: "link",
@@ -321,7 +439,7 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
         event_slug: String(p.event.slug),
       },
     });
-  if (p.status === "error")
+  if (p.status === "error" && !overridden)
     return p.event
       ? fail(
           "listed_by_another_organizer",
@@ -372,6 +490,7 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
     ...(input.action === "approve_as_occurrence" && input.seriesId
       ? { seriesId: input.seriesId }
       : {}),
+    venueId: venue.venueId,
   };
   const created = await createEvent(db, ctx, row);
   if (created.outcome !== "created" || !created.event_id)
@@ -407,6 +526,11 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
     event_id: created.event_id,
     status,
     series_id: input.seriesId ?? null,
+    venue_id: venue.venueId,
+    venue_picked: !!picked,
+    not_duplicate_of: overridden ? input.notDuplicateOf : null,
+    // OPE-1659 — dedup matched this series' own occurrence on another date.
+    series_sibling_of: seriesSiblingOf,
     previous_state: item.reviewState,
   });
   return {

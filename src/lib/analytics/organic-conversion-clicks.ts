@@ -32,10 +32,31 @@ export const CONVERSION_CLICK_EVENTS = [
 
 const MEDIUM = sql`json_extract(${analyticsEvents.properties}, '$.trafficMedium')`;
 
+/**
+ * OPE-1658 (John, 2026-11-16) — the "Official Event Website" fallback button
+ * (PR #1471, OPE-265) logs `outbound_ticket_click` with ctaSource=source_url.
+ * Those clicks are a click-through to the organizer's page, not a ticket or
+ * application conversion: by 11-14 they were ~85% of the numerator and had
+ * turned the badge GREEN on a changed definition. They are counted separately
+ * as `officialSiteClicks` (the official_site_click_rate tile) and excluded
+ * from the conversion numerator. Pre-10-01 clicks carry no ctaSource and
+ * count as conversions, which is the definition they were recorded under.
+ * COALESCE keeps a NULL ctaSource from making the predicate NULL.
+ */
+const IS_OFFICIAL_SITE_CLICK = sql`(${analyticsEvents.eventName} = 'outbound_ticket_click' AND COALESCE(json_extract(${analyticsEvents.properties}, '$.ctaSource'), '') = 'source_url')`;
+
 export type OrganicClicksResult =
-  | { status: "ready"; organicClicks: number; allClicks: number }
+  | {
+      status: "ready";
+      /** Ticket + application clicks (the conversion numerator). */
+      organicClicks: number;
+      /** OPE-1658 — organic "Official Event Website" fallback clicks. */
+      officialSiteClicks: number;
+      allClicks: number;
+    }
   | {
       status: "insufficient";
+      /** Ticket + application clicks from every source (fallback clicks excluded). */
       allClicks: number;
       /** First click carrying a traffic source; null = none yet. */
       firstAttributedAt: Date | null;
@@ -53,7 +74,10 @@ export async function readOrganicConversionClicks(
     lt(analyticsEvents.timestamp, window.until)
   );
   const [[all], [first]] = await Promise.all([
-    db.select({ n: count() }).from(analyticsEvents).where(inWindow),
+    db
+      .select({ n: count() })
+      .from(analyticsEvents)
+      .where(and(inWindow, sql`NOT ${IS_OFFICIAL_SITE_CLICK}`)),
     db
       .select({ at: min(analyticsEvents.timestamp) })
       .from(analyticsEvents)
@@ -74,10 +98,18 @@ export async function readOrganicConversionClicks(
     return { status: "insufficient", allClicks, firstAttributedAt, readyOn };
   }
   const [org] = await db
-    .select({ n: count() })
+    .select({
+      conversion: sql<number>`COALESCE(SUM(CASE WHEN ${IS_OFFICIAL_SITE_CLICK} THEN 0 ELSE 1 END), 0)`,
+      officialSite: sql<number>`COALESCE(SUM(CASE WHEN ${IS_OFFICIAL_SITE_CLICK} THEN 1 ELSE 0 END), 0)`,
+    })
     .from(analyticsEvents)
     .where(and(inWindow, sql`${MEDIUM} = ${ORGANIC_MEDIUM}`));
-  return { status: "ready", organicClicks: org?.n ?? 0, allClicks };
+  return {
+    status: "ready",
+    organicClicks: Number(org?.conversion ?? 0),
+    officialSiteClicks: Number(org?.officialSite ?? 0),
+    allClicks,
+  };
 }
 
 /** The card's "insufficient data" reason, naming the day it switches over. */

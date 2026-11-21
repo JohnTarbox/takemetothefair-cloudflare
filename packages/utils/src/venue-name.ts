@@ -21,14 +21,62 @@
  * mirrors `displayVenueName`'s fallback so the stored value matches what
  * the public would have seen anyway.
  *
- * Conservative regex: only matches names that BEGIN with a digit run
- * followed by whitespace. False negatives are fine — the existing
- * recommendation rule `venues_named_by_address` catches them post-hoc.
- * False positives would suppress legitimate names like "5 Star Hall", so
- * we keep the regex narrow.
+ * Conservative match: a name that BEGINS with a digit run followed by
+ * whitespace AND contains a street-type word ("St", "Road", "Route" …). A
+ * leading number alone used to be enough, which renamed real venues such as
+ * "450 Banquets" (OPE-1688). False negatives are fine — name-equals-address
+ * still catches them; false positives rewrite a correct name, so stay narrow.
  */
 
 const STREET_NUMBER_RE = /^\s*\d+\s+\S/;
+
+/**
+ * OPE-1688 — street-type words. A leading number alone is NOT address
+ * evidence: "450 Banquets" (Chicopee MA) was renamed "Event venue in
+ * Chicopee, MA" at ingest on 2026-11-18, and "5 Star Hall" / "3 Rivers
+ * Fairgrounds" are the same shape. An address also names a street TYPE.
+ * Matched as a whole token (trailing "." / "," ignored), case-insensitive.
+ */
+const STREET_TYPE_TOKENS = new Set([
+  "street",
+  "st",
+  "road",
+  "rd",
+  "avenue",
+  "ave",
+  "av",
+  "drive",
+  "dr",
+  "lane",
+  "ln",
+  "boulevard",
+  "blvd",
+  "highway",
+  "hwy",
+  "route",
+  "rte",
+  "rt",
+  "pike",
+  "turnpike",
+  "tpke",
+  "way",
+  "court",
+  "ct",
+  "place",
+  "pl",
+  "parkway",
+  "pkwy",
+  "circle",
+  "cir",
+  "terrace",
+  "ter",
+  "trail",
+  "trl",
+  "square",
+  "sq",
+  "extension",
+  "ext",
+]);
 
 export interface VenueNameInput {
   name: string;
@@ -44,9 +92,19 @@ export interface VenueNameCoercion {
   reason?: "street-number-in-name" | "name-equals-address";
 }
 
-export function looksLikeVenueStreetAddress(name: string): boolean {
+/**
+ * True iff `name` reads as a street address: it BEGINS with a house-number
+ * run followed by whitespace (the original U9 shape) AND some later token is
+ * a street-type word. The single shared implementation — the display
+ * fallback (`src/lib/venue-display.ts`) and the `venues_named_by_address`
+ * recommendation rule both call this, so ingest, render and the admin queue
+ * agree on what counts as an address (OPE-1688).
+ */
+export function looksLikeVenueStreetAddress(name: string | null | undefined): boolean {
   if (!name) return false;
-  return STREET_NUMBER_RE.test(name);
+  if (!STREET_NUMBER_RE.test(name)) return false;
+  const tokens = name.trim().split(/\s+/).slice(1);
+  return tokens.some((t) => STREET_TYPE_TOKENS.has(t.replace(/[.,;:]+$/, "").toLowerCase()));
 }
 
 /**

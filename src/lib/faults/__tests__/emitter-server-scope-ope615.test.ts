@@ -148,6 +148,12 @@ describe("the route implements what the mirror models", () => {
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\/\/.*$/gm, "");
 
+  // OPE-1665 — the per-row grouping moved out of the route into this module,
+  // which the route calls (`createFaultRowGrouper`) and the OPE-1665 replay runs.
+  const GROUPER = readFileSync(join(process.cwd(), "src/lib/faults/group-rows.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+
   const SCAN = readFileSync(join(process.cwd(), "src/lib/faults/scan-error-logs.ts"), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\/\/.*$/gm, "");
@@ -174,10 +180,11 @@ describe("the route implements what the mirror models", () => {
   });
 
   it("keys server rows on source and render rows on route", () => {
-    expect(ROUTE).toMatch(/isRenderLane\s*\?\s*r\.route\s*:\s*\(r\.source/);
+    expect(ROUTE).toMatch(/createFaultRowGrouper\(/);
+    expect(GROUPER).toMatch(/isRenderLane\s*\?\s*r\.route\s*:\s*\(r\.source/);
   });
 
   it("uses the UTC day as the server session dimension", () => {
-    expect(ROUTE).toMatch(/toISOString\(\)\.slice\(0,\s*10\)/);
+    expect(GROUPER).toMatch(/toISOString\(\)\.slice\(0,\s*10\)/);
   });
 });

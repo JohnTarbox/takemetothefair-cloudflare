@@ -192,6 +192,10 @@ export type ConversionRateCard = {
   rateMeasured: import("./render-state").Measurement<number>;
   /** OPE-1165 — true once `conversions` counts ORGANIC clicks only. */
   organicBasis: boolean;
+  /** OPE-1658 — organic "Official Event Website" fallback clicks (ctaSource=source_url). */
+  officialSiteClicks: number | null;
+  /** OPE-1658 — official_site_click_rate: those clicks ÷ the same organic sessions. Value only. */
+  officialSiteRateMeasured: import("./render-state").Measurement<number>;
   windowDays: number;
   /** ISO date string for the window end so the tooltip can show the lag. */
   windowEndDate: string;

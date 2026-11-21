@@ -26,7 +26,9 @@ const SCHEMA_SQL = `
     filed_at INTEGER,
     resolved_at INTEGER,
     created_at INTEGER NOT NULL,
-    inherited_from TEXT
+    inherited_from TEXT,
+    incident_routes INTEGER,
+    incident_sources INTEGER
   );
   CREATE TABLE error_logs (
     id TEXT PRIMARY KEY,

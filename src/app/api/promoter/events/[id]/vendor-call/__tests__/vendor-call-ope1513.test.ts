@@ -224,3 +224,50 @@ describe("OPE-1513 — promoter vendor call", () => {
     });
   });
 });
+
+describe("OPE-1680 — the vendor call cites the fee / deadline it changes", () => {
+  const cites = (state?: string) =>
+    db
+      .select()
+      .from(schema.eventDataCitations)
+      .all()
+      .filter((c) => !state || c.state === state);
+
+  it("a changed fee and deadline are cited user_submitted to the promoter; a re-save supersedes", async () => {
+    expect(
+      (await patch("e1", { vendorFeeMin: 80, applicationDeadline: "2026-08-15" })).status
+    ).toBe(200);
+    const first = cites("active");
+    expect(first.map((c) => c.fieldName).sort()).toEqual([
+      "application_deadline",
+      "vendor_fee_min",
+    ]);
+    for (const c of first) {
+      expect(c).toMatchObject({
+        eventId: "e1",
+        sourceType: "user_submitted",
+        sourceName: "Mine",
+        sourceUrl: "submission://promoter-portal/e1",
+        createdBy: "u-promo",
+      });
+    }
+    expect(first.find((c) => c.fieldName === "vendor_fee_min")!.value).toBe("80");
+    expect(first.find((c) => c.fieldName === "application_deadline")!.value).toBe("2026-08-15");
+
+    await patch("e1", { vendorFeeMin: 85 });
+    expect(cites("active").find((c) => c.fieldName === "vendor_fee_min")!.value).toBe("85");
+    expect(cites("superseded").map((c) => c.fieldName)).toEqual(["vendor_fee_min"]);
+  });
+
+  it("re-saving the stored fee, or editing only capacity, writes no citation (landmark: the save landed)", async () => {
+    expect((await patch("e1", { vendorFeeMin: 75, capacityStatus: "OPEN" })).status).toBe(200);
+    expect(apps()).toHaveLength(1);
+    expect(cites()).toHaveLength(0);
+  });
+
+  it("clearing the fee cites nothing", async () => {
+    await patch("e1", { vendorFeeMin: null });
+    expect(event().vendorFeeMinCents).toBeNull();
+    expect(cites()).toHaveLength(0);
+  });
+});

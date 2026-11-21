@@ -102,6 +102,13 @@ export async function loadConversionRate(
           ? unavailable(insufficientAttributionReason(clicks))
           : rateOf(conversions, sessions, "no organic sessions in window"),
     organicBasis: clicks.status === "ready",
+    officialSiteClicks: clicks.status === "ready" ? clicks.officialSiteClicks : null,
+    officialSiteRateMeasured:
+      sessions == null
+        ? unavailable("GA4 organic sessions unavailable")
+        : clicks.status === "insufficient"
+          ? unavailable(insufficientAttributionReason(clicks))
+          : rateOf(clicks.officialSiteClicks, sessions, "no organic sessions in window"),
     windowDays: days,
     windowEndDate: fmt(stableEndDate),
   };

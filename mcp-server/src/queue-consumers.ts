@@ -20,6 +20,10 @@ import { ledgerEmailSend, wasEmailSent } from "./mailer.js";
 import { logError } from "./logger.js";
 import {
   closeObligationsAnsweredBy,
+  closeContactObligationsByAddress,
+  closeNoteForDraftSend,
+  recipientAddresses,
+  shouldCloseByAddressOnSend,
   closeNoteForSend,
   shouldCloseOnSend,
 } from "./support-obligations-close.js";
@@ -399,6 +403,27 @@ export async function handleEmailBatch(
             sessionId,
             error: err,
             context: { id: m.id, inboundEmailId: m.body.inboundEmailId },
+          });
+        }
+      }
+      // OPE-1683 — a hand-composed draft has no inbound to close against; it
+      // answers its recipient's open contact obligation instead. Same timing
+      // and same never-fail rule as the block above.
+      if (shouldCloseByAddressOnSend(m.body)) {
+        try {
+          await closeContactObligationsByAddress(
+            db,
+            recipientAddresses(m.body.to),
+            new Date(),
+            closeNoteForDraftSend(m.body.operatorDraftId!, m.id, result.messageId)
+          );
+        } catch (err) {
+          await logError(env.DB, {
+            source: "mcp:email-queue",
+            message: `contact obligation close-by-address failed for draft ${m.body.operatorDraftId}`,
+            sessionId,
+            error: err,
+            context: { id: m.id, operatorDraftId: m.body.operatorDraftId },
           });
         }
       }

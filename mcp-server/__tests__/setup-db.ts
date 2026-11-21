@@ -170,6 +170,8 @@ const SCHEMA_SQL = `
     claimed INTEGER NOT NULL DEFAULT 0,
     claimed_at INTEGER,
     claimed_by TEXT,
+    -- OPE-1682 (drizzle/0432) — camps/workshops feed opt-in.
+    include_camps_workshops INTEGER NOT NULL DEFAULT 0,
     -- OPE-979 (drizzle/0285) — operating status + succession.
     operating_status TEXT,
     succeeded_by_promoter_id TEXT,
@@ -1210,7 +1212,10 @@ const SCHEMA_SQL = `
     resolved_at INTEGER,
     created_at INTEGER NOT NULL,
     -- OPE-1174 — drizzle/0330.
-    inherited_from TEXT
+    inherited_from TEXT,
+    -- OPE-1665 — drizzle/0426.
+    incident_routes INTEGER,
+    incident_sources INTEGER
   );
 
   -- OPE-1178 — mirrors drizzle/0331.
@@ -1962,6 +1967,17 @@ const PROMOTER_IMPORT_SQL = (() => {
   return sql;
 })();
 
+// OPE-1620 — promoter API keys, request ids and event refs, loaded from the
+// migration itself (DDL only: the heartbeat_probes seed is cut). OPE-1647 —
+// merge_promoter repoints these, so every suite that merges needs them.
+const PROMOTER_API_SQL = (() => {
+  const sql = readFileSync(join(__dirname, "../../drizzle/0411_ope1620_promoter_api.sql"), "utf8");
+  const end = sql.indexOf("INSERT INTO heartbeat_probes");
+  if (end < 0 || !sql.includes("CREATE TABLE promoter_api_event_refs"))
+    throw new Error("0411 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
 // OPE-1621 — change-ping columns, WebSub subscriptions and ping counters,
 // loaded from the migration itself (DDL only: the heartbeat_probes seed is cut).
 const CHANGE_PING_SQL = (() => {
@@ -1991,6 +2007,16 @@ const FEED_REVIEW_SQL = (() => {
   return sql;
 })();
 
+// OPE-1633 — fill-count columns on the run log and the feed_health_flags
+// table, loaded from the migration itself (DDL only: the probe seed is cut).
+const FEED_HEALTH_SQL = (() => {
+  const sql = readFileSync(join(__dirname, "../../drizzle/0416_ope1633_feed_health.sql"), "utf8");
+  const end = sql.indexOf("-- OPE-246 — heartbeat probes");
+  if (end < 0 || !sql.includes("CREATE TABLE feed_health_flags"))
+    throw new Error("0416 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
   const raw = new Database(":memory:");
   raw.pragma("foreign_keys = ON");
@@ -2004,9 +2030,11 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   raw["exec"](FEED_PROVENANCE_SQL);
   raw["exec"](CALENDAR_READER_SQL);
   raw["exec"](PROMOTER_IMPORT_SQL);
+  raw["exec"](PROMOTER_API_SQL);
   raw["exec"](CHANGE_PING_SQL);
   raw["exec"](FEED_READER_SQL);
   raw["exec"](FEED_REVIEW_SQL);
+  raw["exec"](FEED_HEALTH_SQL);
   const db = drizzle(raw, { schema });
   // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.
   // Shim it so code paths that batch — e.g. SYN1's outbox-row + version-bump

@@ -52,6 +52,7 @@ export function registerFeedReviewTools(server: McpServer, auth: AuthContext, en
     "review_feed_item",
     "OPE-1630 — act on ONE organizer-feed item (ids from list_feed_items). Admin only; audit-logged (admin_actions feed_item.<action>); sends no email. Actions: " +
       "'approve' — create the listing from the item through the same writer as the spreadsheet import (dedup, slug, venue matching, category allow-list, series attach by name), every value cited to the item URL (provenance feed); status by the existing approval gate (APPROVED when it has a venue, else TENTATIVE); the item is then linked so later reads keep it current. REFUSED with venue_candidates when the feed's venue matches no venue we have (never guessed), and with a suggest:{action:'link'} when dedup finds the event already listed. " +
+      "Two reviewer answers to those refusals, both audit-logged: venue_id — the venue you PICKED (from venue_candidates); the listing takes that venue's name and location, so it also completes an item whose feed gives a venue name with no town. not_duplicate_of — the event_id dedup matched, which you checked is a DIFFERENT event (same venue or town within a week, a different show); it overrides that one match only, and a match on any other event still refuses. " +
       "'approve_as_occurrence' — the same, attached to series_id instead of resolving a series by name (for an organizer that alternates a show's name). " +
       "'link' — event_id: the item IS this existing listing; links it, changes no event field. " +
       "'reject' — note is REQUIRED (the reason, e.g. 'private event'); remembered by the item's external id: later reads keep it rejected, never re-queue, link or ask about it. A rejected item cannot be approved (reverse it deliberately, not by accident).",
@@ -60,6 +61,18 @@ export function registerFeedReviewTools(server: McpServer, auth: AuthContext, en
       action: z.enum(["approve", "approve_as_occurrence", "link", "reject"]),
       event_id: z.string().min(1).optional().describe("link: the existing event."),
       series_id: z.string().min(1).optional().describe("approve_as_occurrence: the series."),
+      venue_id: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("approve / approve_as_occurrence: the venue you picked (from venue_candidates)."),
+      not_duplicate_of: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "approve / approve_as_occurrence: the event_id dedup matched that you checked is a DIFFERENT event."
+        ),
       note: z
         .string()
         .max(1000)
@@ -81,6 +94,8 @@ export function registerFeedReviewTools(server: McpServer, auth: AuthContext, en
             action: p.action,
             event_id: p.event_id,
             series_id: p.series_id,
+            venue_id: p.venue_id,
+            not_duplicate_of: p.not_duplicate_of,
             note: p.note,
             actorUserId: auth.userId ?? null,
           }),

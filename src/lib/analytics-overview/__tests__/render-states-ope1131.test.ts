@@ -134,7 +134,7 @@ describe("Overview — rates with two different ways to be empty", () => {
     const attributedSince = [{ at: new Date(Date.now() - 40 * 86_400_000) }];
     ga4.getOrganicSessions.mockResolvedValueOnce(null);
     const down = await loadConversionRate(
-      stubDb([[{ n: 3 }], attributedSince, [{ n: 3 }]] as never),
+      stubDb([[{ n: 3 }], attributedSince, [{ conversion: 3, officialSite: 0 }]] as never),
       {} as never,
       7
     );
@@ -143,7 +143,7 @@ describe("Overview — rates with two different ways to be empty", () => {
 
     ga4.getOrganicSessions.mockResolvedValueOnce(0);
     const empty = await loadConversionRate(
-      stubDb([[{ n: 0 }], attributedSince, [{ n: 0 }]] as never),
+      stubDb([[{ n: 0 }], attributedSince, [{ conversion: 0, officialSite: 0 }]] as never),
       {} as never,
       7
     );
@@ -151,11 +151,16 @@ describe("Overview — rates with two different ways to be empty", () => {
 
     ga4.getOrganicSessions.mockResolvedValueOnce(200);
     const live = await loadConversionRate(
-      stubDb([[{ n: 9 }], attributedSince, [{ n: 4 }]] as never),
+      stubDb([[{ n: 9 }], attributedSince, [{ conversion: 4, officialSite: 10 }]] as never),
       {} as never,
       7
     );
     expect(live.rateMeasured).toEqual(ok(0.02));
+    // OPE-1658 — the fallback clicks are their own rate over the same sessions.
+    expect(live.officialSiteClicks).toBe(10);
+    expect(live.officialSiteRateMeasured).toEqual(ok(0.05));
+    expect(empty.officialSiteRateMeasured.state).toBe("undefined-rate");
+    expect(down.officialSiteRateMeasured.state).toBe("unavailable");
   });
 
   it("account engagement over no first-party events is undefined, not 0%", async () => {

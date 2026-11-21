@@ -6,11 +6,18 @@
  * and NULL — never 0 — on an empty denominator.
  */
 import { describe, it, expect, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type Database from "better-sqlite3";
 import { getTableConfig } from "drizzle-orm/sqlite-core";
 import { CapturingMcpServer, createTestDb, type TestDb } from "./setup-db.js";
 import { supportObligations } from "../src/schema.js";
-import { addBusinessDays, computeContactScorecard, isBusinessDay } from "../src/schema.js";
+import {
+  addBusinessDays,
+  CONTACT_SCORECARD_QUERIES,
+  computeContactScorecard,
+  isBusinessDay,
+} from "../src/schema.js";
 import { registerContactScorecardTool } from "../src/tools/admin-contact-scorecard.js";
 
 const NOW = new Date("2026-10-20T17:00:00Z"); // Tuesday
@@ -213,5 +220,101 @@ describe("OPE-1511 — accuracy: all three inbound-link citation shapes are cont
     const a = (await card()).allTime.accuracy;
     expect(a.contact).toMatchObject({ total: 3, superseded: 1, flagged: 0, supersededRate: 0.333 });
     expect(a.website).toMatchObject({ total: 1, superseded: 0, flagged: 1, flaggedRate: 1 });
+  });
+});
+
+// OPE-1663 — the per-inbound "first human reply" probe on `lower(l.recipient)`
+// scanned the whole ledger every time (33,070 rows for 10 inbound rows on prod,
+// 2026-11-17). The fix is an expression index, loaded here from the migration
+// itself so the suite tests the SQL prod runs.
+const LOWER_RECIPIENT_INDEX = "idx_email_send_ledger_lower_recipient_sent_at";
+const INDEX_SQL = readFileSync(
+  join(__dirname, "../../drizzle/0427_ope1663_ledger_lower_recipient.sql"),
+  "utf8"
+);
+
+describe("OPE-1663 — the recipient lookups use the lower(recipient) expression index", () => {
+  const plan = (name: keyof typeof CONTACT_SCORECARD_QUERIES): string[] =>
+    (
+      raw
+        .prepare(
+          `EXPLAIN QUERY PLAN ${CONTACT_SCORECARD_QUERIES[name].replace(/:from|:to|:now/g, "0")}`
+        )
+        .all() as Array<{ detail: string }>
+    ).map((r) => r.detail);
+  const ledgerLines = (lines: string[]) => lines.filter((d) => /\b(SCAN|SEARCH) l\b/.test(d));
+
+  // The shared harness creates email_send_ledger with NO indexes; prod has these
+  // (drizzle/0308). Without them the planner's alternatives are not prod's, and
+  // the control would measure a choice prod never makes. Prod's plan before
+  // 0427 (EXPLAIN QUERY PLAN, 2026-11-17): `SEARCH l USING INDEX
+  // idx_email_send_ledger_status (status=?)` — nearly every row is 'sent', so
+  // that is a full read of the ledger per inbound email.
+  beforeEach(() => {
+    raw["exec"](`
+      CREATE INDEX idx_email_send_ledger_recipient ON email_send_ledger(recipient);
+      CREATE INDEX idx_email_send_ledger_sent_at ON email_send_ledger(sent_at);
+      CREATE INDEX idx_email_send_ledger_status ON email_send_ledger(status);
+    `);
+  });
+
+  it("migration 0427 creates the index (precondition for every assertion below)", () => {
+    raw["exec"](INDEX_SQL);
+    const idx = raw
+      .prepare(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`)
+      .get(LOWER_RECIPIENT_INDEX) as { sql: string } | undefined;
+    expect(idx?.sql).toMatch(/lower\(recipient\), sent_at/);
+  });
+
+  for (const name of ["contact_emails", "validated_silent_12mo"] as const) {
+    it(`${name}: without the index the ledger probe cannot seek on lower(recipient) (the control)`, () => {
+      const all = plan(name);
+      const lines = ledgerLines(all);
+      expect(lines.length, all.join(" | ")).toBe(1); // positive landmark: the probe line was found
+      expect(lines[0], all.join(" | ")).not.toContain(LOWER_RECIPIENT_INDEX);
+      expect(lines[0], all.join(" | ")).not.toMatch(/lower\(recipient\)|<expr>=/);
+    });
+
+    it(`${name}: with the index the ledger probe SEARCHes it on lower(recipient)`, () => {
+      raw["exec"](INDEX_SQL);
+      const all = plan(name);
+      const lines = ledgerLines(all);
+      expect(lines.length, all.join(" | ")).toBe(1);
+      expect(lines[0], all.join(" | ")).toContain(`SEARCH l USING INDEX ${LOWER_RECIPIENT_INDEX}`);
+    });
+  }
+
+  it("parity: the card is identical with and without the index on mixed-case data", async () => {
+    contact("v1", "debra@usathanksgiving.com", "validated");
+    contact("v2", "info@garlicfest.example", "validated");
+    mail("m1", "debra@usathanksgiving.com", "2026-10-13T14:00:00Z");
+    mail("m2", " DEBRA@usathanksgiving.com", "2026-10-16T19:00:00Z");
+    mail("m3", "info@garlicfest.example", "2026-09-10T12:00:00Z"); // prior window
+    mail("m4", "info@garlicfest.example", "2026-10-19T12:00:00Z"); // unanswered
+    // Noise rows: other recipients, wrong sources, a failed send, a reply BEFORE the mail.
+    for (let i = 0; i < 40; i++)
+      send(`n${i}`, `other${i}@example.com`, "2026-10-14T12:00:00Z", "reply:manual");
+    send("early", "debra@usathanksgiving.com", "2026-10-12T10:00:00Z", "reply:manual");
+    send("ack", "DEBRA@usathanksgiving.com", "2026-10-13T14:00:05Z", "reply:correction-ack");
+    send("r1", "DEBRA@USATHANKSGIVING.COM", "2026-10-14T09:00:00Z", "reply:manual");
+    send("r2", "debra@usathanksgiving.com", "2026-10-19T15:00:00Z", "operator:outbound");
+    send("r3", "Info@Garlicfest.example", "2026-09-11T12:00:00Z", "reply:manual-gmail-paste");
+    raw
+      .prepare(
+        `INSERT INTO email_send_ledger (message_id, sent_at, recipient, source, status) VALUES ('f1', ?, 'info@garlicfest.example', 'reply:manual', 'failed')`
+      )
+      .run(S("2026-10-19T13:00:00Z"));
+
+    const before = await card();
+    raw["exec"](INDEX_SQL);
+    expect(ledgerLines(plan("contact_emails"))[0]).toContain(LOWER_RECIPIENT_INDEX);
+    const after = await card();
+
+    // Landmarks: the sample exercises a reply, a non-reply and both windows.
+    expect(before.current.ourResponsiveness.contactEmails).toBe(3);
+    expect(before.prior.ourResponsiveness.contactEmails).toBe(1);
+    expect(before.current.ourResponsiveness.medianHoursToHumanReply).not.toBeNull();
+    expect(before.current.ourResponsiveness.noReplyAfter2BusinessDaysIds).toEqual([]);
+    expect(after).toEqual(before);
   });
 });

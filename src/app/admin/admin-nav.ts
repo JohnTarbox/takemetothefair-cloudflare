@@ -25,6 +25,7 @@ import {
   MapPin,
   Megaphone,
   Mic2,
+  Rss,
   ShieldCheck,
   Store,
   Users,
@@ -44,6 +45,8 @@ export const adminNavGroups: AdminNavGroup[] = [
       { name: "Submissions", href: "/admin/submissions", icon: ClipboardList },
       { name: "Claims", href: "/admin/claims", icon: ShieldCheck },
       { name: "Duplicates", href: "/admin/duplicates", icon: GitMerge },
+      // OPE-1630 item 3 — organizer-feed items awaiting review, with the four actions.
+      { name: "Feed Review", href: "/admin/feed-review", icon: Rss },
       { name: "Inbox", href: "/admin/inbound-emails", icon: Inbox },
       { name: "Problem Reports", href: "/admin/problem-reports", icon: AlertTriangle },
     ],
