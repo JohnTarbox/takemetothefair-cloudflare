@@ -146,6 +146,14 @@ function describeWrites(vision: BoothPipelineResult | null, eventId?: string): s
       `${vision.wouldAutoWrite.length} vendor(s) auto-written: ${vision.wouldAutoWrite.join(", ")}`
     );
   }
+  if (vision.wouldLinkByDomain?.length) {
+    lines.push(
+      `${vision.wouldLinkByDomain.length} of them link an EXISTING vendor by the domain on the sign (no vendor created): ` +
+        vision.wouldLinkByDomain
+          .map((l) => `"${l.businessName}" → ${l.vendorName} (${l.vendorId}, ${l.domain})`)
+          .join("; ")
+    );
+  }
   if (vision.galleryAttached > 0) {
     lines.push(
       `${vision.galleryAttached} general photo(s) attached to event ${eventId ?? "?"} as event_photos gallery candidates`

@@ -50,6 +50,8 @@ export interface AutoWriteOutcome {
   wasCreated: boolean;
   wasAlreadyLinked: boolean;
   heroSet: boolean;
+  /** OPE-1694 — "domain" when the sign's web address picked the existing vendor. */
+  matchBasis?: "domain" | "name" | null;
   /** Present when the write failed — reported, never swallowed. */
   error?: string;
 }
@@ -157,6 +159,8 @@ export async function autoWriteBooths(
           products: it.id.products,
           status: "CONFIRMED",
           participationType: "EXHIBITOR",
+          // OPE-1694 — the sign's web address before its lettering.
+          matchByDomain: true,
         },
         { actorUserId: null, recomputeVendorCompleteness, logEnrichment }
       );
@@ -203,6 +207,10 @@ export async function autoWriteBooths(
         was_linked: result.wasLinked,
         was_already_linked: result.wasAlreadyLinked,
         hero_set: heroSet,
+        // OPE-1694 — why this vendor: its domain, its name, or newly created.
+        match_basis: result.matchBasis,
+        matched_domain: result.matchedDomain,
+        matched_existing: result.matchedExisting,
       }),
       createdAt: new Date(),
     } as never);
@@ -214,6 +222,7 @@ export async function autoWriteBooths(
       wasCreated: result.wasCreated,
       wasAlreadyLinked: result.wasAlreadyLinked,
       heroSet,
+      matchBasis: result.matchBasis,
     });
   }
 

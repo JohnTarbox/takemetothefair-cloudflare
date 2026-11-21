@@ -45,6 +45,12 @@ import {
 import { attachGeneralPhotos } from "./general-photos.js";
 import { autoWriteBooths, type AutoWriteOutcome } from "./auto-write.js";
 import { matchRosterPerformer, resolvePerformerPhoto } from "./performer-photos.js";
+import {
+  extractSignDomain,
+  resolveVendorBySignDomain,
+  type DomainVendorMatch,
+  type VendorLinkDb,
+} from "@takemetothefair/vendor-linking";
 
 /** Audit action for a staged booth identification. */
 export const BOOTH_PROPOSED_ACTION = "vendor.photo_proposed";
@@ -106,6 +112,16 @@ export interface BoothPipelineResult {
    * which path each photo was heading for.
    */
   wouldAutoWrite?: string[];
+  /**
+   * OPE-1694 — dry run only: the would-writes that LINK an existing vendor
+   * because the sign's domain is on it, rather than creating one.
+   */
+  wouldLinkByDomain?: Array<{
+    businessName: string;
+    domain: string;
+    vendorId: string;
+    vendorName: string;
+  }>;
   /**
    * OPE-204 Milestone B — booths auto-written (created/linked as CONFIRMED
    * exhibitors) when PHOTO_AUTOWRITE_ENABLED is on. Empty in identify-only mode.
@@ -248,6 +264,8 @@ export async function runBoothPipeline(
     performer?: { id: string | null; name: string | null; appearancesOnEvent: number };
     /** Set when the model said booth and the roster said performer. */
     reclassifiedFrom?: "booth";
+    /** OPE-1694 — what the sign's domain matched, when it carried one. */
+    domainMatch?: DomainVendorMatch;
   };
   const autoWriteOn = env.PHOTO_AUTOWRITE_ENABLED === "true";
   const staged: Staged[] = [];
@@ -259,6 +277,8 @@ export async function runBoothPipeline(
     reclassifiedFrom?: "booth";
   }> = [];
   const toAutoWrite: typeof results = [];
+  /** OPE-1694 — per photo key, the domain match of a booth whose sign carried one. */
+  const domainMatches = new Map<string, DomainVendorMatch>();
 
   for (const r of results) {
     let d: Disposition = r.d;
@@ -304,6 +324,45 @@ export async function runBoothPipeline(
       }
     }
 
+    // OPE-1694 — the sign's web address, checked against existing vendors. A
+    // read, so it runs before the dry-run boundary. One owner: the write links
+    // that vendor (createOrLinkVendor repeats this check and owns the link).
+    // Several: a person picks, so a would-write stages instead.
+    if (
+      d.identification.kind === "booth" &&
+      d.identification.businessName &&
+      (d.action === "write" || d.action === "stage")
+    ) {
+      const sd = extractSignDomain(d.identification.businessName, d.identification.website);
+      if (sd.domain) {
+        try {
+          const dm = await resolveVendorBySignDomain(db as unknown as VendorLinkDb, sd);
+          domainMatches.set(r.photo.key, dm);
+          if (dm.kind === "ambiguous" && d.action === "write") {
+            d = {
+              action: "stage",
+              identification: d.identification,
+              reason: `${dm.reason} — which one is this booth?`.slice(0, 200),
+              stageKind: "booth_domain_ambiguous",
+            };
+          }
+        } catch (e) {
+          if (d.action === "write") {
+            d = {
+              action: "stage",
+              identification: d.identification,
+              reason:
+                `domain check failed — not auto-written: ${e instanceof Error ? e.message : String(e)}`.slice(
+                  0,
+                  200
+                ),
+              stageKind: "booth_domain_check_failed",
+            };
+          }
+        }
+      }
+    }
+
     if (d.action === "write") {
       // Milestone B split: auto-written when the gate is on; otherwise staged
       // exactly as Milestone A did, marked as a would-have-written.
@@ -316,6 +375,7 @@ export async function runBoothPipeline(
           stageKind: null,
           reason: null,
           wouldAutoWrite: true,
+          domainMatch: domainMatches.get(r.photo.key),
         });
     } else if (d.action === "stage") {
       staged.push({
@@ -326,6 +386,7 @@ export async function runBoothPipeline(
         stageKind: d.stageKind,
         reason: d.reason,
         wouldAutoWrite: false,
+        domainMatch: domainMatches.get(r.photo.key),
       });
     } else if (d.action === "performer") {
       try {
@@ -418,6 +479,24 @@ export async function runBoothPipeline(
       wouldAutoWrite: toAutoWrite
         .map((r) => r.d.identification.businessName)
         .filter((n): n is string => Boolean(n)),
+      // Would-writes whether auto-write is on (toAutoWrite) or off (staged
+      // with would_auto_write), so a replay answers the same either way.
+      wouldLinkByDomain: [
+        ...toAutoWrite.map((r) => ({ key: r.photo.key, id: r.d.identification })),
+        ...staged.filter((x) => x.wouldAutoWrite).map((x) => ({ key: x.photo.key, id: x.id })),
+      ].flatMap(({ key, id }) => {
+        const dm = domainMatches.get(key);
+        return dm?.kind === "one"
+          ? [
+              {
+                businessName: id.businessName ?? "",
+                domain: dm.domain,
+                vendorId: dm.vendorId,
+                vendorName: dm.businessName,
+              },
+            ]
+          : [];
+      }),
     };
   }
 
@@ -494,6 +573,18 @@ export async function runBoothPipeline(
       would_auto_write: x.wouldAutoWrite,
       reclassified_from: x.reclassifiedFrom ?? null,
       stage_reason: x.reason,
+      // OPE-1694 — the sign's domain and what it matched, so a reviewer sees
+      // "this is Maine Cardworks Inc by its web address" rather than a new name.
+      ...(x.domainMatch
+        ? {
+            matched_domain: x.domainMatch.domain,
+            match_basis: x.domainMatch.kind === "one" ? "domain" : null,
+            matched_vendor_id: x.domainMatch.kind === "one" ? x.domainMatch.vendorId : null,
+            matched_vendor_name: x.domainMatch.kind === "one" ? x.domainMatch.businessName : null,
+            domain_candidates:
+              x.domainMatch.kind === "ambiguous" ? x.domainMatch.candidates : undefined,
+          }
+        : {}),
     });
   }
 

@@ -96,6 +96,8 @@ describe("POST booth-proposals/resolve", () => {
       wasLinked: true,
       wasAlreadyLinked: false,
       matchedExisting: null,
+      matchBasis: null,
+      matchedDomain: null,
     });
     const res = await POST(req({ proposal_id: "prop-1", action: "approve" }), params);
     const body = (await res.json()) as { vendor_id: string; resolution: string };
@@ -125,6 +127,8 @@ describe("POST booth-proposals/resolve", () => {
       wasLinked: true,
       wasAlreadyLinked: false,
       matchedExisting: null,
+      matchBasis: null,
+      matchedDomain: null,
     });
     const res = await POST(
       req({ proposal_id: "prop-1", action: "approve", corrected_name: "Corrected Co" }),

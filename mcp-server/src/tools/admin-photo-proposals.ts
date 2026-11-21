@@ -52,6 +52,12 @@ interface ProposalPayload {
   performer_id?: string | null;
   matched_performer_name?: string | null;
   appearances_on_event?: number;
+  /** OPE-1694 — the sign's domain and what it matched. */
+  matched_domain?: string | null;
+  match_basis?: "domain" | null;
+  matched_vendor_id?: string | null;
+  matched_vendor_name?: string | null;
+  domain_candidates?: Array<{ id: string; businessName: string }>;
 }
 
 export function registerPhotoProposalTools(server: McpServer, db: Db, auth: AuthContext): void {
@@ -175,6 +181,12 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
         matched_performer_name: p.matched_performer_name ?? null,
         appearances_on_event: p.appearances_on_event ?? null,
         website: p.website ?? null,
+        // OPE-1694 — "domain" when the sign's web address names an existing vendor.
+        match_basis: p.match_basis ?? null,
+        matched_domain: p.matched_domain ?? null,
+        matched_vendor_id: p.matched_vendor_id ?? null,
+        matched_vendor_name: p.matched_vendor_name ?? null,
+        domain_candidates: p.domain_candidates ?? null,
         products: p.products ?? [],
         confidence: p.confidence ?? null,
         would_auto_write: p.would_auto_write ?? false,

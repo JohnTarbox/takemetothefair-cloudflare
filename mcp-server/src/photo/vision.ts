@@ -600,6 +600,10 @@ export type StageKind =
   | "booth_identifiable_minor"
   | "booth_roster_check_failed"
   | "booth_not_at_a_stall"
+  /** OPE-1694 — the sign's domain is on more than one vendor; a person picks. */
+  | "booth_domain_ambiguous"
+  /** OPE-1694 — the domain lookup threw; never written on the strength of an unrun check. */
+  | "booth_domain_check_failed"
   | "performer_unnamed"
   | "performer_unmatched"
   | "performer_not_on_roster"

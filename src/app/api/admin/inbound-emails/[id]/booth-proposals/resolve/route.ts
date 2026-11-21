@@ -144,6 +144,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       products: payload.products ?? null,
       status: "CONFIRMED",
       participationType: "EXHIBITOR",
+      // OPE-1694 — same rule as the auto-write: a sign's domain links its owner.
+      matchByDomain: true,
     },
     {
       actorUserId: actorId,
@@ -153,7 +155,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   );
 
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: 422 });
+    return NextResponse.json(
+      {
+        error: result.error,
+        ...(result.code ? { code: result.code, candidates: result.domainCandidates } : {}),
+      },
+      { status: 422 }
+    );
   }
 
   // Hero-if-blank — promote the booth photo to the vendor's logo when it has
@@ -215,6 +223,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       business_name: businessName,
       was_created: result.wasCreated,
       hero_set: heroSet,
+      match_basis: result.matchBasis,
+      matched_domain: result.matchedDomain,
     }),
     createdAt: new Date(),
   });
