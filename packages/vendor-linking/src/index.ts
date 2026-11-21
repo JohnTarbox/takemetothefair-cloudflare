@@ -23,6 +23,7 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@takemetothefair/db-schema";
 import { containsCI } from "@takemetothefair/db-schema";
 import { mergeProductsJson, routeVendorCategoriesForWrite, sameVendorType } from "./vendor-type";
+import { extractSignDomain, resolveVendorBySignDomain } from "./sign-domain";
 import {
   appendSlugSegment,
   createSlug,
@@ -113,6 +114,17 @@ export interface CreateOrLinkVendorInput {
   /** OPE-316 — false when participation is recorded but must not render
    *  publicly (the LeafFilter case). Defaults true. */
   publicVisible?: boolean;
+  /**
+   * OPE-1694 — match on the web address BEFORE the name. Opt-in: the booth-photo
+   * paths pass it, because their "name" is whatever a sign said, domain and all.
+   *
+   * When a domain is found (in `website`, or embedded in `businessName`):
+   *   - one live vendor owns it → link that vendor; name dedup is skipped;
+   *   - several do → `{ ok: false, code: "domain_ambiguous" }`, nothing written;
+   *   - none do → the name is cleaned of the domain suffix and, when `website`
+   *     was not given, the domain becomes the new vendor's website.
+   */
+  matchByDomain?: boolean;
 }
 
 /** DB-integrity side-effects each runtime supplies its own implementation of. */
@@ -144,6 +156,10 @@ export interface CreateOrLinkVendorSuccess {
   wasAlreadyLinked: boolean;
   statusChanged: boolean;
   matchedExisting: { name: string; similarity_score: number | null } | null;
+  /** OPE-1694 — why an existing vendor was used: its domain, or its name. Null on a create. */
+  matchBasis: "domain" | "name" | null;
+  /** OPE-1694 — the registrable domain the sign carried, when `matchByDomain` found one. */
+  matchedDomain: string | null;
   /** True when the link is in a public status — the adapter decides whether to
    *  ping IndexNow for the event. */
   linkIsPublic: boolean;
@@ -162,6 +178,9 @@ export interface CreateOrLinkVendorSuccess {
 export interface CreateOrLinkVendorFailure {
   ok: false;
   error: string;
+  /** OPE-1694 — set when `matchByDomain` found more than one owner. */
+  code?: "domain_ambiguous";
+  domainCandidates?: Array<{ id: string; businessName: string }>;
 }
 
 export type CreateOrLinkVendorResult = CreateOrLinkVendorSuccess | CreateOrLinkVendorFailure;
@@ -623,7 +642,8 @@ export async function createOrLinkVendor(
   input: CreateOrLinkVendorInput,
   deps: CreateOrLinkVendorDeps
 ): Promise<CreateOrLinkVendorResult> {
-  const businessName = sanitizeProse(input.businessName ?? "");
+  let businessName = sanitizeProse(input.businessName ?? "");
+  let website: string | null = input.website ?? null;
   // OPE-1113 — resolve to the existing spelling of the same category, so a
   // roster that writes "crafts " stores "Crafts" rather than a new variant.
   //
@@ -669,9 +689,52 @@ export async function createOrLinkVendor(
   }
   const event = eventRows[0];
 
-  // 2. Dedup
+  // 2a. OPE-1694 — domain first. A sign's web address names the business more
+  // reliably than its lettering does.
   let matched: { row: VendorRow; score: number | null } | null = null;
-  if (dedupStrategy !== "skip") {
+  let matchBasis: "domain" | "name" | null = null;
+  let matchedDomain: string | null = null;
+  if (input.matchByDomain) {
+    const sd = extractSignDomain(businessName, website);
+    if (sd.domain) {
+      matchedDomain = sd.domain;
+      const dm = await resolveVendorBySignDomain(db, sd);
+      if (dm.kind === "ambiguous") {
+        return {
+          ok: false,
+          code: "domain_ambiguous",
+          error: `Not written: ${dm.reason}. Pick the right vendor by hand.`,
+          domainCandidates: dm.candidates,
+        };
+      }
+      if (dm.kind === "one") {
+        const rows = await db
+          .select({
+            id: vendors.id,
+            businessName: vendors.businessName,
+            vendorType: vendors.vendorType,
+            redirectToVendorId: vendors.redirectToVendorId,
+            slug: vendors.slug,
+          })
+          .from(vendors)
+          .where(eq(vendors.id, dm.vendorId))
+          .limit(1);
+        if (rows[0]) {
+          matched = { row: rows[0], score: null };
+          matchBasis = "domain";
+          matchedDomain = dm.domain;
+        }
+      }
+    }
+    if (!matched) {
+      // No owner: keep the sign's domain as the website, not in the name.
+      if (sd.cleanedName && sd.cleanedName !== businessName) businessName = sd.cleanedName;
+      if (!website && sd.domain && !sd.nonOwnable) website = `https://${sd.domain}`;
+    }
+  }
+
+  // 2b. Name dedup
+  if (!matched && dedupStrategy !== "skip") {
     if (dedupStrategy === "strict") {
       const strictRow = await findStrictMatch(db, businessName);
       if (strictRow) matched = { row: strictRow, score: 1 };
@@ -679,6 +742,7 @@ export async function createOrLinkVendor(
       const found = await findFuzzyMatch(db, businessName, vendorType);
       if (found) matched = { row: found.row, score: found.score };
     }
+    if (matched) matchBasis = "name";
 
     if (matched) {
       try {
@@ -840,7 +904,7 @@ export async function createOrLinkVendor(
         productsClean ? JSON.stringify(productsClean) : "[]",
         routed.productsToAdd
       ),
-      website: input.website ?? null,
+      website,
       contactEmail: input.contactEmail ?? null,
       contactPhone: input.contactPhone ?? null,
       logoUrl: input.logoUrl ?? null,
@@ -973,6 +1037,8 @@ export async function createOrLinkVendor(
       payment_status: paymentStatus,
       dedup_strategy: dedupStrategy,
       matched_existing: matchedExisting,
+      match_basis: matchBasis,
+      matched_domain: matchedDomain,
     }),
     createdAt: new Date(),
   });
@@ -988,12 +1054,23 @@ export async function createOrLinkVendor(
     wasAlreadyLinked,
     statusChanged,
     matchedExisting,
+    matchBasis,
+    matchedDomain,
     linkIsPublic: (wasLinked || statusChanged) && PUBLIC_VENDOR_SET.has(status),
     // OPE-1094 — only meaningful on a create; the match branch leaves the
     // existing row's location alone (see the scope-3 note on the ticket).
     ...(wasCreated && { createdCity: createdLoc.city, createdState: createdLoc.state }),
   };
 }
+
+export {
+  extractSignDomain,
+  normalizeSignDomain,
+  resolveVendorByDomain,
+  resolveVendorBySignDomain,
+  type DomainVendorMatch,
+  type SignDomain,
+} from "./sign-domain";
 
 export {
   CATEGORY_MAX_CHARS,
