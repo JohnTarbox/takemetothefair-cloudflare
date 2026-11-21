@@ -21,6 +21,10 @@ import {
   fieldHistoryBeforeSelect,
   fieldHistoryInserts,
 } from "@takemetothefair/db-schema/field-history";
+import {
+  changedVendorFields,
+  citePromoterVendorFields,
+} from "@/lib/events/promoter-vendor-citations";
 
 interface EventDayInput {
   date: string;
@@ -243,6 +247,27 @@ export async function POST(request: NextRequest) {
         await raiseEventReviewFlag(db, existingId, "former_venue");
       }
 
+      // OPE-1680 — cite each vendor fee / deadline this save CHANGED (sent and
+      // different from what was stored). The write supersedes the field's prior
+      // active citation, so a re-save never leaves two active rows.
+      const changed = changedVendorFields(sent, set, existing);
+      await citePromoterVendorFields(db, {
+        eventId: existingId,
+        promoterName: promoter.companyName,
+        userId: session.user.id,
+        route: "draft",
+        vendorFeeMin: changed.vendorFeeMin
+          ? { submitted: data.vendorFeeMin, storedCents: set.vendorFeeMinCents ?? null }
+          : { submitted: undefined, storedCents: null },
+        vendorFeeMax: changed.vendorFeeMax
+          ? { submitted: data.vendorFeeMax, storedCents: set.vendorFeeMaxCents ?? null }
+          : { submitted: undefined, storedCents: null },
+        applicationDeadline: changed.applicationDeadline
+          ? { submitted: data.applicationDeadline, stored: set.applicationDeadline ?? null }
+          : { submitted: undefined, stored: null },
+        now: new Date(),
+      });
+
       // Replace event days wholesale — simpler than diffing.
       // WS2a — shared D1-safe batched insert (was an inline unbatched insert).
       // OPE-433 scope 5 — a promoter replacing their own day set wholesale.
@@ -359,6 +384,28 @@ export async function POST(request: NextRequest) {
     });
     // OPE-767 — recorded as a reason, so it can be discharged on its own.
     if (formerVenueNew.kind === "flag") await raiseEventReviewFlag(db, newId, "former_venue");
+
+    // OPE-1680 — the organizer is the source of any vendor fee / deadline
+    // stored above; cite it.
+    await citePromoterVendorFields(db, {
+      eventId: newId,
+      promoterName: promoter.companyName,
+      userId: session.user.id,
+      route: "draft",
+      vendorFeeMin: {
+        submitted: data.vendorFeeMin,
+        storedCents: dollarsToCents(data.vendorFeeMin),
+      },
+      vendorFeeMax: {
+        submitted: data.vendorFeeMax,
+        storedCents: dollarsToCents(data.vendorFeeMax),
+      },
+      applicationDeadline: {
+        submitted: data.applicationDeadline,
+        stored: normalizeEventDate(data.applicationDeadline),
+      },
+      now: new Date(),
+    });
 
     await recomputeEventCompleteness(db, newId);
 

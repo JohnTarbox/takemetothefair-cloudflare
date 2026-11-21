@@ -1,4 +1,4 @@
-import { test as setup, expect } from "@playwright/test";
+import { test as setup, expect } from "./fixtures";
 
 setup("authenticate as admin", async ({ page }) => {
   await page.goto("/login");
@@ -6,9 +6,7 @@ setup("authenticate as admin", async ({ page }) => {
   await page.locator('input[type="password"]').fill("admin123");
   await Promise.all([
     page.waitForResponse(
-      (resp) =>
-        resp.url().includes("/api/auth/callback/credentials") &&
-        resp.status() === 200
+      (resp) => resp.url().includes("/api/auth/callback/credentials") && resp.status() === 200
     ),
     page.locator('button[type="submit"]').click(),
   ]);

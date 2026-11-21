@@ -87,6 +87,8 @@ async function merge() {
   const r = (await server.invoke("merge_promoter", {
     keeper_promoter_id: "keeper",
     duplicate_promoter_id: "loser",
+    // OPE-1647 — merge_promoter now defaults to a write-nothing preview.
+    preview: false,
   })) as { isError?: boolean; content: Array<{ text: string }> };
   if (r.isError) throw new Error(r.content[0].text);
   return JSON.parse(r.content[0].text);
@@ -144,7 +146,9 @@ describe("merge_promoter — the rows no FK protects", () => {
         }
       ).payload_json
     );
-    expect(payload.children).toEqual({
+    // OPE-1647 widened the report (tables, collisions, harvest); these five are unchanged.
+    expect(payload.children).toMatchObject({
+      preview: false,
       candidatesRetargeted: 1,
       candidatesRejected: 1,
       candidatesHistoryRepointed: 1,

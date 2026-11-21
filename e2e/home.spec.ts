@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test.describe("Home Page", () => {
   test("loads successfully", async ({ page }) => {
@@ -68,17 +68,13 @@ test.describe("Navigation - Site-wide", () => {
     await page.goto("/");
 
     // Navigate to events
-    const eventsLink = page
-      .locator('header a[href="/events"], nav a[href="/events"]')
-      .first();
+    const eventsLink = page.locator('header a[href="/events"], nav a[href="/events"]').first();
     await expect(eventsLink).toBeVisible();
     await eventsLink.click();
     await expect(page).toHaveURL(/\/events/, { timeout: 15000 });
 
     // Navigate back home
-    const homeLink = page
-      .locator('header a[href="/"], nav a[href="/"]')
-      .first();
+    const homeLink = page.locator('header a[href="/"], nav a[href="/"]').first();
     await expect(homeLink).toBeVisible();
     await homeLink.click();
     await expect(page).toHaveURL(/\/$/);

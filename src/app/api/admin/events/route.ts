@@ -24,6 +24,7 @@ import { normalizeEventDate } from "@/lib/event-dates";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { evaluateGates } from "@/lib/event-date-gates";
+import { citeAdminVendorFields } from "@/lib/events/admin-vendor-citations";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -139,7 +140,7 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   }
 });
 
-export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   // Validate request body
   const validation = await validateRequestBody(request, eventCreateSchema);
   if (!validation.success) {
@@ -300,6 +301,24 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     });
     // OPE-767 — the reason is recorded, so it can be discharged on its own.
     if (formerVenue.kind === "flag") await raiseEventReviewFlag(db, eventId, "former_venue");
+
+    // OPE-1680 — a fee or deadline typed into the admin form is stored with a
+    // citation naming the admin edit as its source.
+    await citeAdminVendorFields(db, {
+      eventId,
+      writer: "admin-create",
+      userId: session.user.id,
+      vendorFeeMin: {
+        submitted: data.vendorFeeMin,
+        storedCents: dollarsToCents(data.vendorFeeMin),
+      },
+      vendorFeeMax: {
+        submitted: data.vendorFeeMax,
+        storedCents: dollarsToCents(data.vendorFeeMax),
+      },
+      applicationDeadline: { submitted: data.applicationDeadline, stored: applicationDeadline },
+      now: new Date(),
+    });
 
     // OPE-472 — attach to a series parent at write time. `event_series`
     // minted nothing between 2026-06-30 and this fix, so every event from

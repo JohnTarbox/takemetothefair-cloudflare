@@ -6,7 +6,8 @@ import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
 import { findUndatedDuplicate } from "@/lib/duplicates/find-undated-duplicate";
 import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { events, promoters, eventSchemaOrg, venues } from "@/lib/db/schema";
+import { events, promoters, eventSchemaOrg, venues, eventDataCitations } from "@/lib/db/schema";
+import { buildSubmissionVendorCitations } from "@/lib/events/submission-vendor-citations";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
 import {
@@ -774,6 +775,15 @@ export async function POST(request: NextRequest) {
 
     // Create the event
     const newEventId = crypto.randomUUID();
+    // OPE-1680 — resolved once, so the stored row and its citations read the
+    // same values.
+    const storedVendorFeeMinCents = dollarsToCents(data.vendorFeeMin);
+    const storedVendorFeeMaxCents = dollarsToCents(data.vendorFeeMax);
+    const storedApplicationDeadline = normalizeEventDate(data.applicationDeadline ?? null);
+    const eventIngestionMethod = assertIngestionMethod(
+      classifySource(sourceName, data.sourceUrl).ingestionMethod,
+      "suggest-event/submit"
+    );
     await db.insert(events).values({
       id: newEventId,
       name: effectiveName,
@@ -834,25 +844,22 @@ export async function POST(request: NextRequest) {
       // only enforcement point. (The `?? "community_suggestion"` fallback that
       // used to sit here was unreachable: classifySource never returns
       // null/undefined — it defaults to admin_manual by contract.)
-      ingestionMethod: assertIngestionMethod(
-        classifySource(sourceName, data.sourceUrl).ingestionMethod,
-        "suggest-event/submit"
-      ),
+      ingestionMethod: eventIngestionMethod,
       sourceUrl: data.sourceUrl || null,
       sourceId: data.sourceUrl ? createSlug(data.sourceUrl) : newEventId,
       syncEnabled: false,
       lastSyncedAt: new Date(),
       suggesterEmail: data.suggesterEmail || null,
       submittedByUserId: data.submittedByUserId || null,
-      vendorFeeMinCents: dollarsToCents(data.vendorFeeMin),
-      vendorFeeMaxCents: dollarsToCents(data.vendorFeeMax),
+      vendorFeeMinCents: storedVendorFeeMinCents,
+      vendorFeeMaxCents: storedVendorFeeMaxCents,
       vendorFeeNotes: data.vendorFeeNotes ?? null,
       indoorOutdoor: data.indoorOutdoor ?? null,
       estimatedAttendance: data.estimatedAttendance ?? null,
       eventScale: data.eventScale ?? null,
       applicationUrl: finalApplicationUrl,
       // OPE-198 — vendor-application deadline (date-only) + apply instructions.
-      applicationDeadline: normalizeEventDate(data.applicationDeadline ?? null),
+      applicationDeadline: storedApplicationDeadline,
       applicationInstructions: data.applicationInstructions ?? null,
       walkInsAllowed: data.walkInsAllowed ?? null,
       // Cohort 2 (2026-06-01) — populated when the inbound-email workflow
@@ -864,6 +871,38 @@ export async function POST(request: NextRequest) {
       // lane (the headless worker can't web-confirm), not an upcoming event.
       // Operator triage queue at /admin/events?flagged=1.
     });
+    // OPE-1680 — a stored vendor fee / deadline carries its citation: the
+    // submitter supplied it (`user_submitted`). Written after the event row so a
+    // citation never exists without its value. A failure is logged at error
+    // level rather than costing the submission; the `vendor-field-citations`
+    // probe goes red on any value left uncited.
+    const vendorCitationRows = buildSubmissionVendorCitations({
+      eventId: newEventId,
+      sourceUrl: data.sourceUrl,
+      sourceName,
+      ingestionMethod: eventIngestionMethod,
+      createdBy: data.submittedByUserId,
+      vendorFeeMin: { submitted: data.vendorFeeMin, storedCents: storedVendorFeeMinCents },
+      vendorFeeMax: { submitted: data.vendorFeeMax, storedCents: storedVendorFeeMaxCents },
+      applicationDeadline: {
+        submitted: data.applicationDeadline,
+        stored: storedApplicationDeadline,
+      },
+      now: new Date(),
+    });
+    if (vendorCitationRows.length > 0) {
+      try {
+        await db.insert(eventDataCitations).values(vendorCitationRows);
+      } catch (err) {
+        await logError(db, {
+          source: "api/suggest-event/submit:vendor-citations",
+          message: "vendor fee/deadline citation insert failed",
+          error: err,
+          context: { eventId: newEventId, fields: vendorCitationRows.map((r) => r.fieldName) },
+        }).catch(() => {});
+      }
+    }
+
     // OPE-767 — each reason recorded, so each can be discharged on its own.
     // (Was one boolean OR of all five; nothing could tell them apart later.)
     // OPE-378 — an invented name reads perfectly, so it needs a human.

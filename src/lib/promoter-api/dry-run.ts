@@ -33,10 +33,12 @@ type Db = ReturnType<typeof getCloudflareDb>;
  */
 export function readDryRun(
   request: Request,
-  json: unknown
+  json: unknown,
+  /** A TEST key (OPE-1625) makes every write a dry run, whatever the request asks. */
+  caller?: Pick<Caller, "testKey">
 ): { ok: true; dryRun: boolean; value: unknown } | { ok: false; response: Response } {
   const q = new URL(request.url).searchParams.get("dry_run");
-  const fromQuery = q !== null && /^(true|1)$/i.test(q);
+  const fromQuery = (q !== null && /^(true|1)$/i.test(q)) || !!caller?.testKey;
   if (!json || typeof json !== "object" || Array.isArray(json) || !("dry_run" in json))
     return { ok: true, dryRun: fromQuery, value: json };
   const { dry_run, ...rest } = json as Record<string, unknown>;
@@ -80,7 +82,13 @@ async function outcomeFor(db: Db, caller: Caller, r: ServiceResult): Promise<Out
   if (r.body.outcome === "created" || !r.body.event_id)
     return {
       kind: "new",
-      summary: "New: this would create a listing that goes to our review queue first.",
+      // OPE-1620 ruling: a trusted, claimed promoter's new event skips review.
+      summary:
+        r.body.status === "APPROVED"
+          ? "New: this would create a listing that goes live right away."
+          : r.body.status === "TENTATIVE"
+            ? "New: this would create a listing that goes live as tentative until it has a venue."
+            : "New: this would create a listing that goes to our review queue first.",
     };
   const listing = await publicListing(db, r.body.event_id, { ownerPromoterId: caller.promoterId });
   return {
@@ -112,6 +120,7 @@ export async function dryRunResponse(
         status: result.httpStatus,
         outcome: result.body.outcome,
         event_id: result.body.event_id,
+        listing_status: result.body.status,
         ...(result.body.not_compared ? { not_compared: result.body.not_compared } : {}),
         ...(result.body.warnings ? { warnings: result.body.warnings } : {}),
       }
@@ -124,7 +133,13 @@ export async function dryRunResponse(
         },
       };
   return NextResponse.json(
-    { dry_run: true, external_id: externalId, would_return, report },
+    {
+      dry_run: true,
+      ...(caller.testKey ? { test_key: true } : {}),
+      external_id: externalId,
+      would_return,
+      report,
+    },
     { status: 200 }
   );
 }

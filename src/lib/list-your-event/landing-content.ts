@@ -65,3 +65,14 @@ export const LIST_YOUR_EVENT_PATHS: readonly string[] = [
   "/list-your-event",
   ...LIST_YOUR_EVENT_STATE_SLUGS.map((s) => `/list-your-event/${s}`),
 ];
+
+/**
+ * OPE-1624 — John's promoter-facing post (published 2026-11-12, id 9be55a5b).
+ * Linked from /list-your-event (and its state pages) and /for-promoters, next
+ * to the "List your event free" call to action. One constant, so a slug change
+ * is one edit. The post lists the same intake channels as the help page: when
+ * a channel ships, is renamed or is pulled, update the post too.
+ */
+export const PROMOTER_GUIDE_POST_PATH =
+  "/blog/list-your-event-free-how-promoters-get-their-fairs-and-shows-on-meet-me-at-the-fair";
+export const PROMOTER_GUIDE_LINK_TEXT = "Read more: why and how to list your event.";

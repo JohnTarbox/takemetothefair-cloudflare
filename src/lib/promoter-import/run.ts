@@ -254,6 +254,13 @@ export interface CommitContext {
    * an event's name must not get a second hub). The caller checks it exists.
    */
   seriesId?: string;
+  /**
+   * OPE-1630 — the reviewer PICKED this venue (`review_feed_item` venue_id): use
+   * it instead of re-resolving the row's venue text, which can be ambiguous
+   * (two same-named rows in one city) even when the row was filled from the
+   * venue itself. The caller checks it exists.
+   */
+  venueId?: string;
 }
 
 const citationSource = (ctx: CommitContext, row: number) =>
@@ -405,13 +412,16 @@ export async function createEvent(db: Db, ctx: CommitContext, r: ImportRow): Pro
       outcome: "skipped",
       reason: "Event name must contain letters or numbers.",
     };
-  const venue = await autoLinkVenue(db, {
-    venueName: v.venueName,
-    venueAddress: v.address,
-    venueCity: v.city,
-    venueState: v.state,
-  });
-  const venueId = venue.venueId;
+  const venueId =
+    ctx.venueId ??
+    (
+      await autoLinkVenue(db, {
+        venueName: v.venueName,
+        venueAddress: v.address,
+        venueCity: v.city,
+        venueState: v.state,
+      })
+    ).venueId;
   const start = normalizeEventDate(v.startDate);
   const end = normalizeEventDate(v.endDate);
   const formerVenue = await checkEventVenue(db, venueId, end ?? start);
@@ -498,9 +508,7 @@ export async function createEvent(db: Db, ctx: CommitContext, r: ImportRow): Pro
     ctx,
     r,
     eventId,
-    venue.venueId
-      ? null
-      : [v.venueName, v.address, v.city, v.state, v.zip].filter(Boolean).join(", ")
+    venueId ? null : [v.venueName, v.address, v.city, v.state, v.zip].filter(Boolean).join(", ")
   );
   return { row: r.rowNumber, outcome: "created", event_id: eventId };
 }
@@ -525,25 +533,19 @@ async function citeRow(
     ],
     ["hours", v.hours ? `${v.hours.open}-${v.hours.close}` : null],
     ["description", v.description],
-    [
-      "ticket_price_min_cents",
-      v.ticketPriceMin === null ? null : String(dollarsToCents(v.ticketPriceMin)),
-    ],
-    [
-      "ticket_price_max_cents",
-      v.ticketPriceMax === null ? null : String(dollarsToCents(v.ticketPriceMax)),
-    ],
+    // OPE-1680 — citation `field_name`s are the canonical names, in dollars,
+    // not the `_cents` columns: `CITED_VALUE_FIELDS` (mcp-server
+    // citation-coverage.ts), the vendor-field-citations probe and email
+    // auto-apply all read `vendor_fee_min` etc. Under `_cents` these rows
+    // were invisible to every reader (prod: 0 such rows on 2026-11-18).
+    ["ticket_price_min", v.ticketPriceMin === null ? null : String(v.ticketPriceMin)],
+    ["ticket_price_max", v.ticketPriceMax === null ? null : String(v.ticketPriceMax)],
     ["application_url", v.applicationUrl],
     ["application_deadline", v.applicationDeadline],
+    ["vendor_fee_min", v.vendorFeeMin === null ? null : String(v.vendorFeeMin)],
     [
-      "vendor_fee_min_cents",
-      v.vendorFeeMin === null ? null : String(dollarsToCents(v.vendorFeeMin)),
-    ],
-    [
-      "vendor_fee_max_cents",
-      (v.vendorFeeMax ?? v.vendorFeeMin) === null
-        ? null
-        : String(dollarsToCents(v.vendorFeeMax ?? v.vendorFeeMin)),
+      "vendor_fee_max",
+      (v.vendorFeeMax ?? v.vendorFeeMin) === null ? null : String(v.vendorFeeMax ?? v.vendorFeeMin),
     ],
     ["source_url", v.eventUrl],
     ["image_url", v.imageUrl],

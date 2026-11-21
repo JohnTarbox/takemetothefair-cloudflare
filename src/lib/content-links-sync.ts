@@ -196,6 +196,49 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** OPE-1684 — one post's planned (dry run) or applied link rewrite. */
+export interface SlugLinkRepairPost {
+  id: string;
+  slug: string;
+  status: string | null;
+  replacements: number;
+  /** ~60 chars around the first match, before and after the rewrite. */
+  before: string;
+  after: string;
+  /** Body length change in characters: replacements × (new − old slug length). */
+  lengthDelta: number;
+  applied: boolean;
+  error?: string;
+}
+
+/**
+ * OPE-1684 — rewrite `/<path>/<oldSlug>` → `/<path>/<newSlug>` in one body.
+ * Only the slug segment changes: a `?query` / `#fragment` suffix, the scheme
+ * and host of an absolute link, and the anchor text are left byte-for-byte.
+ * Boundary-safe: `/blog/x` is rewritten, `/blog/x-2026` is not.
+ */
+export function rewriteSlugLinksInBody(
+  body: string,
+  path: string,
+  oldSlug: string,
+  newSlug: string
+): { body: string; replacements: number; before: string; after: string } {
+  const linkRe = new RegExp(`/${path}/${escapeRegExp(oldSlug)}(?=[^a-z0-9-]|$)`, "gi");
+  const replacement = `/${path}/${newSlug}`;
+  const first = body.search(linkRe);
+  const replacements = body.match(linkRe)?.length ?? 0;
+  if (replacements === 0 || first < 0) return { body, replacements: 0, before: "", after: "" };
+  const newBody = body.replace(linkRe, replacement);
+  const from = Math.max(0, first - 30);
+  const oldLen = `/${path}/${oldSlug}`.length;
+  return {
+    body: newBody,
+    replacements,
+    before: body.slice(from, first + oldLen + 30),
+    after: newBody.slice(from, first + replacement.length + 30),
+  };
+}
+
 /**
  * A3.3 / K43 — slug-change auto-repair hook.
  *
@@ -217,10 +260,17 @@ export async function repairBlogLinksForSlugChange(
   db: ReturnType<typeof getCloudflareDb>,
   targetType: ContentLinkTargetType,
   oldSlug: string,
-  newSlug: string
-): Promise<{ postsUpdated: number; linksRewritten: number }> {
+  newSlug: string,
+  /**
+   * OPE-1684 — `dryRun` computes the same per-post plan and writes nothing
+   * (no body, no updated_at, no content_links). Default false, so the
+   * existing slug-change callers behave exactly as before.
+   */
+  opts: { dryRun?: boolean } = {}
+): Promise<{ postsUpdated: number; linksRewritten: number; posts: SlugLinkRepairPost[] }> {
+  const dryRun = opts.dryRun === true;
   if (!oldSlug || !newSlug || oldSlug === newSlug) {
-    return { postsUpdated: 0, linksRewritten: 0 };
+    return { postsUpdated: 0, linksRewritten: 0, posts: [] };
   }
   const path = SLUG_PATH_BY_TYPE[targetType];
 
@@ -237,35 +287,62 @@ export async function repairBlogLinksForSlugChange(
       )
     );
   const postIds = Array.from(new Set(rows.map((r) => r.sourceId)));
-  if (postIds.length === 0) return { postsUpdated: 0, linksRewritten: 0 };
+  if (postIds.length === 0) return { postsUpdated: 0, linksRewritten: 0, posts: [] };
 
-  const linkRe = new RegExp(`/${path}/${escapeRegExp(oldSlug)}(?=[^a-z0-9-]|$)`, "gi");
-  const replacement = `/${path}/${newSlug}`;
-
+  const lengthPer = newSlug.length - oldSlug.length;
+  const out: SlugLinkRepairPost[] = [];
   let postsUpdated = 0;
   let linksRewritten = 0;
   for (let i = 0; i < postIds.length; i += CONTENT_LINK_INARRAY_CHUNK) {
     const chunk = postIds.slice(i, i + CONTENT_LINK_INARRAY_CHUNK);
     const posts = await db
-      .select({ id: blogPosts.id, slug: blogPosts.slug, body: blogPosts.body })
+      .select({
+        id: blogPosts.id,
+        slug: blogPosts.slug,
+        body: blogPosts.body,
+        status: blogPosts.status,
+      })
       .from(blogPosts)
       .where(inArray(blogPosts.id, chunk));
     for (const post of posts) {
       if (!post.body) continue;
-      const matches = post.body.match(linkRe);
-      if (!matches || matches.length === 0) continue;
-      const newBody = post.body.replace(linkRe, replacement);
-      if (newBody === post.body) continue;
+      const r = rewriteSlugLinksInBody(post.body, path, oldSlug, newSlug);
+      if (r.replacements === 0 || r.body === post.body) continue;
+      const entry: SlugLinkRepairPost = {
+        id: post.id,
+        slug: post.slug,
+        status: post.status ?? null,
+        replacements: r.replacements,
+        before: r.before,
+        after: r.after,
+        lengthDelta: r.body.length - post.body.length,
+        applied: false,
+      };
+      // The rewrite is a pure slug swap, so the length change is exactly
+      // replacements × slug-length difference. Anything else means the regex
+      // touched more than link targets — refuse to write that body.
+      if (entry.lengthDelta !== r.replacements * lengthPer) {
+        entry.error = "length check failed — body not written";
+        out.push(entry);
+        continue;
+      }
+      if (dryRun) {
+        out.push(entry);
+        linksRewritten += r.replacements;
+        continue;
+      }
       try {
         await db
           .update(blogPosts)
-          .set({ body: newBody, updatedAt: new Date() })
+          .set({ body: r.body, updatedAt: new Date() })
           .where(eq(blogPosts.id, post.id));
         // Re-sync so the content_links rows pick up the new slug + resolved id.
-        await syncContentLinks(db, post.id, newBody, { notify: false, sourceSlug: post.slug });
+        await syncContentLinks(db, post.id, r.body, { notify: false, sourceSlug: post.slug });
+        entry.applied = true;
         postsUpdated++;
-        linksRewritten += matches.length;
+        linksRewritten += r.replacements;
       } catch (err) {
+        entry.error = err instanceof Error ? err.message : "write failed";
         await logError(db, {
           level: "warn",
           message: "Blog link slug-change repair failed for post",
@@ -274,10 +351,11 @@ export async function repairBlogLinksForSlugChange(
           context: { postId: post.id, targetType, oldSlug, newSlug },
         });
       }
+      out.push(entry);
     }
   }
 
-  return { postsUpdated, linksRewritten };
+  return { postsUpdated, linksRewritten, posts: out };
 }
 
 /**

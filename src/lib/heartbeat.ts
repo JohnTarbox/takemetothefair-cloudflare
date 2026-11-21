@@ -267,6 +267,67 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     },
   },
   {
+    // OPE-1673 — a vendor fee or application deadline is never stored without
+    // its source. suggest_event drops an uncited value; update_event refuses
+    // it; email auto-apply cites what it applies. So after arming, NO event
+    // should hold one of these values with no ACTIVE citation for that field.
+    // Demand = the OLDEST armed-window event that does (no evidence can
+    // discharge it except citing or clearing the value), so the probe goes red
+    // 48h after the first uncited value and stays red until it is repaired.
+    // SCOPE: the MCP research lanes (ingestion_method discovery / web_research
+    // — produced only by suggest_event's source_label), which is where the
+    // uncited values were measured. OPE-1680 widened it as each other writer
+    // began citing (see the method list below). The promoter portal and import
+    // leave ingestion_method NULL, so they are guarded by their own tests, not
+    // by this probe, until OPE-486 names a method for them. OPE-1680: rollover
+    // (`auto_rollover`) IS in scope — it no longer copies last year's fee, so a
+    // rolled edition holding an uncited fee is a regression this probe owns.
+    // Tombstones (merged_into) are excluded.
+    name: "vendor-field-citations",
+    ownerOpe: "OPE-1673",
+    label: "every new vendor fee / deadline has an active citation",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: async (db) => {
+      const uncited = (field: string) =>
+        sql`not exists (select 1 from ${eventDataCitations} c where c.event_id = ${events.id} and c.state = 'active' and c.field_name = ${field})`;
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${events.createdAt})` })
+        .from(events)
+        .where(
+          and(
+            sql`${events.createdAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'vendor-field-citations'), 4102444800)`,
+            isNull(events.mergedInto),
+            // OPE-1680 — + the three methods the suggest-event submit route
+            // produces (vendor portal, email, public form), now that it cites.
+            inArray(events.ingestionMethod, [
+              "discovery",
+              "web_research",
+              "auto_rollover",
+              "email_submission",
+              "vendor_submission",
+              "community_suggestion",
+              // OPE-1680 — + the admin writers, now that they cite: admin
+              // create and URL import land as admin_manual, admin create with
+              // a source URL as direct_scrape / aggregator_import. The scraper
+              // import and series occurrences share these methods but store
+              // no fee or deadline.
+              "admin_manual",
+              "direct_scrape",
+              "aggregator_import",
+            ]),
+            or(
+              and(isNotNull(events.vendorFeeMinCents), uncited("vendor_fee_min")),
+              and(isNotNull(events.vendorFeeMaxCents), uncited("vendor_fee_max")),
+              and(isNotNull(events.applicationDeadline), uncited("application_deadline"))
+            )
+          )
+        );
+      const demand = r?.t != null ? new Date(Number(r.t) * 1000) : null;
+      return demandConditionalEvidence(demand, null, new Date());
+    },
+  },
+  {
     // OPE-1089 — proof the intent classifier is still ANSWERING, not just running.
     //
     // This path has gone fully dark twice and nobody noticed from the inside:
@@ -773,6 +834,43 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1586 — the daily TENTATIVE → SCHEDULED auto-promotion rule.
+    //
+    // Watches the run STAMP, not promotions: a quiet week legitimately
+    // promotes nothing (every page held, or no ready rows), so a yield probe
+    // would go red on a healthy rule. The rule stamps on every run, including
+    // a run that promoted zero. 48h: daily, one miss tolerated.
+    name: "tentative-autopromote",
+    ownerOpe: "OPE-1586",
+    label: "Daily TENTATIVE → SCHEDULED auto-promotion (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:tentative-autopromote")
+      ),
+  },
+  {
+    // OPE-1596 — the nightly elapsed-PENDING expiry. Watches the run stamp,
+    // not yield: once the backlog is cleared most nights expire zero rows.
+    // The rule stamps on every run. 48h: daily, one miss tolerated.
+    name: "elapsed-pending-expiry",
+    ownerOpe: "OPE-1596",
+    label: "Nightly expiry of elapsed PENDING submissions (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:elapsed-pending-expiry")
+      ),
+  },
+  {
     // OPE-588 — proof the GSC sweep's FILLER tiers still select work.
     //
     // Tiers 1, 2, 2c and REL5 were unreachable for two months and nothing said
@@ -848,6 +946,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         agentHeartbeats,
         agentHeartbeats.lastSeenAt,
         eq(agentHeartbeats.agentCode, "watchdog:host-silence")
+      ),
+  },
+  {
+    // OPE-1655 — proof the hourly deploy-lag watch is itself running. It stamps
+    // `watchdog:deploy-lag` on every run, whatever the verdict (ok, lagging, or
+    // unknown when GitHub would not answer), so a dead hourly cron goes red here
+    // and the alarm that catches a frozen deploy cannot itself die quietly.
+    // 3h = two missed hourly runs plus slack.
+    name: "deploy-lag-watch",
+    ownerOpe: "OPE-1655",
+    label: "Hourly production-behind-main watch (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:deploy-lag")
       ),
   },
   {
@@ -1215,6 +1332,42 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         supportObligations.openedAt,
         eq(supportObligations.kind, "contact")
       ),
+  },
+  {
+    // OPE-1683 — a sent operator draft answers its recipient's contact
+    // obligation. The email-jobs consumer closes it on the confirmed send, so
+    // after arming NO sent `operator:outbound` row should sit next to an OPEN
+    // contact obligation from the same address that opened before the send.
+    // Demand = the oldest such send (only closing the obligation discharges
+    // it); 2h is ample for a close that runs in the same consumer pass.
+    name: "operator-draft-closes-obligation",
+    ownerOpe: "OPE-1683",
+    label: "sent operator draft → contact obligation closed",
+    priority: "P1",
+    expectedWindowHours: 2,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${emailSendLedger.sentAt})` })
+        .from(emailSendLedger)
+        .innerJoin(
+          supportObligations,
+          and(
+            sql`lower(${supportObligations.fromAddress}) = lower(${emailSendLedger.recipient})`,
+            eq(supportObligations.kind, "contact"),
+            eq(supportObligations.status, "open"),
+            sql`${supportObligations.openedAt} <= ${emailSendLedger.sentAt}`
+          )
+        )
+        .where(
+          and(
+            eq(emailSendLedger.source, "operator:outbound"),
+            eq(emailSendLedger.status, "sent"),
+            sql`${emailSendLedger.sentAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'operator-draft-closes-obligation'), 4102444800)`
+          )
+        );
+      const demand = r?.t != null ? new Date(Number(r.t) * 1000) : null;
+      return demandConditionalEvidence(demand, null, new Date());
+    },
   },
   {
     // OPE-403 — proof the lane still RECORDS what it stored.
@@ -1779,6 +1932,30 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     expectedWindowHours: 7 * 24,
     lastEvidenceAt: (db) =>
       maxTs(db, promoterEnrichmentCandidates, promoterEnrichmentCandidates.createdAt),
+  },
+  {
+    // OPE-1689 — the promoter run's one same-site Contact-page hop STAGED a
+    // value. Only that hop writes a candidate whose source_url is not the
+    // promoter's own website (the homepage pass stamps website verbatim), so
+    // this reads the hop's output, not the enrichment cron's. It fires only
+    // when a promoter's email/phone is empty AND its contact page yields one
+    // (2 of 4 in the 11-18 hand check), so the window is two weeks, not one.
+    name: "promoter-contact-page-hop",
+    ownerOpe: "OPE-1689",
+    label: "Promoter enrichment Contact-page hop → candidate",
+    priority: "P1",
+    expectedWindowHours: 14 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        promoterEnrichmentCandidates,
+        promoterEnrichmentCandidates.createdAt,
+        sql`${promoterEnrichmentCandidates.proposedField} IN ('contact_email','contact_phone')
+            AND ${promoterEnrichmentCandidates.sourceUrl} IS NOT NULL
+            AND ${promoterEnrichmentCandidates.sourceUrl} <> COALESCE(
+              (SELECT trim(p.website) FROM promoters p
+                WHERE p.id = ${promoterEnrichmentCandidates.promoterId}), '')`
+      ),
   },
   {
     // OPE-1503 — re-measured after gate tuning (OPE-1032 09-15, OPE-815 09-23)
@@ -2445,6 +2622,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1664 — the */10 MCP cron drains the KV buffer of error_logs rows a D1
+    // overload kept out of the table. Evidence is the RUN STAMP, written only
+    // when a drain COMPLETED (an empty buffer included): a drain that D1 refused,
+    // or that threw, writes none. 2h = twelve missed runs, so one blip doesn't
+    // fire it, but a dead replay path is seen the same morning.
+    name: "error-log-buffer-replay",
+    ownerOpe: "OPE-1664",
+    label: "error_logs KV buffer replay (*/10 MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 2,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:error-log-buffer-replay")
+      ),
+  },
+  {
     // OPE-993 — error_logs 30-day retention, moved off a 1%-per-write dice roll
     // (src/lib/logger.ts) onto the MCP 06:00Z cron. Evidence is the RUN STAMP,
     // which is written only when the prune SUCCEEDED (0 deleted included): a
@@ -2678,6 +2874,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         .where(eq(promoterEventFeeds.enabled, true));
       return feedReaderEvidence(rows, new Date());
     },
+  },
+  {
+    // OPE-1633 — proof the hourly feed poll still EVALUATES feed health. The
+    // flags table is rightly empty while every feed is healthy, so the evidence
+    // is the one info row each hourly run writes under `feeds:health-eval`
+    // after the freshness pass (mcp-server/src/feeds/schedule.ts). 3h = three
+    // missed hourly runs. Polling is on (OPE-1626), so it is live from ship.
+    name: "feed-health-eval",
+    ownerOpe: "OPE-1633",
+    label: "the hourly feed poll evaluated every enabled feed's health",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: async (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "feeds:health-eval"), eq(errorLogs.level, "info"))
+      ),
   },
   {
     // OPE-1610 — proof the hourly pending-contact attach job still RUNS. Most

@@ -22,12 +22,13 @@
  * item with an event, and `matched_outside_filter` names the excluded ones;
  * "dropped" is excluded AND unmatched (review_state = 'dropped').
  */
-import { and, eq, gte, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, isNull, sql, type SQL } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "./index";
 import {
   eventDiscrepancies,
   events,
+  feedHealthFlags,
   promoterEventFeeds,
   promoterFeedItems,
   promoters,
@@ -49,11 +50,14 @@ const HEALTHY_POLL_MULTIPLE = 2;
 const HEALTHY_MIN_HOURS = 24;
 
 /**
- * Until OPE-1630 (feed review step) ships there is no record of a review, so
- * reviewed / approved / rejected are NOT MEASURED — never 0.
+ * reviewed / approved / rejected come from the feed review step (OPE-1630,
+ * live 2026-11-12): `promoter_feed_items.reviewed_at` says an item was reviewed,
+ * and its latest `admin_actions` row (`feed_item.<action>`) says which way —
+ * because `approve` and `link` both leave the item `linked`. Before that step
+ * shipped these read null "not yet measured"; a review count of 0 is now a real 0.
  */
-export const REVIEW_NOT_MEASURED_REASON =
-  "not yet measured: the feed review step (OPE-1630) has not shipped, so no review is recorded";
+export const FEED_REVIEW_ACTION_PREFIX = "feed_item." as const;
+const APPROVE_ACTIONS = new Set(["feed_item.approve", "feed_item.approve_as_occurrence"]);
 
 // ── Inputs (plain rows) ──────────────────────────────────────────────────────
 
@@ -81,6 +85,10 @@ export interface FeedItemRow {
   missingSince: Date | null;
   /** Whether the linked event passes the public-visibility gate; null when unlinked. */
   eventPublic: boolean | null;
+  /** OPE-1630 — when a reviewer acted on the item; null/absent if never reviewed. */
+  reviewedAt?: Date | null;
+  /** OPE-1630 — the latest review action (`feed_item.approve` / `…approve_as_occurrence` / `…link` / `…reject`). */
+  reviewAction?: string | null;
 }
 
 export interface FeedChangeRow {
@@ -100,8 +108,18 @@ export interface CoverageRow {
   feedLinked: boolean;
 }
 
+/** OPE-1633 — one OPEN feed health flag (feed_health_flags, cleared_at IS NULL). */
+export interface FeedHealthFlagRow {
+  feedId: string;
+  check: string;
+  detail: string | null;
+  firstSeenAt: Date;
+}
+
 export interface FeedLaneInput {
   now: Date;
+  /** OPE-1633 — open health flags; omitted = none. */
+  flags?: FeedHealthFlagRow[];
   windowDays: number;
   targetDays?: number;
   feeds: FeedRow[];
@@ -157,6 +175,14 @@ export interface FeedLaneMetrics {
     enabled: number;
     healthy: number;
     healthy_rule: string;
+    /** OPE-1633 — open health flags on ENABLED feeds, oldest first. */
+    open_health_flags: Array<{
+      feed_id: string;
+      promoter: string | null;
+      check: string;
+      detail: string | null;
+      first_seen_at: string;
+    }>;
   };
   total: FeedLaneSection;
   coverage: {
@@ -241,14 +267,11 @@ function buildSection(
     byRule.set(rule, (byRule.get(rule) ?? 0) + 1);
   }
 
-  const notMeasured = (step: string, base: string): FunnelStep => ({
-    step,
-    count: null,
-    rate: null,
-    rate_base: base,
-    formula: `${step}: review actions recorded on items in the window`,
-    reason: REVIEW_NOT_MEASURED_REASON,
-  });
+  const reviewedRows = inWindow.filter((i) => i.reviewedAt != null);
+  const approvedCount = reviewedRows.filter(
+    (i) => i.reviewAction != null && APPROVE_ACTIONS.has(i.reviewAction)
+  ).length;
+  const rejectedCount = reviewedRows.filter((i) => i.reviewState === "rejected").length;
 
   const steps: FunnelStep[] = [
     {
@@ -287,9 +310,29 @@ function buildSection(
       rate_base: "included",
       formula: "included items matching no event (review_state = 'awaiting_review')",
     },
-    notMeasured("reviewed", "new"),
-    notMeasured("approved", "reviewed"),
-    notMeasured("rejected", "reviewed"),
+    {
+      step: "reviewed",
+      count: reviewedRows.length,
+      rate: rate(reviewedRows.length, included),
+      rate_base: "included",
+      formula:
+        "read items a reviewer acted on (reviewed_at set: approve, approve_as_occurrence, link or reject — OPE-1630)",
+    },
+    {
+      step: "approved",
+      count: approvedCount,
+      rate: rate(approvedCount, reviewedRows.length),
+      rate_base: "reviewed",
+      formula:
+        "reviewed items whose latest review action created the listing (admin_actions feed_item.approve / feed_item.approve_as_occurrence); a `link` to an existing listing is reviewed but not approved",
+    },
+    {
+      step: "rejected",
+      count: rejectedCount,
+      rate: rate(rejectedCount, reviewedRows.length),
+      rate_base: "reviewed",
+      formula: "reviewed items a reviewer rejected (review_state = 'rejected')",
+    },
     {
       step: "published",
       count: published,
@@ -397,6 +440,7 @@ export function buildFeedLaneMetrics(input: FeedLaneInput): FeedLaneMetrics {
   const healthyFeeds = input.feeds.filter((f) => isFeedHealthy(f, now));
   const healthyPromoters = new Set(healthyFeeds.map((f) => f.promoterId));
   const feedPromoter = new Map(input.feeds.map((f) => [f.id, f.promoterId]));
+  const feedName = new Map(input.feeds.map((f) => [f.id, f.promoterName]));
 
   const total = buildSection(input.items, enabledIds, input.changes, now, since, targetDays);
 
@@ -430,6 +474,16 @@ export function buildFeedLaneMetrics(input: FeedLaneInput): FeedLaneMetrics {
       enabled: enabledIds.size,
       healthy: healthyFeeds.length,
       healthy_rule: `enabled, and last_ok_at within max(${HEALTHY_MIN_HOURS}h, ${HEALTHY_POLL_MULTIPLE} × poll_interval_hours)`,
+      open_health_flags: (input.flags ?? [])
+        .filter((fl) => enabledIds.has(fl.feedId))
+        .sort((a, b) => a.firstSeenAt.getTime() - b.firstSeenAt.getTime())
+        .map((fl) => ({
+          feed_id: fl.feedId,
+          promoter: feedName.get(fl.feedId) ?? null,
+          check: fl.check,
+          detail: fl.detail,
+          first_seen_at: fl.firstSeenAt.toISOString(),
+        })),
     },
     total,
     coverage: {
@@ -477,13 +531,27 @@ export function buildFeedLaneMetrics(input: FeedLaneInput): FeedLaneMetrics {
   };
 }
 
+/** "1 health flag open (Gurley Antique Shows: volume_drop)" — OPE-1633. Pure. */
+export function feedHealthFlagsText(m: FeedLaneMetrics, maxNamed = 3): string | null {
+  const flags = m.feeds.open_health_flags ?? [];
+  if (flags.length === 0) return null;
+  const named = flags
+    .slice(0, maxNamed)
+    .map((f) => `${f.promoter ?? f.feed_id}: ${f.check}`)
+    .join("; ");
+  const more = flags.length > maxNamed ? `; +${flags.length - maxNamed} more` : "";
+  return `${flags.length} health flag${flags.length === 1 ? "" : "s"} open (${named}${more})`;
+}
+
 /** The digest's one feeds line. Pure. */
 export function feedLaneDigestLine(m: FeedLaneMetrics): string {
   const b = m.total.backlog;
   const oldest = b.oldest_age_days.value;
   const oldestTxt = oldest == null ? "" : ` (oldest ${oldest < 1 ? "<1" : Math.floor(oldest)}d)`;
+  const flags = feedHealthFlagsText(m);
   return (
     `Feeds: ${m.feeds.healthy} of ${m.feeds.enabled} healthy, ` +
+    (flags ? `${flags}, ` : "") +
     `${b.awaiting_review.value ?? 0} awaiting review${oldestTxt}, ` +
     `${m.coverage.new_to_us_7d.value ?? 0} new to us this week (get_feed_lane_metrics, OPE-1632).`
   );
@@ -546,6 +614,13 @@ export async function loadFeedLaneMetrics(
           lastSeenAt: i.lastSeenAt,
           startLocal: i.startLocal,
           missingSince: i.missingSince,
+          reviewedAt: i.reviewedAt,
+          // The latest review action, only for reviewed rows (indexed on
+          // admin_actions(target_type, target_id)).
+          reviewAction: sql<string | null>`CASE WHEN ${i.reviewedAt} IS NULL THEN NULL ELSE
+            (SELECT a.action FROM admin_actions a WHERE a.target_type = 'promoter_feed_item'
+              AND a.target_id = ${i.id} AND a.action LIKE 'feed_item.%'
+              ORDER BY a.created_at DESC LIMIT 1) END`,
           eventPublic: sql<number | null>`CASE WHEN ${i.eventId} IS NULL THEN NULL
             WHEN EXISTS (SELECT 1 FROM ${events} WHERE ${events.id} = ${i.eventId} AND ${publicWhere}) THEN 1 ELSE 0 END`,
         })
@@ -616,9 +691,29 @@ export async function loadFeedLaneMetrics(
     feedLinked: linkedIds.has(c.id),
   }));
 
+  // OPE-1633 — open health flags for the feeds in scope (tiny table).
+  const flagRows = feedIds.length
+    ? await db
+        .select({
+          feedId: feedHealthFlags.feedId,
+          check: feedHealthFlags.checkName,
+          detail: feedHealthFlags.detail,
+          firstSeenAt: feedHealthFlags.firstSeenAt,
+        })
+        .from(feedHealthFlags)
+        .innerJoin(f, eq(f.id, feedHealthFlags.feedId))
+        .where(
+          and(
+            isNull(feedHealthFlags.clearedAt),
+            opts.promoterId ? eq(f.promoterId, opts.promoterId) : undefined
+          )
+        )
+    : [];
+
   return buildFeedLaneMetrics({
     now,
     windowDays,
+    flags: flagRows,
     targetDays: opts.targetDays,
     feeds: feeds.map((x) => ({ ...x, enabled: !!x.enabled })),
     items,

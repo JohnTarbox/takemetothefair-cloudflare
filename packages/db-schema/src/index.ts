@@ -378,6 +378,13 @@ export const promoters = sqliteTable(
     claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
     claimedAt: integer("claimed_at", { mode: "timestamp" }),
     claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
+    // OPE-1682 (drizzle/0432) — the promoter opts in to listing its camps and
+    // workshops from its own feed, which the kids'-program rules otherwise drop.
+    // Applies ONLY while the promoter is registered (claimed + user_id) — John's
+    // ruling 2026-11-18; see campsWorkshopsOptInActive in @takemetothefair/utils/feeds.
+    includeCampsWorkshops: integer("include_camps_workshops", { mode: "boolean" })
+      .notNull()
+      .default(false),
     /**
      * OPE-979 (drizzle/0285) — is this business still trading?
      *
@@ -2111,6 +2118,11 @@ export const promoterApiKeys = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
     revokedAt: integer("revoked_at", { mode: "timestamp" }),
+    /**
+     * OPE-1625 (drizzle/0418) — a TEST key can never publish: every write
+     * endpoint answers the dry-run report and the route gets a read-only db.
+     */
+    isTest: integer("is_test", { mode: "boolean" }).notNull().default(false),
   },
   (t) => [
     uniqueIndex("uq_promoter_api_keys_key_id").on(t.keyId),
@@ -3743,6 +3755,9 @@ export const faultSignatures = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     /** OPE-1174 — 'class' when the status was inherited, not ruled. See drizzle/0330. */
     inheritedFrom: text("inherited_from"),
+    /** OPE-1665 — on a `d1-platform:*` incident row only: distinct routes / sources the burst hit. See drizzle/0426. */
+    incidentRoutes: integer("incident_routes"),
+    incidentSources: integer("incident_sources"),
   },
   (t) => [index("idx_fault_signatures_status").on(t.status)]
 );
@@ -3855,6 +3870,12 @@ export const emailSendLedger = sqliteTable(
   (table) => [
     index("idx_email_send_ledger_sent_at").on(table.sentAt),
     index("idx_email_send_ledger_recipient").on(table.recipient),
+    // OPE-1663 — prod ALSO has `idx_email_send_ledger_lower_recipient_sent_at
+    // ON (lower(recipient), sent_at)` (drizzle/0427). The bare-column index above
+    // cannot serve `lower(recipient) = …`, which is how every case-insensitive
+    // lookup reads. Deliberately NOT declared here: three test suites build DDL
+    // from this config by column `.name`, and an expression column has none, so
+    // declaring it renders `( , sent_at)`. The migration is the source of truth.
     index("idx_email_send_ledger_inbound").on(table.inboundEmailId),
     index("idx_email_send_ledger_status").on(table.status),
     // OPE-177 — the delivery-event consumer looks a row up by this on every
@@ -6870,8 +6891,47 @@ export const promoterFeedReads = sqliteTable(
     discrepancies: integer("discrepancies").notNull().default(0),
     thirdValues: integer("third_values").notNull().default(0),
     error: text("error"),
+    // OPE-1633 — written on outcome='ok' reads only; NULL everywhere else.
+    titleFilled: integer("title_filled"),
+    startFilled: integer("start_filled"),
+    venueFilled: integer("venue_filled"),
+    unmappable: integer("unmappable"),
   },
   (t) => [index("idx_promoter_feed_reads_feed").on(t.feedId, t.startedAt)]
+);
+
+/**
+ * OPE-1633 — feed health flags (drizzle/0416). One OPEN row per (feed, check)
+ * while the check trips; `clearedAt` is set when a later evaluation is back in
+ * bounds. Written by mcp-server/src/feeds/health.ts; read by
+ * list_promoter_feeds, loadFeedLaneMetrics (digest line + /admin tile).
+ */
+export const FEED_HEALTH_CHECKS = [
+  "freshness",
+  "volume_drop",
+  "format_drift",
+  "inclusion_swing",
+] as const;
+export type FeedHealthCheck = (typeof FEED_HEALTH_CHECKS)[number];
+
+export const feedHealthFlags = sqliteTable(
+  "feed_health_flags",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    feedId: text("feed_id")
+      .notNull()
+      .references(() => promoterEventFeeds.id, { onDelete: "cascade" }),
+    checkName: text("check_name", { enum: FEED_HEALTH_CHECKS }).notNull(),
+    observed: real("observed"),
+    baseline: real("baseline"),
+    detail: text("detail"),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+    clearedAt: integer("cleared_at", { mode: "timestamp" }),
+  },
+  (t) => [index("idx_feed_health_flags_feed").on(t.feedId, t.firstSeenAt)]
 );
 
 export const promoterFeedItems = sqliteTable(

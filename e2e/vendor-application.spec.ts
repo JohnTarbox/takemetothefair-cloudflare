@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test.describe("Vendor Application Flow - Unauthenticated", () => {
   test("vendor applications page redirects to login", async ({ page }) => {
