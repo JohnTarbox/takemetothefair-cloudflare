@@ -705,3 +705,5 @@ export * from "./scraper-sync-lock";
 export * from "./vendor-call";
 // OPE-1550 — name a refused image format (JPEG XL first) so no refusal is anonymous.
 export * from "./unsupported-image-format";
+// OPE-1697 — Snap: when more than one same-day fair is close by, never auto-pick (page + MCP guard).
+export * from "./snap-event-choice";

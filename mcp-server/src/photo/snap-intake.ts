@@ -31,6 +31,8 @@
  */
 import { eq } from "drizzle-orm";
 import {
+  parseSnapChoiceBasis,
+  type SnapEventChoiceBasis,
   stripExifFromJpeg,
   identifyUnsupportedImageFormat,
   unsupportedImageFormatForMime,
@@ -63,6 +65,16 @@ export interface CaptureMeta {
   taken_on_local_date: string | null;
   event_id: string | null;
   event_slug: string | null;
+  /**
+   * OPE-1697 — how the page chose `event_slug`: `picked` (the user tapped it),
+   * `auto_single` (the only fair nearby), `server` ("Let the server decide").
+   * NULL = a page build older than this field, treated as NOT picked. The
+   * photo-intake guard overwrites it with `auto_nearest_ambiguous` when it holds
+   * auto-write because the location is near more than one same-day fair.
+   */
+  event_choice_basis?: SnapEventChoiceBasis | null;
+  /** OPE-1697 — set with `auto_nearest_ambiguous`: the fairs it was near. */
+  event_choice_candidates?: Array<{ id: string; name: string; distanceMiles: number }>;
   note: string | null;
   /** The admin account that uploaded it (from the main app's session). */
   actor: string;
@@ -78,6 +90,8 @@ export interface SnapClientMeta {
   takenOnLocalDate?: string | null;
   eventId?: string | null;
   eventSlug?: string | null;
+  /** OPE-1697 — "picked" | "auto_single" | "server"; anything else is dropped. */
+  eventChoice?: string | null;
   note?: string | null;
 }
 
@@ -318,6 +332,7 @@ export async function ingestSnap(
     ...where,
     event_id: eventSlug && typeof input.meta.eventId === "string" ? input.meta.eventId : null,
     event_slug: eventSlug,
+    event_choice_basis: parseSnapChoiceBasis(input.meta.eventChoice),
     note,
     actor: input.actor,
   };

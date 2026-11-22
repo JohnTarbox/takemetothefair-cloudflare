@@ -19,6 +19,7 @@ import {
   type QueuedShot,
 } from "./snap-queue";
 import { LOCATION_BLOCKED_HELP, locationLine, type GeoState } from "@/lib/snap/location-status";
+import { classifySnapTarget, SNAP_CHOICE_TTL_MS } from "@takemetothefair/utils";
 
 interface NearbyEvent {
   id: string;
@@ -42,6 +43,18 @@ interface Pin {
   id: string;
   slug: string;
   name: string;
+  /** OPE-1697 — shown in the "Sending to" header. Absent on a pin saved by an older build. */
+  venueName?: string;
+}
+
+/**
+ * OPE-1697 — what sessionStorage keeps: the choice and WHEN it was made, so a
+ * pick is remembered for the capture session (until the app is closed, or
+ * SNAP_CHOICE_TTL_MS passes) instead of being asked per photo.
+ */
+interface SavedChoice {
+  choice: Pin | "server";
+  at: number;
 }
 
 interface SnapStatus {
@@ -124,11 +137,25 @@ export function SnapCapture() {
 
   // Restore session state, register the worker, and flush whatever is waiting.
   useEffect(() => {
-    const savedPin = readJson<Pin | "server" | null>(() => sessionStorage, PIN_KEY, null);
-    if (savedPin === "server") setPinChoice("server");
-    else if (savedPin) {
-      setPin(savedPin);
-      setPinChoice("pinned");
+    // OPE-1697 — a saved choice without a time (an older build) or older than
+    // the TTL is dropped: the next photo asks again rather than reusing it.
+    const saved = readJson<SavedChoice | null>(() => sessionStorage, PIN_KEY, null);
+    const fresh =
+      saved && typeof saved === "object" && typeof saved.at === "number"
+        ? Date.now() - saved.at < SNAP_CHOICE_TTL_MS
+        : false;
+    if (saved && fresh) {
+      if (saved.choice === "server") setPinChoice("server");
+      else if (saved.choice) {
+        setPin(saved.choice);
+        setPinChoice("pinned");
+      }
+    } else if (saved) {
+      try {
+        sessionStorage.removeItem(PIN_KEY);
+      } catch {
+        /* private mode */
+      }
     }
     setSent(readJson<SentShot[]>(() => localStorage, SENT_KEY, []));
     void refreshQueue();
@@ -232,13 +259,33 @@ export function SnapCapture() {
     return () => navigator.geolocation.clearWatch(id);
   }, [geoAttempt]);
 
-  // Suggest (do not force) the nearest event at this venue as the pin.
-  const suggested = nearby?.find((e) => e.atVenue) ?? null;
+  // OPE-1697 — auto-select ONLY when exactly one same-day fair is close by.
+  // On 2026-11-21 this took the nearest of two fairs ~350 m apart, silently,
+  // and 13 of 15 photos went to the wrong one. Two or more → nothing is
+  // selected and the shutter waits for a pick (classifySnapTarget is the same
+  // rule the server's auto-write guard applies).
+  const target = classifySnapTarget(nearby ?? [], accuracyM);
+  const suggested = target.kind === "single" && target.event.atVenue ? target.event : null;
+  const ambiguous = target.kind === "ambiguous" ? target.candidates : null;
+  const needsPick = pinChoice === "unset" && ambiguous !== null;
   const effectivePin: Pin | null =
     pinChoice === "pinned" ? pin : pinChoice === "server" ? null : suggested;
+  const choiceBasis: "picked" | "auto_single" | "server" | null =
+    pinChoice === "pinned"
+      ? "picked"
+      : pinChoice === "server"
+        ? "server"
+        : suggested
+          ? "auto_single"
+          : null;
+  // Open the picker by itself the moment the fix turns out to be ambiguous.
+  useEffect(() => {
+    if (needsPick) setShowPicker(true);
+  }, [needsPick]);
 
   // Nearest first when there is a fix, then every other event running today
   // (alphabetical); the search box filters both.
+  // OPE-1697 — when ambiguous, the close-by candidates head the list.
   const nearIds = new Set((nearby ?? []).map((e) => e.id));
   const q = query.trim().toLowerCase();
   const pickList = [...(nearby ?? []), ...(today ?? []).filter((e) => !nearIds.has(e.id))].filter(
@@ -248,6 +295,7 @@ export function SnapCapture() {
     geo: geoState,
     accuracyM,
     atEventName: suggested?.name ?? null,
+    ambiguousCount: pinChoice === "unset" ? (ambiguous?.length ?? 0) : 0,
   });
   const onLineTap = () => {
     if (line.action === "retry") {
@@ -266,13 +314,19 @@ export function SnapCapture() {
       setPin(p);
       setPinChoice("pinned");
     }
-    writeJson(() => sessionStorage, PIN_KEY, p);
+    writeJson(() => sessionStorage, PIN_KEY, { choice: p, at: Date.now() } satisfies SavedChoice);
     setShowPicker(false);
     setQuery("");
   };
 
   const onFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
+    // OPE-1697 — never send while the fair is a guess between several.
+    if (needsPick) {
+      setShowPicker(true);
+      if (fileInput.current) fileInput.current.value = "";
+      return;
+    }
     setBusy(true);
     try {
       for (const file of Array.from(files)) {
@@ -295,6 +349,7 @@ export function SnapCapture() {
             takenOnLocalDate: localDate(),
             eventId: effectivePin?.id ?? null,
             eventSlug: effectivePin?.slug ?? null,
+            eventChoice: choiceBasis,
             note: note.trim() || null,
           },
         };
@@ -405,21 +460,18 @@ export function SnapCapture() {
           className="w-full rounded-lg bg-gray-800 px-4 py-3 text-left"
         >
           <span className="block text-xs uppercase tracking-wide text-gray-400">
-            {pinChoice === "pinned"
-              ? "Pinned"
-              : pinChoice === "server"
-                ? "Fair"
-                : suggested
-                  ? "You're at"
-                  : "Fair"}
+            {effectivePin ? "Sending to" : needsPick ? "Pick the fair first" : "Fair"}
           </span>
-          <span className="block text-base">
+          <span className="block text-base" data-testid="snap-target">
             {effectivePin
-              ? effectivePin.name
+              ? `${effectivePin.name}${effectivePin.venueName ? ` @ ${effectivePin.venueName}` : ""}`
               : pinChoice === "server"
                 ? "Let the server decide"
-                : "Tap to pick the fair"}
+                : needsPick
+                  ? `${ambiguous!.length} fairs are close by: tap to choose`
+                  : "Tap to pick the fair"}
           </span>
+          {effectivePin && <span className="block text-xs text-gray-400 underline">change</span>}
         </button>
         {showPicker && (
           <div className="mt-2 rounded-lg bg-gray-800">
@@ -445,7 +497,9 @@ export function SnapCapture() {
                   <button
                     type="button"
                     className="w-full px-4 py-3 text-left hover:bg-gray-700"
-                    onClick={() => choosePin({ id: e.id, slug: e.slug, name: e.name })}
+                    onClick={() =>
+                      choosePin({ id: e.id, slug: e.slug, name: e.name, venueName: e.venueName })
+                    }
                   >
                     {e.name}
                     <span className="block text-xs text-gray-400">
@@ -481,11 +535,12 @@ export function SnapCapture() {
         />
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || needsPick}
+          data-testid="snap-shutter"
           onClick={() => fileInput.current?.click()}
           className="h-40 w-40 rounded-full bg-white text-xl font-bold text-gray-900 shadow-lg active:scale-95 disabled:opacity-60"
         >
-          {busy ? "Saving…" : sent.length ? "Snap another" : "Snap"}
+          {busy ? "Saving…" : needsPick ? "Pick the fair" : sent.length ? "Snap another" : "Snap"}
         </button>
         <input
           type="text"

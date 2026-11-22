@@ -25,6 +25,13 @@ export interface SnapMeta {
   takenOnLocalDate: string;
   eventId: string | null;
   eventSlug: string | null;
+  /**
+   * OPE-1697 — how the fair was chosen: "picked" (tapped), "auto_single" (the
+   * only fair close by), "server" ("Let the server decide"), or null (nothing
+   * chosen). The server's auto-write guard trusts only "picked" when the
+   * location is near more than one fair.
+   */
+  eventChoice: "picked" | "auto_single" | "server" | null;
   note: string | null;
 }
 
