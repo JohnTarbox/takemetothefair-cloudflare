@@ -89,6 +89,13 @@ interface Body {
    */
   after_id?: string;
   limit?: number;
+  /**
+   * OPE-1698 — READ-ONLY. Re-geocode the given ids (even already-pinned ones)
+   * and report each fresh candidate, its gate verdict and the distance from
+   * the stored pin. Writes nothing: no pin, no amenity fill, no park counter,
+   * no sweep row. Explicit ids only.
+   */
+  compare_only?: boolean;
 }
 
 export const POST = withInternalKey(
@@ -96,6 +103,21 @@ export const POST = withInternalKey(
   async ({ request, db }) => {
     const body = (await request.json().catch(() => ({}))) as Body;
     const force = body.force === true;
+    const compareOnly = body.compare_only === true;
+
+    // OPE-1698 — compare_only is a sizing pass over a named cohort. Paired with
+    // missing_only it has nothing to compare (those rows have no pin), and
+    // paired with force the caller is asking for a write and a no-write at once.
+    // Refuse both rather than guess which one was meant.
+    if (compareOnly && (body.missing_only || force)) {
+      return NextResponse.json(
+        {
+          error:
+            "compare_only takes venue_id/venue_ids only, and cannot be combined with force or missing_only.",
+        },
+        { status: 400 }
+      );
+    }
 
     const env = getCloudflareEnv();
     const apiKey = env.GOOGLE_MAPS_API_KEY;
@@ -192,8 +214,14 @@ export const POST = withInternalKey(
       // hardening passes (OPE-213/214/215/219/228) improved the sweep and left
       // every newly-created venue ungeocoded. One gate, two callers.
       try {
-        const outcome = await geocodeVenueRow(db, v, apiKey, force);
+        const outcome = await geocodeVenueRow(db, v, apiKey, force, { compareOnly });
         results.push(outcome);
+        // OPE-1698 — the amenity fill below WRITES (and bills a Places
+        // Details call), so a read-only pass stops here.
+        if (compareOnly) {
+          await new Promise((r) => setTimeout(r, PACE_MS));
+          continue;
+        }
         // OPE-1480 — a venue this sweep just matched also gets Google's
         // accessibility + parking. No-op without a place id or once both
         // columns hold an answer, so it never re-bills a venue.
@@ -315,6 +343,25 @@ export const POST = withInternalKey(
       }
     }
 
-    return NextResponse.json({ force, examined: results.length, summary, next_cursor, results });
+    // OPE-1698 — a compare pass also reports the distance buckets, so the
+    // caller can total a cohort across pages without re-deriving them.
+    const compare_summary = compareOnly
+      ? results.reduce<Record<string, number>>((acc, r) => {
+          const key = r.compare?.bucket
+            ? `${r.compare.bucket}${r.compare.confident ? ":confident" : ":review"}`
+            : `no-distance:${r.status}`;
+          acc[key] = (acc[key] ?? 0) + 1;
+          return acc;
+        }, {})
+      : undefined;
+
+    return NextResponse.json({
+      force,
+      ...(compareOnly ? { compare_only: true, compare_summary } : {}),
+      examined: results.length,
+      summary,
+      next_cursor,
+      results,
+    });
   }
 );
