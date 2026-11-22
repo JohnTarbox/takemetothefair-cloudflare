@@ -19,12 +19,25 @@ export function locationLine(input: {
   accuracyM: number | null;
   /** The event the resolver would match at this fix (atVenue), if any. */
   atEventName: string | null;
+  /**
+   * OPE-1697 — how many same-day fairs are close enough to be a guess between.
+   * More than one, and nothing picked yet → the line asks for a pick instead of
+   * claiming "You're at".
+   */
+  ambiguousCount?: number;
 }): LocationLine {
   const acc = input.accuracyM !== null ? ` (±${Math.round(input.accuracyM)} m)` : "";
   switch (input.geo) {
     case "pending":
       return { text: "Locating…", tone: "neutral", action: "none" };
     case "ok":
+      if ((input.ambiguousCount ?? 0) > 1) {
+        return {
+          text: `${input.ambiguousCount} fairs are close by${acc}: pick the one you're at`,
+          tone: "warn",
+          action: "pick",
+        };
+      }
       return input.atEventName
         ? { text: `You're at: ${input.atEventName}${acc}`, tone: "good", action: "none" }
         : {

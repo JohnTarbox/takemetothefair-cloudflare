@@ -72,10 +72,13 @@ export function describeSnap(
   outcome: SnapStatus["outcome"] = EMPTY_OUTCOME
 ): SnapStatus {
   let locationSource: string | null = null;
+  let choiceBasis: string | null = null;
   try {
-    locationSource = row.captureMeta
-      ? ((JSON.parse(row.captureMeta) as { location_source?: string }).location_source ?? null)
+    const cm = row.captureMeta
+      ? (JSON.parse(row.captureMeta) as { location_source?: string; event_choice_basis?: string })
       : null;
+    locationSource = cm?.location_source ?? null;
+    choiceBasis = cm?.event_choice_basis ?? null;
   } catch {
     locationSource = null;
   }
@@ -89,6 +92,15 @@ export function describeSnap(
   }
   if (row.replyKind === "photo-intake-poster") {
     return { ...base, phase: "poster", label: "Read as a poster — staged as a pending event" };
+  }
+  // OPE-1697 — the server held auto-write: the fair was a guess between
+  // several. Say so on the phone, where the photographer can still fix it.
+  if (row.replyKind === "photo-intake-ack" && choiceBasis === "auto_nearest_ambiguous") {
+    return {
+      ...base,
+      phase: "held",
+      label: `Not written — more than one fair is close by and none was picked (guessed ${eventName ?? "a fair"}). Pick the fair; this one is in review.`,
+    };
   }
   if (row.replyKind === "photo-intake-ack" && row.resultingEventId) {
     const parts: string[] = [];

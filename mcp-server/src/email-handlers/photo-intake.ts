@@ -41,7 +41,7 @@ import type { InboundEmail } from "@takemetothefair/db-schema";
 import { parsePlusSegment } from "../email-intents.js";
 import { logError } from "../logger.js";
 import { isOperatorAddress } from "../test-addresses.js";
-import { chunkedInArray, createSlug } from "@takemetothefair/utils";
+import { chunkedInArray, createSlug, snapAmbiguityRadiusMiles } from "@takemetothefair/utils";
 import { PUBLIC_EVENT_STATUSES } from "@takemetothefair/constants";
 import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
 import { classifyPosterText, type PosterClassification } from "../photo/poster-classify.js";
@@ -49,12 +49,18 @@ import { mainAppFetch } from "../main-app-fetch.js";
 import { submitCheckDuplicate, submitEvent, submitExtract } from "./submit.js";
 import { attachPosterEvidence, type PosterEvidenceResult } from "../photo/poster-evidence.js";
 import { parseExif, type ExifData } from "../photo/exif.js";
-import { isSnapRow, parseCaptureMeta, captureMetaAsExif } from "../photo/snap-intake.js";
+import {
+  isSnapRow,
+  parseCaptureMeta,
+  captureMetaAsExif,
+  type CaptureMeta,
+} from "../photo/snap-intake.js";
 import { recordGpsMissSignal } from "../photo/gps-miss-signal.js";
 import {
   resolveOccurrence,
   expandEventDates,
   VENUE_RADIUS_MILES,
+  venuesWithinRadius,
   type VenueCandidate,
   type EventCandidate,
   type Resolution,
@@ -354,13 +360,14 @@ export async function readExif(env: HandlerEnv, refs: AttachmentRef[]): Promise<
  *  Box first (indexable, cheap), exact haversine second (in the resolver). */
 async function loadNearbyVenues(
   db: Db,
-  gps: { latitude: number; longitude: number }
+  gps: { latitude: number; longitude: number },
+  radiusMiles: number = VENUE_RADIUS_MILES
 ): Promise<VenueCandidate[]> {
-  const dLat = VENUE_RADIUS_MILES / MILES_PER_DEG_LAT;
+  const dLat = radiusMiles / MILES_PER_DEG_LAT;
   // Longitude degrees shrink toward the poles. Clamp cos() so a near-polar
   // photo widens the box instead of dividing by ~0.
   const cos = Math.max(0.01, Math.cos((gps.latitude * Math.PI) / 180));
-  const dLon = VENUE_RADIUS_MILES / (MILES_PER_DEG_LAT * cos);
+  const dLon = radiusMiles / (MILES_PER_DEG_LAT * cos);
 
   const rows = await db
     .select({
@@ -483,6 +490,66 @@ async function loadCandidateEvents(
       localDate
     ),
   }));
+}
+
+/**
+ * OPE-1697 — is a snap's fair a GUESS between several?
+ *
+ * On 2026-11-21 the capture page auto-pinned the nearest of two same-day fairs
+ * ~350 m apart and sent it as the `photos+<slug>@` override. An override skips
+ * every GPS check (resolveOccurrence step 1), so 11 vendor links were
+ * auto-written to the wrong roster with nothing on the server able to object.
+ *
+ * This runs AFTER resolution, on snap rows only, and answers one question:
+ * did a person pick this fair, and if not, is the upload's location near more
+ * than one public event running that day? "Near" is `snapAmbiguityRadiusMiles`
+ * — the same function the page uses to decide whether to auto-select, so the
+ * page and this guard cannot disagree about what ambiguous means.
+ *
+ *  - `picked` → trusted, never ambiguous (the person named the fair).
+ *  - no location / no date → not ambiguous: there is no evidence of a second
+ *    fair, and the resolver's own hold rules already covered the no-GPS case.
+ *  - otherwise (auto_single, server, or NULL from a page build older than the
+ *    field) → ambiguous iff > 1 distinct same-day event is in radius.
+ */
+export async function snapChoiceAmbiguity(
+  db: Db,
+  meta: CaptureMeta | null
+): Promise<{
+  ambiguous: boolean;
+  radiusMiles: number;
+  candidates: Array<{ id: string; name: string; distanceMiles: number }>;
+}> {
+  const radiusMiles = snapAmbiguityRadiusMiles(meta?.location?.accuracy_m ?? null);
+  const none = { ambiguous: false, radiusMiles, candidates: [] };
+  if (!meta || meta.event_choice_basis === "picked") return none;
+  if (!meta.location || !meta.taken_on_local_date) return none;
+  const near = venuesWithinRadius(
+    meta.location,
+    await loadNearbyVenues(db, meta.location, radiusMiles),
+    radiusMiles
+  );
+  if (near.length === 0) return none;
+  const nearById = new Map(near.map((v) => [v.id, v]));
+  const events = await loadCandidateEvents(
+    db,
+    near.map((v) => v.id),
+    meta.taken_on_local_date
+  );
+  const seen = new Set<string>();
+  const candidates: Array<{ id: string; name: string; distanceMiles: number }> = [];
+  for (const e of events) {
+    const v = e.venueId ? nearById.get(e.venueId) : undefined;
+    if (!v || seen.has(e.id) || !e.dates.includes(meta.taken_on_local_date)) continue;
+    seen.add(e.id);
+    candidates.push({
+      id: e.id,
+      name: e.name,
+      distanceMiles: Math.round(v.distanceMiles * 100) / 100,
+    });
+  }
+  candidates.sort((a, b) => a.distanceMiles - b.distanceMiles);
+  return { ambiguous: candidates.length > 1, radiusMiles, candidates };
 }
 
 /** Look up an explicitly-named event (plus-address or subject slug). */
@@ -1014,9 +1081,11 @@ export function describePhotoStorage(
       : (booths.disabledReason ??
         (visionFailures.length > 0
           ? `vision produced nothing usable — ${visionFailures[0]}`
-          : booths.galleryFailed > 0
-            ? `${booths.galleryFailed} photo upload${booths.galleryFailed === 1 ? "" : "s"} failed`
-            : "the attach path ran, stored nothing, and reported no reason"));
+          : (booths.galleryHeld ?? 0) > 0
+            ? `${booths.galleryHeld} gallery photo${booths.galleryHeld === 1 ? "" : "s"} held: more than one fair nearby and none was picked`
+            : booths.galleryFailed > 0
+              ? `${booths.galleryFailed} photo upload${booths.galleryFailed === 1 ? "" : "s"} failed`
+              : "the attach path ran, stored nothing, and reported no reason"));
 
   return { offered, stored, accountedFor, blockedReason };
 }
@@ -1221,9 +1290,65 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
     // OPE-204 Milestone A — identify the booths and STAGE them for review.
     // No vendor/event/hero writes here; gated OFF by default and fail-soft, so
     // a vision outage can never cost us the (already-correct) fair match.
+    // OPE-1697 — a snap whose fair nobody PICKED, taken near more than one
+    // same-day fair, is a guess. It still resolves (the photos are kept and
+    // proposed against the guessed fair, where the re-point tool can move
+    // them), but nothing auto-writes: no vendor links, no gallery attach.
+    let holdAutoWriteReason: string | null = null;
+    if (snap) {
+      const meta = parseCaptureMeta(row.captureMeta);
+      try {
+        const amb = await snapChoiceAmbiguity(db, meta);
+        if (amb.ambiguous && meta) {
+          holdAutoWriteReason =
+            `fair not picked on the phone, and ${amb.candidates.length} same-day fairs are within ` +
+            `${Math.round(amb.radiusMiles * 100) / 100} mi: ${amb.candidates.map((c) => `${c.name} (${c.distanceMiles} mi)`).join(", ")}`.slice(
+              0,
+              400
+            );
+          await db
+            .update(inboundEmails)
+            .set({
+              captureMeta: JSON.stringify({
+                ...meta,
+                event_choice_basis: "auto_nearest_ambiguous",
+                event_choice_candidates: amb.candidates.slice(0, 10),
+              } satisfies CaptureMeta),
+              flaggedForReview: 1,
+            })
+            .where(eq(inboundEmails.id, row.id));
+          await logError(env.DB, {
+            level: "warn",
+            source: "mcp:photo-intake:snap-choice-ambiguous",
+            message: `snap auto-write held: ${holdAutoWriteReason}`.slice(0, 500),
+            context: {
+              messageRowId: row.id,
+              eventId: resolution.eventId,
+              basis: meta.event_choice_basis ?? null,
+              candidates: amb.candidates.slice(0, 10),
+            },
+          });
+        }
+      } catch (e) {
+        // Fail CLOSED: an ambiguity check that could not run is not evidence
+        // the fair is unambiguous (the OPE-1694 domain-check precedent).
+        if (meta?.event_choice_basis !== "picked") {
+          holdAutoWriteReason = "the nearby-fair check failed, so nothing was auto-written";
+        }
+        await logError(env.DB, {
+          message: "snap ambiguity check failed",
+          error: e,
+          source: "email-handlers/photo-intake.ts:snapChoiceAmbiguity",
+          context: { messageRowId: row.id },
+        });
+      }
+    }
+
     let booths: BoothPipelineResult | null = null;
     try {
-      booths = await runBoothPipeline(env, db, row.id, resolution.eventId, imageRefs(refs));
+      booths = await runBoothPipeline(env, db, row.id, resolution.eventId, imageRefs(refs), {
+        holdAutoWriteReason,
+      });
     } catch (e) {
       await logError(env.DB, {
         message: "Booth pipeline failed (fair match unaffected)",

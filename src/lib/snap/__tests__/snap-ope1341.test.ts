@@ -133,6 +133,28 @@ describe("snap status (OPE-1341)", () => {
       describeSnap({ ...base, status: "replied", replyKind: "photo-intake-poster" }, null).phase
     ).toBe("poster");
   });
+
+  it("OPE-1697: an ack whose auto-write was held for ambiguity reads as HELD, naming the guess", () => {
+    const row = {
+      id: "snap-x",
+      resultingEventId: "fl",
+      captureMeta: '{"location_source":"device","event_choice_basis":"auto_nearest_ambiguous"}',
+      error: null,
+      status: "replied",
+      replyKind: "photo-intake-ack",
+    };
+    const s = describeSnap(row, "First Light Church Christmas Craft Fair");
+    expect(s.phase).toBe("held");
+    expect(s.label).toContain("more than one fair is close by");
+    expect(s.label).toContain("First Light Church Christmas Craft Fair");
+    // Control: the same row picked by a person is an ordinary match.
+    expect(
+      describeSnap(
+        { ...row, captureMeta: '{"location_source":"device","event_choice_basis":"picked"}' },
+        "Makers Market"
+      ).phase
+    ).toBe("matched");
+  });
 });
 
 describe("newClientId (OPE-1341)", () => {

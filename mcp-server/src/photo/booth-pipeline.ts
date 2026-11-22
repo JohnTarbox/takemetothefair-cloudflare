@@ -105,6 +105,12 @@ export interface BoothPipelineResult {
   galleryAttached: number;
   /** General photos we tried but couldn't attach. Reported, never swallowed. */
   galleryFailed: number;
+  /**
+   * OPE-1697 — gallery photos deliberately NOT attached because the fair was
+   * not explicitly chosen and more than one same-day fair is nearby. Absent
+   * (not 0) when no hold applied, so older readers see no change.
+   */
+  galleryHeld?: number;
   /** OPE-469 — true when nothing was written. Absent on a live run. */
   dryRun?: boolean;
   /**
@@ -183,6 +189,14 @@ export interface BoothPipelineOptions {
    * bytes, the same model, the same dispositions. Only the writes are withheld.
    */
   dryRun?: boolean;
+  /**
+   * OPE-1697 — the fair this upload is attributed to was NOT explicitly chosen
+   * and its location is near more than one same-day fair. Every would-write is
+   * STAGED instead (stage kind `event_choice_ambiguous`, carrying this reason),
+   * whatever PHOTO_AUTOWRITE_ENABLED says: an auto-write here would put vendors
+   * on a roster on the strength of a nearest-pin guess.
+   */
+  holdAutoWriteReason?: string | null;
 }
 
 export async function runBoothPipeline(
@@ -269,7 +283,8 @@ export async function runBoothPipeline(
     /** OPE-1694 — what the sign's domain matched, when it carried one. */
     domainMatch?: DomainVendorMatch;
   };
-  const autoWriteOn = env.PHOTO_AUTOWRITE_ENABLED === "true";
+  const holdReason = options.holdAutoWriteReason ?? null;
+  const autoWriteOn = env.PHOTO_AUTOWRITE_ENABLED === "true" && !holdReason;
   const staged: Staged[] = [];
   const confirmed: Array<{
     photo: PipelinePhoto;
@@ -408,8 +423,8 @@ export async function runBoothPipeline(
           photo: r.photo,
           id: d.identification,
           action: BOOTH_PROPOSED_ACTION,
-          stageKind: null,
-          reason: null,
+          stageKind: holdReason ? "event_choice_ambiguous" : null,
+          reason: holdReason,
           wouldAutoWrite: true,
           domainMatch: domainMatches.get(r.photo.key),
         });
@@ -657,11 +672,24 @@ export async function runBoothPipeline(
   // resolved event's gallery. Re-attaching the same bytes converges on the
   // existing row (OPE-686 content digest), so a replay does not duplicate it.
   // Fail-soft: this must never cost us the staging or the fair match.
-  const gallery = { attached: 0, failed: 0 };
+  const gallery = { attached: 0, failed: 0, held: 0 };
   const confirmedKeys = new Set(confirmed.map((c) => c.photo.key));
   for (const p of galleryPhotos) {
     // One photo at a time so each gets its own outcome (≤5 per email).
     let one: { attached: number; failed: number; failures?: string[]; disabledReason?: string };
+    if (holdReason) {
+      // OPE-1697 — a public gallery photo on a guessed fair is the same harm
+      // as a guessed vendor link. Recorded, not attached.
+      gallery.held += 1;
+      if (!confirmedKeys.has(p.key)) {
+        await record(GALLERY_ATTACHED_ACTION, p, {
+          photo_class: "scenery",
+          attached: false,
+          failure: `held: ${holdReason}`,
+        });
+      }
+      continue;
+    }
     try {
       one = await attachGeneralPhotos(env, eventId, [p]);
     } catch (e) {
@@ -697,6 +725,7 @@ export async function runBoothPipeline(
     ].filter((n): n is string => Boolean(n)),
     galleryAttached: gallery.attached,
     galleryFailed: gallery.failed,
+    ...(holdReason ? { galleryHeld: gallery.held } : {}),
     autoWritten,
     // Named per photo so one bad frame in a batch is distinguishable from a
     // systemic failure (e.g. every photo returning `ai-run-threw`).

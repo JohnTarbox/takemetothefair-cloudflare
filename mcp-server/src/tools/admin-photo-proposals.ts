@@ -17,8 +17,10 @@
  * non-identifications and one intermittent parse failure. A sample of one looks
  * like a flawless classifier; a sample of four shows its failure modes.
  *
- * Read-only. It cannot enable anything, write anything, or approve a proposal —
- * the point is to make the gate decidable, not to pre-empt it.
+ * `list_photo_proposals` is read-only. It cannot enable anything, write
+ * anything, or approve a proposal — the point is to make the gate decidable,
+ * not to pre-empt it. `repoint_photo_intake` (OPE-1697) is the one writer here:
+ * it moves an upload to the fair it was really taken at.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -29,6 +31,7 @@ import { jsonContent } from "../helpers.js";
 import { BOOTH_PROPOSED_ACTION, PERFORMER_PROPOSED_ACTION } from "../photo/booth-pipeline.js";
 import type { Db } from "../db.js";
 import { computeIntakeAccounting } from "../photo/intake-accounting.js";
+import { repointPhotoIntake } from "../photo/repoint.js";
 import type { AuthContext } from "../auth.js";
 
 /** Shape written by the booth pipeline's staging step. */
@@ -238,6 +241,55 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
           }),
         ],
       };
+    }
+  );
+
+  server.tool(
+    "repoint_photo_intake",
+    "OPE-1697 — move a photo-intake upload (a Snap or an emailed photo) from the fair it was attributed to, to the fair it was actually taken at. Moves its UNRESOLVED proposals (their event_id is what approval writes to), the event_vendors links it auto-wrote (a link that existed before the upload stays and the vendor is also linked on the new fair), and the row's resulting_event_id. Already-approved/rejected proposals and gallery photos already in event_photos are reported, not moved. Defaults to dry_run=true: run once to see the plan, then again with dry_run=false. Idempotent.",
+    {
+      inbound_email_id: z
+        .string()
+        .max(80)
+        .optional()
+        .describe("The upload's inbound_emails id (a Snap row is `snap-<uuid>`)."),
+      proposal_id: z
+        .string()
+        .max(80)
+        .optional()
+        .describe(
+          "Instead of inbound_email_id: the admin_actions id of any proposal from the upload (as list_photo_proposals returns it)."
+        ),
+      to_event_id: z.string().min(1).max(80).describe("The fair the photos were really taken at."),
+      dry_run: z
+        .boolean()
+        .optional()
+        .describe("Default true — report what would move, write nothing."),
+    },
+    async (params) => {
+      if (auth.role !== "ADMIN") {
+        return {
+          content: [{ type: "text" as const, text: "Admin role required." }],
+          isError: true,
+        };
+      }
+      if (!params.inbound_email_id && !params.proposal_id) {
+        return {
+          content: [{ type: "text" as const, text: "Pass inbound_email_id or proposal_id." }],
+          isError: true,
+        };
+      }
+      const out = await repointPhotoIntake(db, {
+        inboundEmailId: params.inbound_email_id ?? null,
+        proposalId: params.proposal_id ?? null,
+        toEventId: params.to_event_id,
+        dryRun: params.dry_run !== false,
+        actorUserId: auth.userId ?? null,
+      });
+      if (!out.ok) {
+        return { content: [{ type: "text" as const, text: out.error }], isError: true };
+      }
+      return { content: [jsonContent(out)] };
     }
   );
 }

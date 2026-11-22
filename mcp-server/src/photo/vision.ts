@@ -613,6 +613,11 @@ export type StageKind =
   | "booth_domain_ambiguous"
   /** OPE-1694 — the domain lookup threw; never written on the strength of an unrun check. */
   | "booth_domain_check_failed"
+  /**
+   * OPE-1697 — would have auto-written, but the upload's location is near more
+   * than one same-day fair and nobody PICKED this one. Staged for a person.
+   */
+  | "event_choice_ambiguous"
   | "performer_unnamed"
   | "performer_unmatched"
   | "performer_not_on_roster"
