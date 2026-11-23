@@ -27,6 +27,7 @@ import {
   phoneRegionMismatch,
   type SanityProposal,
 } from "../src/enrichment/promoter-sanity.js";
+import { jsonLdIdentitySummary } from "../src/enrichment/extract.js";
 
 describe("OPE-1706 — unit checks", () => {
   it("areaCodeOf reads NANP numbers with or without a country code", () => {
@@ -344,6 +345,34 @@ describe("OPE-1706 — specimens through the dispatcher", () => {
     expect((await promoterRow("hv")).contactPhone).toBe("(855) 650-0080");
     expect((await promoterRow("me")).contactPhone).toBe("(207) 555-0123");
     expect((await candidate("hv", "contact_phone"))?.decision).toBe("auto_merged");
+  });
+
+  it("REAL SHAPE (Purity Spring, deployed-build miss): a second business NESTED as parentOrganization is found", () => {
+    // Structure read from purityspring.com on 2026-11-23: one top-level node,
+    // with Highway West nested inside it — not a second top-level node.
+    const html = jsonLd({
+      "@context": "https://schema.org",
+      "@type": "Resort",
+      name: "Purity Spring Resort",
+      telephone: "605-367-8896",
+      sameAs: [
+        "https://www.facebook.com/purityspringresort/",
+        "https://www.instagram.com/purityspringresort/?hl=en",
+      ],
+      parentOrganization: {
+        "@type": "Organization",
+        name: "Highway West Vacations",
+        telephone: "949-783-2555",
+        sameAs: [
+          "https://www.facebook.com/HighwayWestVacations/",
+          "https://www.linkedin.com/company/highway-west-vacations/",
+        ],
+      },
+    });
+    expect(jsonLdIdentitySummary(html).phones.sort()).toEqual(["(605) 367-8896", "(949) 783-2555"]);
+    expect(
+      jsonLdHasMultipleEntities(html, "Purity Spring Resort", "https://www.purityspring.com/")
+    ).toBe(true);
   });
 
   it("a clean single-business JSON-LD is not multi-entity; opaque handles are not evidence", () => {
