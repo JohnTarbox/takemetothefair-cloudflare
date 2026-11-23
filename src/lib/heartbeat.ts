@@ -2096,6 +2096,22 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         inArray(adminActions.action, ["vendor.card_proposed", "vendor.card_applied"])
       ),
   },
+  {
+    // OPE-1705 slice 2 — a card paired with the booth shot just before it.
+    name: "card-booth-pairing",
+    ownerOpe: "OPE-1705",
+    label: "Business card paired with its booth photo",
+    priority: "P1",
+    // Same 30d as the card lane: pairings only happen at a fair, in season.
+    expectedWindowHours: 30 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "vendor.card_paired")
+      ),
+  },
   // ── OPE-309 (assurance audit A6 / A7) ──────────────────────────────
   //
   // Three genuinely PERIODIC feeds. All three are written by the 06:00Z daily

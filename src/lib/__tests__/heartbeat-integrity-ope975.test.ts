@@ -281,6 +281,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "booth-autowrite": 30 * 24,
       // OPE-1705 — the card lane shares the photo siblings' 30d; dormant until the first live card.
       "business-card-lane": 30 * 24,
+      // OPE-1705 slice 2 — card↔booth pairing, same window; dormant until the first live pair.
+      "card-booth-pairing": 30 * 24,
       "series-write-path": 336,
       "venue-decision-writer": 336,
       "venue-geocode-sweep": 48,

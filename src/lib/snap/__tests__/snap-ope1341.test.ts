@@ -143,6 +143,50 @@ describe("snap status (OPE-1341)", () => {
     expect(got[b].label).toBe("People Plus Senior Health Expo — 1 card only — for review");
   });
 
+  it("OPE-1705 slice 2: a paired card names its booth, or says the names differ", async () => {
+    const ins = raw.prepare("INSERT INTO inbound_emails VALUES (?,?,?,?,?,?)");
+    const a = "snap-55555555-2222-4333-8444-555555555555";
+    const b = "snap-66666666-2222-4333-8444-555555555555";
+    const c = "snap-77777777-2222-4333-8444-555555555555";
+    for (const id of [a, b, c])
+      ins.run(id, "replied", "photo-intake-ack", "e-expo", '{"location_source":"device"}', null);
+    const act = raw.prepare(
+      "INSERT INTO admin_actions (id, action, target_id, payload_json) VALUES (?,?,?,?)"
+    );
+    act.run("d1", "vendor.card_proposed", a, '{"stage_kind":"card_unmatched"}');
+    act.run(
+      "d2",
+      "vendor.card_paired",
+      a,
+      '{"pairing":"confirmed","booth_business_name":"Fern Hollow"}'
+    );
+    act.run("d3", "vendor.card_proposed", b, '{"stage_kind":"card_unmatched"}');
+    act.run(
+      "d4",
+      "vendor.card_paired",
+      b,
+      '{"pairing":"order_only","booth_business_name":"Bay State Bath"}'
+    );
+    act.run("d5", "vendor.card_proposed", c, '{"stage_kind":"card_unmatched"}');
+    act.run(
+      "d6",
+      "vendor.card_paired",
+      c,
+      '{"pairing":"unreadable_booth","booth_business_name":null}'
+    );
+
+    const got = Object.fromEntries((await loadSnapStatuses(db, [a, b, c])).map((g) => [g.id, g]));
+    expect(got[a].label).toBe(
+      "People Plus Senior Health Expo — Business card → paired with Fern Hollow"
+    );
+    expect(got[b].label).toBe(
+      "People Plus Senior Health Expo — Business card → after Bay State Bath, names differ — for review"
+    );
+    expect(got[c].label).toBe(
+      "People Plus Senior Health Expo — Business card → named the unreadable booth before it — for review"
+    );
+  });
+
   it("describeSnap: failed and poster rows say so", () => {
     const base = { id: "snap-x", resultingEventId: null, captureMeta: null, error: null };
     expect(describeSnap({ ...base, status: "failed", replyKind: null }, null).phase).toBe("failed");

@@ -57,6 +57,14 @@ import {
   type CardReading,
   type CardStageKind,
 } from "./business-card.js";
+import {
+  cardRowsForEmail,
+  laterCardRows,
+  pairCardRow,
+  pairWindowMs,
+  shotAt,
+  type PairingOutcome,
+} from "./card-pairing.js";
 import { vendors } from "../schema.js";
 import {
   extractSignDomain,
@@ -177,6 +185,12 @@ export interface BoothPipelineResult {
     proposed: Array<{ businessName: string | null; stageKind: CardStageKind }>;
   };
   /**
+   * OPE-1705 slice 2 — cards paired with a booth shot just before them, by this
+   * run (either side: this run's card looking back, or this run's booth finding
+   * a card that finished first). Absent when nothing was paired.
+   */
+  cardPairings?: PairingOutcome[];
+  /**
    * OPE-403 follow-up — per-photo vision failure reasons, when the model
    * produced nothing usable. Empty when every photo identified cleanly.
    *
@@ -204,6 +218,8 @@ export interface BoothPipelineEnv {
   MAIN_APP?: { fetch: typeof fetch };
   MAIN_APP_URL?: string;
   INTERNAL_API_KEY?: string;
+  /** OPE-1705 — minutes before a card its booth may have been shot (default 10). */
+  CARD_PAIR_WINDOW_MINUTES?: string;
 }
 
 /**
@@ -888,11 +904,63 @@ export async function runBoothPipeline(
         business_name: c.card.businessName?.value ?? null,
         website: c.card.website?.value ?? null,
         failure_reason: c.card.failureReason ?? null,
+        // Slice 2 — a later pairing writes only when the card's run could.
+        auto_write: autoWriteOn,
         ...(c.domainCandidates ? { domain_candidates: c.domainCandidates } : {}),
         card: fields,
       });
     }
   }
+  // OPE-1705 slice 2 — pair cards with booths. The booth side looks FORWARD
+  // for cards that finished first; the card side looks BACK. Both go through
+  // the one idempotent pairCardRow, so whichever run is second pairs them.
+  const cardPairings: PairingOutcome[] = [];
+  try {
+    const boothsHere = boothStaged.length + autoWritten.filter((a) => a.vendorId).length;
+    if (boothsHere > 0) {
+      const [me] = await db
+        .select({
+          fromAddress: inboundEmails.fromAddress,
+          receivedAt: inboundEmails.receivedAt,
+          captureMeta: inboundEmails.captureMeta,
+        })
+        .from(inboundEmails)
+        .where(eq(inboundEmails.id, inboundEmailId))
+        .limit(1);
+      if (me?.fromAddress) {
+        const later = await laterCardRows(db, {
+          uploader: me.fromAddress,
+          eventId,
+          boothAt: shotAt(me.captureMeta, me.receivedAt),
+          windowMs: pairWindowMs(env),
+        });
+        for (const id of later) {
+          const o = await pairCardRow(env, db, id, now);
+          if (o) cardPairings.push(o);
+        }
+      }
+    }
+    if (cardOutcomes.length > 0) {
+      for (const id of await cardRowsForEmail(db, inboundEmailId)) {
+        const o = await pairCardRow(env, db, id, now);
+        if (o) cardPairings.push(o);
+      }
+    }
+  } catch (e) {
+    // Fail-soft: a pairing fault must not cost the email its staging.
+    cardPairings.push({
+      cardPhotoKey: "",
+      boothEmailId: "",
+      boothPhotoKey: "",
+      boothBusinessName: null,
+      pairing: "order_only",
+      basis: null,
+      effect: "recorded",
+      vendorId: null,
+      error: `pairing failed: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200),
+    });
+  }
+
   const cardNeedsReview =
     cardOutcomes.some((c) => c.kind === "stage") ||
     [...cardApplied.values()].some(
@@ -966,6 +1034,7 @@ export async function runBoothPipeline(
     ...(holdReason ? { galleryHeld: gallery.held } : {}),
     autoWritten,
     ...cardsSummary(cardApplied),
+    ...(cardPairings.length ? { cardPairings } : {}),
     // Named per photo so one bad frame in a batch is distinguishable from a
     // systemic failure (e.g. every photo returning `ai-run-threw`).
     visionFailures,
