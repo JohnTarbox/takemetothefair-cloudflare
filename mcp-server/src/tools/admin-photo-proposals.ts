@@ -19,19 +19,26 @@
  *
  * `list_photo_proposals` is read-only. It cannot enable anything, write
  * anything, or approve a proposal — the point is to make the gate decidable,
- * not to pre-empt it. `repoint_photo_intake` (OPE-1697) is the one writer here:
- * it moves an upload to the fair it was really taken at.
+ * not to pre-empt it. `repoint_photo_intake` (OPE-1697) moves an upload to the
+ * fair it was really taken at, and `review_photo_proposal` (OPE-1704) resolves
+ * one proposal — approve, reject, or close it as already handled by hand.
+ *
+ * OPE-1704 — `list_photo_proposals` defaults to OPEN proposals. Until then it
+ * returned every staged row forever, so a booth approved in the admin UI, or
+ * cleared by hand, still read as waiting and "what's left?" had no answer.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, desc, gte, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { chunkIds } from "@takemetothefair/utils";
 import { adminActions, events } from "../schema.js";
-import { jsonContent } from "../helpers.js";
+import { decodeHtmlEntities, jsonContent } from "../helpers.js";
 import { BOOTH_PROPOSED_ACTION, PERFORMER_PROPOSED_ACTION } from "../photo/booth-pipeline.js";
 import type { Db } from "../db.js";
 import { computeIntakeAccounting } from "../photo/intake-accounting.js";
-import { repointPhotoIntake } from "../photo/repoint.js";
+import { PHOTO_RESOLVED_ACTION, repointPhotoIntake } from "../photo/repoint.js";
+import { PROPOSAL_DECISIONS, reviewPhotoProposal } from "../photo/review-proposal.js";
+import type { AutoWriteEnv } from "../photo/auto-write.js";
 import type { AuthContext } from "../auth.js";
 
 /** Shape written by the booth pipeline's staging step. */
@@ -63,7 +70,35 @@ interface ProposalPayload {
   domain_candidates?: Array<{ id: string; businessName: string }>;
 }
 
-export function registerPhotoProposalTools(server: McpServer, db: Db, auth: AuthContext): void {
+export const PROPOSAL_STATUS_VALUES = [
+  "open",
+  "approved",
+  "rejected",
+  "already_handled",
+  "all",
+] as const;
+export type ProposalStatusFilter = (typeof PROPOSAL_STATUS_VALUES)[number];
+
+/**
+ * OPE-1704 — the SQL predicate for a status filter, as a correlated subquery on
+ * the resolution row (`vendor.photo_resolved`, target_type 'admin_action',
+ * target_id = the proposal). Keyed on (target_type, target_id) so it uses
+ * `idx_admin_actions_target`. In SQL, not in memory, so `limit` counts the
+ * rows the caller asked for rather than truncating before the filter.
+ */
+function statusPredicate(status: ProposalStatusFilter): SQL | null {
+  if (status === "all") return null;
+  const resolved = sql`SELECT 1 FROM admin_actions r WHERE r.action = ${PHOTO_RESOLVED_ACTION} AND r.target_type = 'admin_action' AND r.target_id = ${adminActions.id}`;
+  if (status === "open") return sql`NOT EXISTS (${resolved})`;
+  return sql`EXISTS (${resolved} AND json_extract(r.payload_json, '$.resolution') = ${status})`;
+}
+
+export function registerPhotoProposalTools(
+  server: McpServer,
+  db: Db,
+  auth: AuthContext,
+  env?: AutoWriteEnv
+): void {
   server.tool(
     "list_photo_proposals",
     "OPE-240 — the photo proposals the vision pipeline has STAGED (booths, and since OPE-969 performers), with what it identified, its confidence, whether it would have auto-written, and why it staged instead. `photo_class` says what the photo is and `stage_kind` why it staged, so 'a booth whose name is unreadable' and 'not a booth' are distinguishable. This is the evidence the PHOTO_AUTOWRITE_ENABLED gate is meant to be judged on. Read-only: it cannot enable, write or approve anything.",
@@ -95,6 +130,12 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
         .describe(
           "Only proposals from the last N days. Omit for all time. With a window, the response also carries `intake_accounting` (OPE-978): photo-intake emails and photos in, the outcome each photo got (proposed, auto-written, performer, signage, gallery), and any photo with no recorded outcome, by name."
         ),
+      status: z
+        .enum(PROPOSAL_STATUS_VALUES)
+        .optional()
+        .describe(
+          "OPE-1704: 'open' (default) = not yet resolved; 'approved' / 'rejected' / 'already_handled' = resolved that way (in review_photo_proposal or the admin UI); 'all' = every staged row."
+        ),
       limit: z.number().int().min(1).max(200).optional().describe("Max rows (default 50)."),
     },
     async (params) => {
@@ -106,13 +147,16 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
       }
 
       const limit = params.limit ?? 50;
+      const status: ProposalStatusFilter = params.status ?? "open";
       const wanted =
         params.photo_class === "booth"
           ? [BOOTH_PROPOSED_ACTION]
           : params.photo_class === "performer"
             ? [PERFORMER_PROPOSED_ACTION]
             : [BOOTH_PROPOSED_ACTION, PERFORMER_PROPOSED_ACTION];
-      const filters = [inArray(adminActions.action, wanted)];
+      const filters: SQL[] = [inArray(adminActions.action, wanted)];
+      const statusSql = statusPredicate(status);
+      if (statusSql) filters.push(statusSql);
       if (params.days !== undefined) {
         filters.push(
           gte(adminActions.createdAt, new Date(Date.now() - params.days * 24 * 60 * 60 * 1000))
@@ -163,9 +207,61 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
         for (const e of evs) eventNames.set(e.id, e.name);
       }
 
+      // OPE-1704 — each row's resolution, in chunks (same 100-param cap). The
+      // FIRST resolution row wins, matching review_photo_proposal's read.
+      const resolutions = new Map<
+        string,
+        {
+          resolution: string | null;
+          at: Date | null;
+          by: string | null;
+          payload: Record<string, unknown>;
+        }
+      >();
+      for (const batch of chunkIds(rows.map((r) => r.id))) {
+        const res = await db
+          .select({
+            targetId: adminActions.targetId,
+            payload: adminActions.payloadJson,
+            createdAt: adminActions.createdAt,
+            actorUserId: adminActions.actorUserId,
+          })
+          .from(adminActions)
+          .where(
+            and(
+              eq(adminActions.action, PHOTO_RESOLVED_ACTION),
+              eq(adminActions.targetType, "admin_action"),
+              inArray(adminActions.targetId, batch)
+            )
+          )
+          .orderBy(asc(adminActions.createdAt), asc(adminActions.id));
+        for (const r of res) {
+          if (!r.targetId || resolutions.has(r.targetId)) continue;
+          let payload: Record<string, unknown> = {};
+          try {
+            payload = JSON.parse(r.payload ?? "{}") as Record<string, unknown>;
+          } catch {
+            payload = {};
+          }
+          resolutions.set(r.targetId, {
+            resolution: typeof payload.resolution === "string" ? payload.resolution : null,
+            at: r.createdAt ?? null,
+            by: r.actorUserId ?? null,
+            payload,
+          });
+        }
+      }
+
       const proposals = parsed.map(({ row, p }) => ({
         id: row.id,
         created_at: row.createdAt,
+        // OPE-1704 — open until a resolution row exists; then how it closed.
+        status: resolutions.get(row.id)?.resolution ?? "open",
+        resolved_at: resolutions.get(row.id)?.at ?? null,
+        resolved_by: resolutions.get(row.id)?.by ?? null,
+        resolution_note: (resolutions.get(row.id)?.payload.note as string | undefined) ?? null,
+        resolved_vendor_id:
+          (resolutions.get(row.id)?.payload.vendor_id as string | undefined) ?? null,
         inbound_email_id: row.inboundEmailId,
         event_id: p.event_id ?? null,
         event_name: p.event_id ? (eventNames.get(p.event_id) ?? null) : null,
@@ -219,6 +315,7 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
       return {
         content: [
           jsonContent({
+            status_filter: status,
             proposals: filtered,
             count: filtered.length,
             // A gate judged on "how many would have been written" needs the
@@ -236,7 +333,7 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
             ...(intakeAccounting ? { intake_accounting: intakeAccounting } : {}),
             note:
               proposals.length === 0
-                ? "No staged proposals. PHOTO_VISION_ENABLED must be on for the pipeline to produce any."
+                ? `No ${status === "all" ? "" : `${status} `}staged proposals.${status === "all" ? "" : " Pass status:'all' to include every staged row."} PHOTO_VISION_ENABLED must be on for the pipeline to produce any.`
                 : undefined,
           }),
         ],
@@ -288,6 +385,71 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
       });
       if (!out.ok) {
         return { content: [{ type: "text" as const, text: out.error }], isError: true };
+      }
+      return { content: [jsonContent(out)] };
+    }
+  );
+
+  server.tool(
+    "review_photo_proposal",
+    "OPE-1704 — resolve ONE staged photo proposal (the id list_photo_proposals returns). decision='approve' (booth proposals only): create or link the vendor with STRICT dedup and the sign-domain match — or link vendor_id directly — as a CONFIRMED exhibitor on the proposal's fair, then write the photo as the vendor's logo if it has none, otherwise append it to their gallery (a logo is never overwritten). A new vendor gets a public page, as with review_exhibitor_proposal. decision='reject': close it, write nothing. decision='already_handled': close it without writing, for a booth cleared by hand. A proposal resolves once: a second call writes nothing and returns the first decision (already_resolved:true). Same record as the admin UI's approve/reject, so either surface sees the other's decisions. Admin only.",
+    {
+      proposal_id: z
+        .string()
+        .min(1)
+        .max(80)
+        .describe("The proposal's id from list_photo_proposals."),
+      decision: z.enum(PROPOSAL_DECISIONS),
+      business_name: z
+        .string()
+        .max(200)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe(
+          "approve: the business name, overriding what the model read. Required when the proposal has no name (an unreadable sign) and no vendor_id is given."
+        ),
+      vendor_id: z
+        .string()
+        .max(80)
+        .optional()
+        .describe(
+          "approve: link this existing vendor instead of matching by name/domain. Followed through merges to the live record; a deleted vendor is refused."
+        ),
+      note: z
+        .string()
+        .max(1000)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Why — kept on the decision. Recommended for reject and already_handled."),
+    },
+    async (params) => {
+      if (auth.role !== "ADMIN") {
+        return {
+          content: [{ type: "text" as const, text: "Admin role required." }],
+          isError: true,
+        };
+      }
+      if (params.decision !== "approve" && (params.business_name || params.vendor_id)) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "business_name and vendor_id apply only to decision='approve'; nothing was written.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      const out = await reviewPhotoProposal(env ?? {}, db, {
+        proposalId: params.proposal_id,
+        decision: params.decision,
+        businessName: params.business_name ?? null,
+        vendorId: params.vendor_id ?? null,
+        note: params.note ?? null,
+        actorUserId: auth.userId ?? null,
+      });
+      if (!out.ok) {
+        return { content: [jsonContent(out)], isError: true };
       }
       return { content: [jsonContent(out)] };
     }
