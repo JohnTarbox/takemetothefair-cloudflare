@@ -53,7 +53,8 @@ interface Pin {
  * SNAP_CHOICE_TTL_MS passes) instead of being asked per photo.
  */
 interface SavedChoice {
-  choice: Pin | "server";
+  /** "nofair" — OPE-1705 slice 3, "No fair: vendor card only". */
+  choice: Pin | "server" | "nofair";
   at: number;
 }
 
@@ -70,6 +71,9 @@ interface SentShot {
 }
 
 const PIN_KEY = "snap-pin";
+/** OPE-1705 slice 3 — the "Add as vendor" box and "Met them at…", kept for the session. */
+const ADD_VENDOR_KEY = "snap-add-vendor";
+const MET_AT_KEY = "snap-met-at";
 const SENT_KEY = "snap-sent";
 const SENT_KEEP = 30;
 const FIX_MAX_AGE_MS = 2 * 60 * 1000;
@@ -104,7 +108,10 @@ export function SnapCapture() {
   const [today, setToday] = useState<NearbyEvent[] | null>(null);
   const [query, setQuery] = useState("");
   const [pin, setPin] = useState<Pin | null>(null);
-  const [pinChoice, setPinChoice] = useState<"unset" | "pinned" | "server">("unset");
+  const [pinChoice, setPinChoice] = useState<"unset" | "pinned" | "server" | "nofair">("unset");
+  const [addAsVendor, setAddAsVendor] = useState(false);
+  const [metAt, setMetAt] = useState<Pin | null>(null);
+  const [recent, setRecent] = useState<NearbyEvent[] | null>(null);
   const [showPicker, setShowPicker] = useState(false);
   const [note, setNote] = useState("");
   const [queued, setQueued] = useState<QueuedShot[]>([]);
@@ -146,6 +153,7 @@ export function SnapCapture() {
         : false;
     if (saved && fresh) {
       if (saved.choice === "server") setPinChoice("server");
+      else if (saved.choice === "nofair") setPinChoice("nofair");
       else if (saved.choice) {
         setPin(saved.choice);
         setPinChoice("pinned");
@@ -158,6 +166,8 @@ export function SnapCapture() {
       }
     }
     setSent(readJson<SentShot[]>(() => localStorage, SENT_KEY, []));
+    setAddAsVendor(readJson<boolean>(() => sessionStorage, ADD_VENDOR_KEY, false) === true);
+    setMetAt(readJson<Pin | null>(() => sessionStorage, MET_AT_KEY, null));
     void refreshQueue();
 
     if ("serviceWorker" in navigator) {
@@ -268,16 +278,37 @@ export function SnapCapture() {
   const suggested = target.kind === "single" && target.event.atVenue ? target.event : null;
   const ambiguous = target.kind === "ambiguous" ? target.candidates : null;
   const needsPick = pinChoice === "unset" && ambiguous !== null;
+  const noFair = pinChoice === "nofair";
   const effectivePin: Pin | null =
-    pinChoice === "pinned" ? pin : pinChoice === "server" ? null : suggested;
+    pinChoice === "pinned" ? pin : pinChoice === "server" || noFair ? null : suggested;
   const choiceBasis: "picked" | "auto_single" | "server" | null =
     pinChoice === "pinned"
       ? "picked"
       : pinChoice === "server"
         ? "server"
-        : suggested
-          ? "auto_single"
-          : null;
+        : noFair
+          ? null
+          : suggested
+            ? "auto_single"
+            : null;
+  // OPE-1705 slice 3 — offer "No fair" by itself when nothing is running close
+  // by today (or at all): the likely case is a stack of cards at home.
+  const offerNoFair =
+    pinChoice === "unset" &&
+    !suggested &&
+    ambiguous === null &&
+    ((nearby !== null && nearby.length === 0) || (today !== null && today.length === 0));
+  // "Met them at…" — the fairs this account snapped at in the last 30 days,
+  // fetched the first time No fair is chosen.
+  useEffect(() => {
+    if (!noFair || recent !== null) return;
+    fetch(`/api/admin/snap/nearby?${new URLSearchParams({ recent: "1" })}`, {
+      credentials: "same-origin",
+    })
+      .then((r) => (r.ok ? (r.json() as Promise<{ events?: NearbyEvent[] }>) : { events: [] }))
+      .then((j) => setRecent(j.events ?? []))
+      .catch(() => setRecent([]));
+  }, [noFair, recent]);
   // Open the picker by itself the moment the fix turns out to be ambiguous.
   useEffect(() => {
     if (needsPick) setShowPicker(true);
@@ -306,10 +337,10 @@ export function SnapCapture() {
     }
   };
 
-  const choosePin = (p: Pin | "server") => {
-    if (p === "server") {
+  const choosePin = (p: Pin | "server" | "nofair") => {
+    if (p === "server" || p === "nofair") {
       setPin(null);
-      setPinChoice("server");
+      setPinChoice(p);
     } else {
       setPin(p);
       setPinChoice("pinned");
@@ -351,6 +382,8 @@ export function SnapCapture() {
             eventSlug: effectivePin?.slug ?? null,
             eventChoice: choiceBasis,
             note: note.trim() || null,
+            ...(noFair ? { noFair: true, metAtEventId: metAt?.id ?? null } : {}),
+            ...(addAsVendor ? { addAsVendor: true } : {}),
           },
         };
         await queue.put(shot);
@@ -460,19 +493,57 @@ export function SnapCapture() {
           className="w-full rounded-lg bg-gray-800 px-4 py-3 text-left"
         >
           <span className="block text-xs uppercase tracking-wide text-gray-400">
-            {effectivePin ? "Sending to" : needsPick ? "Pick the fair first" : "Fair"}
+            {effectivePin || noFair ? "Sending to" : needsPick ? "Pick the fair first" : "Fair"}
           </span>
           <span className="block text-base" data-testid="snap-target">
             {effectivePin
               ? `${effectivePin.name}${effectivePin.venueName ? ` @ ${effectivePin.venueName}` : ""}`
               : pinChoice === "server"
                 ? "Let the server decide"
-                : needsPick
-                  ? `${ambiguous!.length} fairs are close by: tap to choose`
-                  : "Tap to pick the fair"}
+                : noFair
+                  ? "No fair: vendor card only"
+                  : needsPick
+                    ? `${ambiguous!.length} fairs are close by: tap to choose`
+                    : "Tap to pick the fair"}
           </span>
-          {effectivePin && <span className="block text-xs text-gray-400 underline">change</span>}
+          {(effectivePin || noFair) && (
+            <span className="block text-xs text-gray-400 underline">change</span>
+          )}
         </button>
+        {offerNoFair && (
+          <button
+            type="button"
+            data-testid="snap-offer-nofair"
+            onClick={() => choosePin("nofair")}
+            className="mt-2 w-full rounded-lg bg-gray-800 px-4 py-2 text-left text-sm text-gray-200"
+          >
+            No fair running nearby today. Shooting vendor cards? Tap for{" "}
+            <span className="underline">No fair: vendor card only</span>
+          </button>
+        )}
+        {noFair && (
+          <label className="mt-2 block text-sm text-gray-300">
+            Met them at…
+            <select
+              data-testid="snap-met-at"
+              value={metAt?.id ?? ""}
+              onChange={(e) => {
+                const ev = (recent ?? []).find((r) => r.id === e.target.value);
+                const next = ev ? { id: ev.id, slug: ev.slug, name: ev.name } : null;
+                setMetAt(next);
+                writeJson(() => sessionStorage, MET_AT_KEY, next);
+              }}
+              className="mt-1 w-full rounded-lg bg-gray-800 px-4 py-3 text-base"
+            >
+              <option value="">None (no event link)</option>
+              {(recent ?? []).map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {showPicker && (
           <div className="mt-2 rounded-lg bg-gray-800">
             <input
@@ -518,6 +589,15 @@ export function SnapCapture() {
                   Let the server decide
                 </button>
               </li>
+              <li>
+                <button
+                  type="button"
+                  className="w-full px-4 py-3 text-left text-gray-300 hover:bg-gray-700"
+                  onClick={() => choosePin("nofair")}
+                >
+                  No fair: vendor card only
+                </button>
+              </li>
             </ul>
           </div>
         )}
@@ -542,6 +622,19 @@ export function SnapCapture() {
         >
           {busy ? "Saving…" : needsPick ? "Pick the fair" : sent.length ? "Snap another" : "Snap"}
         </button>
+        <label className="flex items-center gap-2 text-sm text-gray-200">
+          <input
+            type="checkbox"
+            data-testid="snap-add-vendor"
+            checked={addAsVendor}
+            onChange={(e) => {
+              setAddAsVendor(e.target.checked);
+              writeJson(() => sessionStorage, ADD_VENDOR_KEY, e.target.checked);
+            }}
+            className="h-5 w-5"
+          />
+          Business card: add as vendor
+        </label>
         <input
           type="text"
           value={note}
