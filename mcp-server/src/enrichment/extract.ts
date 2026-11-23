@@ -646,7 +646,25 @@ function socialFromUrl(rawUrl: string): { platform: string; url: string } | null
 export function jsonLdIdentitySummary(html: string): { phones: string[]; socialUrls: string[] } {
   const phones = new Set<string>();
   const socialUrls = new Set<string>();
-  for (const node of parseJsonLdNodes(html)) {
+  // Walk EVERY nested object, not only the top-level / @graph nodes
+  // parseJsonLdNodes yields. On the real Purity Spring page the second
+  // business is NESTED: `{ "@type": …, telephone: "605-…", sameAs: [resort],
+  // parentOrganization: { telephone: "949-…", sameAs: [Highway West ×4] } }`.
+  // The first version read only top-level nodes and missed it in production
+  // (verified on the deployed build, 2026-11-23).
+  const seen = new Set<object>();
+  const stack: unknown[] = [...parseJsonLdNodes(html)];
+  let visited = 0;
+  while (stack.length && visited < 5000) {
+    const cur = stack.pop();
+    if (!cur || typeof cur !== "object" || seen.has(cur)) continue;
+    seen.add(cur);
+    visited++;
+    if (Array.isArray(cur)) {
+      stack.push(...cur);
+      continue;
+    }
+    const node = cur as Record<string, unknown>;
     if (typeof node.telephone === "string") {
       const tel = normalizePhone(node.telephone);
       if (tel) phones.add(tel);
@@ -658,6 +676,7 @@ export function jsonLdIdentitySummary(html: string): { phones: string[]; socialU
       const s = socialFromUrl(link);
       if (s) socialUrls.add(s.url);
     }
+    for (const v of Object.values(node)) if (v && typeof v === "object") stack.push(v);
   }
   return { phones: [...phones], socialUrls: [...socialUrls] };
 }
