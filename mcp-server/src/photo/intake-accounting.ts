@@ -25,6 +25,8 @@ import type { Db } from "../db.js";
 import { imageRefs, parseRefs } from "../email-handlers/photo-intake.js";
 import {
   BOOTH_PROPOSED_ACTION,
+  CARD_APPLIED_ACTION,
+  CARD_PROPOSED_ACTION,
   GALLERY_ATTACHED_ACTION,
   PERFORMER_CONFIRMED_ACTION,
   PERFORMER_PROPOSED_ACTION,
@@ -39,6 +41,9 @@ const OUTCOME_OF: Record<string, string> = {
   [PERFORMER_CONFIRMED_ACTION]: "performer_confirmed",
   [SIGNAGE_RECORDED_ACTION]: "signage_recorded",
   [GALLERY_ATTACHED_ACTION]: "gallery_attached",
+  // OPE-1705 — a business card is an outcome too, or every card reads as "no outcome".
+  [CARD_PROPOSED_ACTION]: "card_proposed",
+  [CARD_APPLIED_ACTION]: "card_applied",
 };
 
 export interface IntakeAccounting {

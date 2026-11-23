@@ -43,7 +43,12 @@ import { createOrLinkVendor } from "@takemetothefair/vendor-linking";
 import { adminActions, vendors } from "../schema.js";
 import { recomputeVendorCompleteness, logEnrichment } from "../helpers.js";
 import type { Db } from "../db.js";
-import { BOOTH_PROPOSED_ACTION, PERFORMER_PROPOSED_ACTION } from "./booth-pipeline.js";
+import {
+  BOOTH_PROPOSED_ACTION,
+  CARD_PROPOSED_ACTION,
+  PERFORMER_PROPOSED_ACTION,
+} from "./booth-pipeline.js";
+import { applyCardPlan, planCardFields, type CardReading } from "./business-card.js";
 import { PHOTO_RESOLVED_ACTION } from "./repoint.js";
 import { postBoothPhoto, type AutoWriteEnv } from "./auto-write.js";
 
@@ -88,7 +93,13 @@ export type ReviewProposalResult =
   | {
       ok: false;
       error: string;
-      code?: "not_found" | "no_name" | "no_event" | "not_booth" | "domain_ambiguous";
+      code?:
+        | "not_found"
+        | "no_name"
+        | "no_event"
+        | "not_booth"
+        | "domain_ambiguous"
+        | "card_needs_vendor";
       candidates?: Array<{ id: string; businessName: string }>;
     };
 
@@ -154,7 +165,9 @@ export async function reviewPhotoProposal(
     .limit(1);
   if (
     !proposal ||
-    (proposal.action !== BOOTH_PROPOSED_ACTION && proposal.action !== PERFORMER_PROPOSED_ACTION)
+    (proposal.action !== BOOTH_PROPOSED_ACTION &&
+      proposal.action !== PERFORMER_PROPOSED_ACTION &&
+      proposal.action !== CARD_PROPOSED_ACTION)
   ) {
     return {
       ok: false,
@@ -190,7 +203,54 @@ export async function reviewPhotoProposal(
 
   let detail: Record<string, unknown> = base;
 
-  if (input.decision === "approve") {
+  if (input.decision === "approve" && proposal.action === CARD_PROPOSED_ACTION) {
+    // OPE-1705 — a card is applied to the vendor a person names. No image is
+    // written (a card is never a logo, hero or gallery photo), and no vendor is
+    // created here: that is the "Add as vendor" lane.
+    if (!input.vendorId) {
+      return {
+        ok: false,
+        code: "card_needs_vendor",
+        error:
+          "Approving a business card applies it to an existing vendor: pass vendor_id. To discard it, decision='reject'.",
+      };
+    }
+    const [v] = await db
+      .select({
+        businessName: vendors.businessName,
+        website: vendors.website,
+        socialLinks: vendors.socialLinks,
+        address: vendors.address,
+        city: vendors.city,
+        state: vendors.state,
+        zip: vendors.zip,
+        contactEmail: vendors.contactEmail,
+        contactPhone: vendors.contactPhone,
+        contactName: vendors.contactName,
+      })
+      .from(vendors)
+      .where(eq(vendors.id, input.vendorId))
+      .limit(1);
+    if (!v) return { ok: false, code: "not_found", error: `No vendor ${input.vendorId}.` };
+    const card = cardFromPayload((payload as { card?: unknown }).card);
+    // The approval is the gate a person supplies, so identity fields fill
+    // blanks; contact fields still stage (ruling (a)), conflicts still stage.
+    const plans = planCardFields(card, v, { autoWrite: true });
+    const res = await applyCardPlan(db, input.vendorId, plans, {
+      sourceRef: `inbound-email:${proposal.inboundEmailId}#${payload.photo_key ?? ""}`,
+      jobRunId: `card-${proposal.inboundEmailId}`,
+    });
+    detail = {
+      ...base,
+      vendor_id: input.vendorId,
+      business_name: v.businessName,
+      card_written: res.written,
+      card_staged: res.staged,
+      card_conflicts: res.conflicts,
+      card_already_pending: res.alreadyPending,
+      photo_written_as: "none",
+    };
+  } else if (input.decision === "approve") {
     if (proposal.action !== BOOTH_PROPOSED_ACTION) {
       return {
         ok: false,
@@ -303,4 +363,21 @@ export async function reviewPhotoProposal(
     resolution: RESOLUTION_FOR[input.decision],
     detail: { ...detail, resolved_at: now, resolved_by: input.actorUserId },
   };
+}
+
+/** OPE-1705 — rebuild a CardReading from the `card` object the pipeline recorded. */
+function cardFromPayload(raw: unknown): CardReading {
+  const out: Record<string, unknown> = {};
+  if (raw && typeof raw === "object") {
+    for (const [k, f] of Object.entries(raw as Record<string, unknown>)) {
+      const field = f as { value?: unknown; confidence?: unknown } | null;
+      if (field && field.value !== undefined && field.value !== null) {
+        out[k] = {
+          value: field.value,
+          confidence: typeof field.confidence === "number" ? field.confidence : 0,
+        };
+      }
+    }
+  }
+  return out as CardReading;
 }

@@ -22,6 +22,9 @@ export const SNAP_DECISION_ACTIONS = {
   performerConfirmed: "performer.photo_confirmed",
   galleryAttached: "photo.gallery_attached",
   signageRecorded: "photo.signage_not_presence",
+  // OPE-1705 — business cards.
+  cardApplied: "vendor.card_applied",
+  cardProposed: "vendor.card_proposed",
 } as const;
 
 export type SnapPhase =
@@ -45,6 +48,11 @@ export interface SnapStatus {
     performer: number;
     gallery: number;
     signage: number;
+    /** OPE-1705 — cards matched to a vendor, and the vendor each matched. */
+    cardApplied?: number;
+    cardVendorName?: string | null;
+    /** OPE-1705 — cards staged for review. */
+    cardProposed?: number;
   };
 }
 
@@ -109,6 +117,13 @@ export function describeSnap(
     if (outcome.performer) parts.push(`${outcome.performer} performer`);
     if (outcome.gallery) parts.push(`${outcome.gallery} to gallery`);
     if (outcome.signage) parts.push("sign recorded");
+    if (outcome.cardApplied)
+      parts.push(
+        outcome.cardApplied === 1 && outcome.cardVendorName
+          ? `Business card → ${outcome.cardVendorName}`
+          : `${outcome.cardApplied} business card${outcome.cardApplied === 1 ? "" : "s"} matched`
+      );
+    if (outcome.cardProposed) parts.push(`${outcome.cardProposed} card only — for review`);
     const what = parts.length ? parts.join(", ") : "matched";
     return { ...base, phase: "matched", label: `${eventName ?? "Matched"} — ${what}` };
   }
@@ -150,11 +165,15 @@ export async function loadSnapStatuses(db: Db, ids: string[]): Promise<SnapStatu
   const counts = new Map<string, SnapStatus["outcome"]>();
   const actions = Object.values(SNAP_DECISION_ACTIONS);
   for (const a of await db
-    .select({ targetId: adminActions.targetId, action: adminActions.action })
+    .select({
+      targetId: adminActions.targetId,
+      action: adminActions.action,
+      payloadJson: adminActions.payloadJson,
+    })
     .from(adminActions)
     .where(and(inArray(adminActions.targetId, wanted), inArray(adminActions.action, actions)))) {
     if (!a.targetId) continue;
-    const c = { ...(counts.get(a.targetId) ?? EMPTY_OUTCOME) };
+    const c: SnapStatus["outcome"] = { ...(counts.get(a.targetId) ?? EMPTY_OUTCOME) };
     if (a.action === SNAP_DECISION_ACTIONS.boothProposed) c.boothProposals++;
     else if (a.action === SNAP_DECISION_ACTIONS.boothAutowritten) c.boothAutowritten++;
     else if (
@@ -164,6 +183,16 @@ export async function loadSnapStatuses(db: Db, ids: string[]): Promise<SnapStatu
       c.performer++;
     else if (a.action === SNAP_DECISION_ACTIONS.galleryAttached) c.gallery++;
     else if (a.action === SNAP_DECISION_ACTIONS.signageRecorded) c.signage++;
+    else if (a.action === SNAP_DECISION_ACTIONS.cardApplied) {
+      c.cardApplied = (c.cardApplied ?? 0) + 1;
+      try {
+        const n = (JSON.parse(a.payloadJson ?? "{}") as { vendor_name?: unknown }).vendor_name;
+        c.cardVendorName = typeof n === "string" ? n : null;
+      } catch {
+        c.cardVendorName = null;
+      }
+    } else if (a.action === SNAP_DECISION_ACTIONS.cardProposed)
+      c.cardProposed = (c.cardProposed ?? 0) + 1;
     counts.set(a.targetId, c);
   }
 
