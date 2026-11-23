@@ -38,6 +38,7 @@ import { jsonContent, logEnrichment, publicUrlFor, triggerIndexNow } from "../he
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
+import { flagReasons } from "../enrichment/promoter-sanity.js";
 
 interface Env {
   MAIN_APP?: { fetch: typeof fetch };
@@ -343,6 +344,8 @@ export function registerPromoterEnrichmentReviewTools(
                 fetch_method: r.fetchMethod,
                 confidence: r.confidence,
                 flags: JSON.parse(r.flags) as string[],
+                // OPE-1706 — a one-line reason per flag, so the reviewer sees why.
+                flag_reasons: flagReasons(JSON.parse(r.flags) as string[]),
                 source_url: r.sourceUrl,
                 decision: r.decision,
                 job_run_id: r.jobRunId,

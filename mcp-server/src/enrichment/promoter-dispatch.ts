@@ -33,6 +33,8 @@ import { extractPromoterSignals, type PromoterExtraction } from "./promoter-extr
 import { probePromoterImage } from "./promoter-image.js";
 import { contactPageSignals, findContactLink } from "./contact-page.js";
 import { writeGuardedFills, type GuardedFill } from "./guarded-fill.js";
+import { jsonLdIdentitySummary } from "./extract.js";
+import { applyPromoterSanityFlags } from "./promoter-sanity.js";
 
 /** One promoter pre-extraction job. */
 export interface PromoterEnrichmentMessage {
@@ -104,6 +106,8 @@ const PROMOTER_COLUMNS = {
   companyName: promoters.companyName,
   slug: promoters.slug,
   website: promoters.website,
+  // OPE-1706 — the phone-region check compares an area code with this.
+  state: promoters.state,
   heroImageUrl: promoters.heroImageUrl,
   logoUrl: promoters.logoUrl,
   description: promoters.description,
@@ -240,6 +244,38 @@ export function socialLinksHaveNameAffinity(
       label !== null && label.length >= 3 && (label.includes(handle) || handle.includes(label))
     );
   });
+}
+
+/**
+ * OPE-1706 — one social URL whose NAMED handle shares nothing with the
+ * promoter's name or website. Opaque handles (channel ids, profile.php, numeric
+ * groups) are not evidence either way and return false. Exported for tests.
+ */
+export function socialUrlIsUnaffine(
+  url: string,
+  companyName: string | null | undefined,
+  website: string | null | undefined
+): boolean {
+  const handle = namedHandleOf(url);
+  if (!handle || handle.length < 3 || isOpaqueHandle(handle)) return false;
+  return !socialLinksHaveNameAffinity(JSON.stringify({ x: url }), companyName, website);
+}
+
+/**
+ * OPE-1706 — does the page's JSON-LD describe more than one business? True
+ * when it names more than one distinct phone, or any named social account with
+ * no affinity to the promoter. Purity Spring Resort's carried 605 and 949
+ * numbers and Highway West Vacations' accounts next to its own. Exported for
+ * tests.
+ */
+export function jsonLdHasMultipleEntities(
+  html: string,
+  companyName: string | null | undefined,
+  website: string | null | undefined
+): boolean {
+  const { phones, socialUrls } = jsonLdIdentitySummary(html);
+  if (phones.length > 1) return true;
+  return socialUrls.some((u) => socialUrlIsUnaffine(u, companyName, website));
 }
 
 /**
@@ -565,6 +601,17 @@ export async function processPromoterEnrichmentJob(
     env,
     proposals
   );
+
+  // OPE-1706 — cheap sanity checks (phone region, role mailbox, JSON-LD naming
+  // two businesses, offsite / stock-photo logo). Each adds a flag; a flagged
+  // contact stages instead of auto-applying. After the Contact-page hop, so its
+  // contacts are checked too.
+  applyPromoterSanityFlags(proposals, {
+    state: row.state,
+    website: row.website,
+    finalUrl: fetched.finalUrl ?? null,
+    jsonLdMultipleEntities: jsonLdHasMultipleEntities(fetched.html, row.companyName, row.website),
+  });
 
   // OPE-964 — a value a human REVERTED is never auto-applied again. Under
   // fill-empty-only the revert leaves the field empty, so without this the next

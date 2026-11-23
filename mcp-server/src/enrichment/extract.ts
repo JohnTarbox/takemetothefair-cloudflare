@@ -635,6 +635,33 @@ function socialFromUrl(rawUrl: string): { platform: string; url: string } | null
   return { platform, url: u.toString() };
 }
 
+/**
+ * OPE-1706 — every DISTINCT phone and social account the page's JSON-LD names,
+ * across all nodes. `extractVendorContact` keeps only the FIRST of each, so a
+ * page whose structured data describes two businesses (Purity Spring Resort's
+ * carried its own accounts plus Highway West Vacations', and phones in 605 and
+ * 949) is indistinguishable from a clean one there. Promoter enrichment reads
+ * this to decide whether a JSON-LD contact can be trusted to auto-apply.
+ */
+export function jsonLdIdentitySummary(html: string): { phones: string[]; socialUrls: string[] } {
+  const phones = new Set<string>();
+  const socialUrls = new Set<string>();
+  for (const node of parseJsonLdNodes(html)) {
+    if (typeof node.telephone === "string") {
+      const tel = normalizePhone(node.telephone);
+      if (tel) phones.add(tel);
+    }
+    const sameAs = node.sameAs;
+    const list = Array.isArray(sameAs) ? sameAs : typeof sameAs === "string" ? [sameAs] : [];
+    for (const link of list) {
+      if (typeof link !== "string") continue;
+      const s = socialFromUrl(link);
+      if (s) socialUrls.add(s.url);
+    }
+  }
+  return { phones: [...phones], socialUrls: [...socialUrls] };
+}
+
 export function extractVendorContact(html: string, sourceUrl: string): VendorExtraction {
   const out: VendorExtraction = {};
   const social: Record<string, string> = {};
