@@ -40,6 +40,7 @@ import {
 } from "../photo/booth-pipeline.js";
 import type { Db } from "../db.js";
 import { computeIntakeAccounting } from "../photo/intake-accounting.js";
+import { pairingsForProposals } from "../photo/card-pairing.js";
 import { PHOTO_RESOLVED_ACTION, repointPhotoIntake } from "../photo/repoint.js";
 import { PROPOSAL_DECISIONS, reviewPhotoProposal } from "../photo/review-proposal.js";
 import type { AutoWriteEnv } from "../photo/auto-write.js";
@@ -258,6 +259,34 @@ export function registerPhotoProposalTools(
         }
       }
 
+      // OPE-1705 slice 2 — a card paired with a booth, shown on both rows.
+      const pairings = await pairingsForProposals(
+        db,
+        rows.map((r) => r.id)
+      );
+      const pairedWith = (id: string, action: string) => {
+        const pr = pairings.get(id);
+        if (!pr) return null;
+        const isCard = action === CARD_PROPOSED_ACTION;
+        return {
+          pairing: pr.pairing ?? null,
+          basis: pr.basis ?? null,
+          effect: pr.effect ?? null,
+          vendor_id: pr.vendor_id ?? null,
+          ...(isCard
+            ? {
+                booth_email_id: pr.booth_email_id ?? null,
+                booth_photo_key: pr.booth_photo_key ?? null,
+                booth_business_name: pr.booth_business_name ?? null,
+              }
+            : {
+                card_email_id: pr.card_email_id ?? null,
+                card_photo_key: pr.card_photo_key ?? null,
+                // An unreadable booth's name, read off the card shot after it.
+                resolved_business_name: pr.resolved_business_name ?? null,
+              }),
+        };
+      };
       const proposals = parsed.map(({ row, p }) => ({
         id: row.id,
         created_at: row.createdAt,
@@ -283,6 +312,7 @@ export function registerPhotoProposalTools(
               ? "business_card"
               : "booth"),
         stage_kind: p.stage_kind ?? null,
+        paired: pairedWith(row.id, row.action),
         // OPE-240 — the booth/not-booth answer, on rows that reached the gate.
         sign_mounted_on: p.sign_mounted_on ?? null,
         business_name: p.business_name ?? null,

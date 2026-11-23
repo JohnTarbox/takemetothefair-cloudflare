@@ -503,3 +503,20 @@ export async function applyCardPlan(
   }
   return res;
 }
+
+/** OPE-1705 — rebuild a CardReading from the `card` object the pipeline recorded. */
+export function cardFromPayload(raw: unknown): CardReading {
+  const out: Record<string, unknown> = {};
+  if (raw && typeof raw === "object") {
+    for (const [k, f] of Object.entries(raw as Record<string, unknown>)) {
+      const field = f as { value?: unknown; confidence?: unknown } | null;
+      if (field && field.value !== undefined && field.value !== null) {
+        out[k] = {
+          value: field.value,
+          confidence: typeof field.confidence === "number" ? field.confidence : 0,
+        };
+      }
+    }
+  }
+  return out as CardReading;
+}

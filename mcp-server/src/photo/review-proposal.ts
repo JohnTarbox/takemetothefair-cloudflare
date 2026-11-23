@@ -48,8 +48,9 @@ import {
   CARD_PROPOSED_ACTION,
   PERFORMER_PROPOSED_ACTION,
 } from "./booth-pipeline.js";
-import { applyCardPlan, planCardFields, type CardReading } from "./business-card.js";
+import { applyCardPlan, cardFromPayload, planCardFields } from "./business-card.js";
 import { PHOTO_RESOLVED_ACTION } from "./repoint.js";
+import { pairingsForProposals } from "./card-pairing.js";
 import { postBoothPhoto, type AutoWriteEnv } from "./auto-write.js";
 
 export const PROPOSAL_DECISIONS = ["approve", "reject", "already_handled"] as const;
@@ -272,10 +273,18 @@ export async function reviewPhotoProposal(
         .limit(1);
       vendorName = v?.businessName ?? null;
     }
+    // OPE-1705 slice 2 — an unreadable booth named by the card shot after it.
+    let cardName: string | null = null;
+    if (!input.businessName?.trim() && !vendorName && !payload.business_name) {
+      const paired = (await pairingsForProposals(db, [proposal.id])).get(proposal.id);
+      cardName =
+        typeof paired?.resolved_business_name === "string" ? paired.resolved_business_name : null;
+    }
     const businessName = (
       input.businessName?.trim() ||
       vendorName ||
       payload.business_name ||
+      cardName ||
       ""
     ).trim();
     if (!businessName) {
@@ -334,6 +343,7 @@ export async function reviewPhotoProposal(
       vendor_id: result.vendorId,
       vendor_slug: result.vendorSlug,
       business_name: businessName,
+      ...(cardName ? { name_from: "paired_business_card" } : {}),
       was_created: result.wasCreated,
       was_linked: result.wasLinked,
       was_already_linked: result.wasAlreadyLinked,
@@ -363,21 +373,4 @@ export async function reviewPhotoProposal(
     resolution: RESOLUTION_FOR[input.decision],
     detail: { ...detail, resolved_at: now, resolved_by: input.actorUserId },
   };
-}
-
-/** OPE-1705 — rebuild a CardReading from the `card` object the pipeline recorded. */
-function cardFromPayload(raw: unknown): CardReading {
-  const out: Record<string, unknown> = {};
-  if (raw && typeof raw === "object") {
-    for (const [k, f] of Object.entries(raw as Record<string, unknown>)) {
-      const field = f as { value?: unknown; confidence?: unknown } | null;
-      if (field && field.value !== undefined && field.value !== null) {
-        out[k] = {
-          value: field.value,
-          confidence: typeof field.confidence === "number" ? field.confidence : 0,
-        };
-      }
-    }
-  }
-  return out as CardReading;
 }

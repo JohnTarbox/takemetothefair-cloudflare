@@ -25,6 +25,8 @@ export const SNAP_DECISION_ACTIONS = {
   // OPE-1705 — business cards.
   cardApplied: "vendor.card_applied",
   cardProposed: "vendor.card_proposed",
+  // OPE-1705 slice 2 — a card paired with the booth shot before it.
+  cardPaired: "vendor.card_paired",
 } as const;
 
 export type SnapPhase =
@@ -53,6 +55,9 @@ export interface SnapStatus {
     cardVendorName?: string | null;
     /** OPE-1705 — cards staged for review. */
     cardProposed?: number;
+    /** OPE-1705 slice 2 — the booth this card was paired with, and how. */
+    cardPairedWith?: string | null;
+    cardPairing?: string | null;
   };
 }
 
@@ -117,13 +122,16 @@ export function describeSnap(
     if (outcome.performer) parts.push(`${outcome.performer} performer`);
     if (outcome.gallery) parts.push(`${outcome.gallery} to gallery`);
     if (outcome.signage) parts.push("sign recorded");
-    if (outcome.cardApplied)
+    const paired = cardPairedLabel(outcome);
+    if (paired) parts.push(paired);
+    else if (outcome.cardApplied)
       parts.push(
         outcome.cardApplied === 1 && outcome.cardVendorName
           ? `Business card → ${outcome.cardVendorName}`
           : `${outcome.cardApplied} business card${outcome.cardApplied === 1 ? "" : "s"} matched`
       );
-    if (outcome.cardProposed) parts.push(`${outcome.cardProposed} card only — for review`);
+    if (outcome.cardProposed && !paired)
+      parts.push(`${outcome.cardProposed} card only — for review`);
     const what = parts.length ? parts.join(", ") : "matched";
     return { ...base, phase: "matched", label: `${eventName ?? "Matched"} — ${what}` };
   }
@@ -131,6 +139,16 @@ export function describeSnap(
   const why =
     locationSource === "none" ? "no location and no pinned fair" : "no fair found here today";
   return { ...base, phase: "held", label: `Held — ${why}. Pin the fair and re-snap.` };
+}
+
+/** OPE-1705 slice 2 — the card's line once it is paired with a booth, else null. */
+export function cardPairedLabel(outcome: SnapStatus["outcome"]): string | null {
+  if (!outcome.cardPairing) return null;
+  const booth = outcome.cardPairedWith ?? "the booth before it";
+  if (outcome.cardPairing === "confirmed") return `Business card → paired with ${booth}`;
+  if (outcome.cardPairing === "unreadable_booth")
+    return "Business card → named the unreadable booth before it — for review";
+  return `Business card → after ${booth}, names differ — for review`;
 }
 
 /** Load statuses for the given snap row ids (≤ 50, snap rows only). */
@@ -193,6 +211,18 @@ export async function loadSnapStatuses(db: Db, ids: string[]): Promise<SnapStatu
       }
     } else if (a.action === SNAP_DECISION_ACTIONS.cardProposed)
       c.cardProposed = (c.cardProposed ?? 0) + 1;
+    else if (a.action === SNAP_DECISION_ACTIONS.cardPaired) {
+      try {
+        const p = JSON.parse(a.payloadJson ?? "{}") as {
+          pairing?: unknown;
+          booth_business_name?: unknown;
+        };
+        c.cardPairing = typeof p.pairing === "string" ? p.pairing : null;
+        c.cardPairedWith = typeof p.booth_business_name === "string" ? p.booth_business_name : null;
+      } catch {
+        c.cardPairing = null;
+      }
+    }
     counts.set(a.targetId, c);
   }
 
