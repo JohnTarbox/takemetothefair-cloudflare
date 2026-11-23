@@ -2065,7 +2065,35 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
           "photo.signage_not_presence",
           // OPE-978 — scenery now records its gallery decision too.
           "photo.gallery_attached",
+          // OPE-1705 — a business card records its own decision, never a booth
+          // proposal; a batch of only cards must not read as a stopped stage.
+          "vendor.card_proposed",
+          "vendor.card_applied",
         ])
+      ),
+  },
+  {
+    // OPE-1705 — the business-card lane: a card photo is read for its fields
+    // and either applied to a matched vendor (blank-fill + staged contact
+    // candidates) or staged as a card proposal. OPE-246: the new execution path
+    // ships with its probe.
+    //
+    // DORMANT (drizzle/0434 seeds enabled_at NULL). Cards arrive only when John
+    // photographs one, so a window armed before the first real card would page
+    // on a lane nobody has used yet. Set `enabled_at` the day the first live
+    // card writes one of these rows — that is the lane's first evidence.
+    name: "business-card-lane",
+    ownerOpe: "OPE-1705",
+    label: "Business-card photo → vendor fields / card proposal",
+    priority: "P1",
+    // 30d, the photo-intake siblings' window: seasonal, quiet for weeks.
+    expectedWindowHours: 30 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        inArray(adminActions.action, ["vendor.card_proposed", "vendor.card_applied"])
       ),
   },
   // ── OPE-309 (assurance audit A6 / A7) ──────────────────────────────

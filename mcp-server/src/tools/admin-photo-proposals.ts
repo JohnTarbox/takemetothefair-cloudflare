@@ -33,7 +33,11 @@ import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { chunkIds } from "@takemetothefair/utils";
 import { adminActions, events } from "../schema.js";
 import { decodeHtmlEntities, jsonContent } from "../helpers.js";
-import { BOOTH_PROPOSED_ACTION, PERFORMER_PROPOSED_ACTION } from "../photo/booth-pipeline.js";
+import {
+  BOOTH_PROPOSED_ACTION,
+  CARD_PROPOSED_ACTION,
+  PERFORMER_PROPOSED_ACTION,
+} from "../photo/booth-pipeline.js";
 import type { Db } from "../db.js";
 import { computeIntakeAccounting } from "../photo/intake-accounting.js";
 import { PHOTO_RESOLVED_ACTION, repointPhotoIntake } from "../photo/repoint.js";
@@ -104,10 +108,10 @@ export function registerPhotoProposalTools(
     "OPE-240 — the photo proposals the vision pipeline has STAGED (booths, and since OPE-969 performers), with what it identified, its confidence, whether it would have auto-written, and why it staged instead. `photo_class` says what the photo is and `stage_kind` why it staged, so 'a booth whose name is unreadable' and 'not a booth' are distinguishable. This is the evidence the PHOTO_AUTOWRITE_ENABLED gate is meant to be judged on. Read-only: it cannot enable, write or approve anything.",
     {
       photo_class: z
-        .enum(["booth", "performer"])
+        .enum(["booth", "performer", "business_card"])
         .optional()
         .describe(
-          "OPE-969: only booth proposals or only performer proposals. Omit for both. Rows staged before 2026-09-13 have no class and are booth proposals."
+          "OPE-969: only booth, performer, or (OPE-1705) business-card proposals. Omit for all. Rows staged before 2026-09-13 have no class and are booth proposals. A business-card proposal is approved with review_photo_proposal(vendor_id) and never publishes its image."
         ),
       would_auto_write: z
         .boolean()
@@ -153,7 +157,9 @@ export function registerPhotoProposalTools(
           ? [BOOTH_PROPOSED_ACTION]
           : params.photo_class === "performer"
             ? [PERFORMER_PROPOSED_ACTION]
-            : [BOOTH_PROPOSED_ACTION, PERFORMER_PROPOSED_ACTION];
+            : params.photo_class === "business_card"
+              ? [CARD_PROPOSED_ACTION]
+              : [BOOTH_PROPOSED_ACTION, PERFORMER_PROPOSED_ACTION, CARD_PROPOSED_ACTION];
       const filters: SQL[] = [inArray(adminActions.action, wanted)];
       const statusSql = statusPredicate(status);
       if (statusSql) filters.push(statusSql);
@@ -270,7 +276,12 @@ export function registerPhotoProposalTools(
         // OPE-969 — a pre-split row carries no class; every such row was
         // written by the booth path, so that is what it is.
         photo_class:
-          p.photo_class ?? (row.action === PERFORMER_PROPOSED_ACTION ? "performer" : "booth"),
+          p.photo_class ??
+          (row.action === PERFORMER_PROPOSED_ACTION
+            ? "performer"
+            : row.action === CARD_PROPOSED_ACTION
+              ? "business_card"
+              : "booth"),
         stage_kind: p.stage_kind ?? null,
         // OPE-240 — the booth/not-booth answer, on rows that reached the gate.
         sign_mounted_on: p.sign_mounted_on ?? null,

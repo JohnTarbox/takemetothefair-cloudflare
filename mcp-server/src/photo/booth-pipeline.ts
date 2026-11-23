@@ -47,8 +47,21 @@ import { autoWriteBooths, type AutoWriteOutcome } from "./auto-write.js";
 import { matchRosterPerformer, resolvePerformerPhoto } from "./performer-photos.js";
 import { hasIndependentProducts } from "./sign-words.js";
 import {
+  applyCardPlan,
+  cardDomainCandidates,
+  cardNameProblem,
+  planCardFields,
+  readBusinessCard,
+  type CardApplyResult,
+  type CardFieldPlan,
+  type CardReading,
+  type CardStageKind,
+} from "./business-card.js";
+import { vendors } from "../schema.js";
+import {
   extractSignDomain,
   findFuzzyMatch,
+  findStrictMatch,
   resolveVendorBySignDomain,
   type DomainVendorMatch,
   type VendorLinkDb,
@@ -69,6 +82,15 @@ export const PERFORMER_CONFIRMED_ACTION = "performer.photo_confirmed";
 export const GALLERY_ATTACHED_ACTION = "photo.gallery_attached";
 /** OPE-969 — a sign whose owner is not the subject. Recorded; nothing else written. */
 export const SIGNAGE_RECORDED_ACTION = "photo.signage_not_presence";
+/**
+ * OPE-1705 — a business card staged for a person (unreadable, generic, ambiguous,
+ * or no vendor matched). Its OWN action, not `vendor.photo_proposed`: both booth
+ * approve tails post the proposal's photo as a logo/gallery image and select on
+ * that action string, so a card can never reach them.
+ */
+export const CARD_PROPOSED_ACTION = "vendor.card_proposed";
+/** OPE-1705 — a card matched to an existing vendor; fields written/staged per business-card.ts. */
+export const CARD_APPLIED_ACTION = "vendor.card_applied";
 
 /**
  * Photos to run vision over in one email.
@@ -138,6 +160,22 @@ export interface BoothPipelineResult {
   autoWritten: AutoWriteOutcome[];
   /** Set when the gate is off — reported so a silent no-op is impossible. */
   disabledReason?: string;
+  /**
+   * OPE-1705 — business cards. `applied` matched an existing vendor (fields
+   * written and/or staged); `proposed` staged for a person. Absent when no card
+   * was in the batch, so older readers see no change.
+   */
+  cards?: {
+    applied: Array<{
+      vendorId: string;
+      vendorName: string;
+      matchBasis: "domain" | "name";
+      written: string[];
+      staged: string[];
+      conflicts: string[];
+    }>;
+    proposed: Array<{ businessName: string | null; stageKind: CardStageKind }>;
+  };
   /**
    * OPE-403 follow-up — per-photo vision failure reasons, when the model
    * produced nothing usable. Empty when every photo identified cleanly.
@@ -235,7 +273,7 @@ export async function runBoothPipeline(
 
   const bucket = env.VENDOR_ASSETS;
   const ai = env.AI;
-  const results: Array<{ photo: PipelinePhoto; d: Disposition }> = [];
+  const results: Array<{ photo: PipelinePhoto; d: Disposition; card?: CardReading }> = [];
 
   for (const photo of photos.slice(0, MAX_PHOTOS_PER_EMAIL)) {
     // OPE-978 — a photo that cannot be read or identified still gets a
@@ -254,6 +292,11 @@ export async function runBoothPipeline(
       // so it costs one call per would-write and nothing on the rest.
       if (d.action === "write" && id.businessName) {
         d = applyPresenceGate(d, await checkBoothPresence(ai, bytes, id.businessName));
+      }
+      // OPE-1705 — a card's fields come from a second, focused read.
+      if (d.action === "card") {
+        results.push({ photo, d, card: await readBusinessCard(ai, bytes) });
+        continue;
       }
       results.push({ photo, d });
     } catch (e) {
@@ -483,6 +526,143 @@ export async function runBoothPipeline(
     }
   }
 
+  // OPE-1705 — resolve each card against existing vendors. Reads only, so it
+  // runs before the dry-run boundary: a replay reports what a live run would do.
+  type CardOutcome =
+    | {
+        kind: "match";
+        photo: PipelinePhoto;
+        card: CardReading;
+        vendorId: string;
+        vendorName: string;
+        matchBasis: "domain" | "name";
+        plans: CardFieldPlan[];
+      }
+    | {
+        kind: "stage";
+        photo: PipelinePhoto;
+        card: CardReading;
+        stageKind: CardStageKind;
+        reason: string;
+        domainCandidates?: Array<{ id: string; businessName: string }>;
+      };
+  const cardOutcomes: CardOutcome[] = [];
+  for (const r of results) {
+    if (r.d.action !== "card") continue;
+    const card = r.card ?? { failureReason: "card not read" };
+    const stage = (
+      stageKind: CardStageKind,
+      reason: string,
+      extra: Partial<Extract<CardOutcome, { kind: "stage" }>> = {}
+    ) => cardOutcomes.push({ kind: "stage", photo: r.photo, card, stageKind, reason, ...extra });
+    const problem = cardNameProblem(card);
+    try {
+      // Domain first (OPE-1694), even when the name is unreadable: a card's
+      // website or email host names its vendor more reliably than its lettering.
+      const domains = cardDomainCandidates(card);
+      const sd = extractSignDomain(card.businessName?.value ?? "", domains[0] ?? null);
+      const dm = await resolveVendorBySignDomain(db as unknown as VendorLinkDb, {
+        domain: sd.domain,
+        candidates: [...new Set([...sd.candidates, ...domains])],
+      });
+      let match: { id: string; name: string; basis: "domain" | "name" } | null = null;
+      if (dm.kind === "one") match = { id: dm.vendorId, name: dm.businessName, basis: "domain" };
+      else if (dm.kind === "ambiguous") {
+        stage("card_domain_ambiguous", `${dm.reason} — which vendor is this card?`.slice(0, 200), {
+          domainCandidates: dm.candidates,
+        });
+        continue;
+      } else if (!problem && card.businessName) {
+        const v = await findStrictMatch(db as unknown as VendorLinkDb, card.businessName.value);
+        if (v) match = { id: v.id, name: v.businessName, basis: "name" };
+      }
+      if (!match) {
+        if (problem) {
+          stage(
+            problem,
+            problem === "card_name_generic"
+              ? `generic text, not a business name: "${card.businessName?.value}"`
+              : problem === "card_unreadable"
+                ? `the card could not be read: ${card.failureReason ?? "no fields"}`.slice(0, 200)
+                : "the business name on the card is not clearly legible"
+          );
+        } else {
+          stage("card_unmatched", `no existing vendor matches "${card.businessName?.value}"`);
+        }
+        continue;
+      }
+      const [snap] = await db
+        .select({
+          website: vendors.website,
+          socialLinks: vendors.socialLinks,
+          address: vendors.address,
+          city: vendors.city,
+          state: vendors.state,
+          zip: vendors.zip,
+          contactEmail: vendors.contactEmail,
+          contactPhone: vendors.contactPhone,
+          contactName: vendors.contactName,
+        })
+        .from(vendors)
+        .where(eq(vendors.id, match.id))
+        .limit(1);
+      if (!snap) {
+        stage("card_match_check_failed", `matched vendor ${match.id} could not be read`);
+        continue;
+      }
+      cardOutcomes.push({
+        kind: "match",
+        photo: r.photo,
+        card,
+        vendorId: match.id,
+        vendorName: match.name,
+        matchBasis: match.basis,
+        plans: planCardFields(card, snap, { autoWrite: autoWriteOn }),
+      });
+    } catch (e) {
+      stage(
+        "card_match_check_failed",
+        `vendor match failed — nothing written: ${e instanceof Error ? e.message : String(e)}`.slice(
+          0,
+          200
+        )
+      );
+    }
+  }
+  const cardsSummary = (applied: Map<string, CardApplyResult>) =>
+    cardOutcomes.length === 0
+      ? {}
+      : {
+          cards: {
+            applied: cardOutcomes.flatMap((c) =>
+              c.kind !== "match"
+                ? []
+                : [
+                    {
+                      vendorId: c.vendorId,
+                      vendorName: c.vendorName,
+                      matchBasis: c.matchBasis,
+                      // Dry run: the plan; live: what actually landed.
+                      written:
+                        applied.get(c.photo.key)?.written ??
+                        c.plans.filter((p) => p.action === "write").map((p) => p.column),
+                      staged:
+                        applied.get(c.photo.key)?.staged ??
+                        c.plans.filter((p) => p.action === "stage").map((p) => p.column),
+                      conflicts:
+                        applied.get(c.photo.key)?.conflicts ??
+                        c.plans.filter((p) => p.action === "conflict").map((p) => p.column),
+                    },
+                  ]
+            ),
+            proposed: cardOutcomes.flatMap((c) =>
+              c.kind === "stage"
+                ? [{ businessName: c.card.businessName?.value ?? null, stageKind: c.stageKind }]
+                : []
+            ),
+          },
+        };
+
   const scenery = results.filter((r) => r.d.action === "skip");
   const signage = results.filter((r) => r.d.action === "record");
   const boothStaged = staged.filter((x) => x.action === BOOTH_PROPOSED_ACTION);
@@ -527,6 +707,7 @@ export async function runBoothPipeline(
       autoWritten: [],
       visionFailures,
       dryRun: true,
+      ...cardsSummary(new Map()),
       wouldAutoWrite: toAutoWrite
         .map((r) => r.d.identification.businessName)
         .filter((n): n is string => Boolean(n)),
@@ -661,7 +842,64 @@ export async function runBoothPipeline(
     });
   }
 
-  if (staged.length > 0) {
+  // OPE-1705 — cards. A matched card's plan is applied (blank-fill + staged
+  // candidates); everything else is a proposal for a person. No image is
+  // written on this path at all.
+  const cardApplied = new Map<string, CardApplyResult>();
+  for (const c of cardOutcomes) {
+    const fields = cardFieldsPayload(c.card);
+    if (c.kind === "match") {
+      if (await alreadyLogged(db, CARD_APPLIED_ACTION, inboundEmailId, c.photo.key)) continue;
+      let res: CardApplyResult;
+      try {
+        res = await applyCardPlan(db, c.vendorId, c.plans, {
+          sourceRef: `inbound-email:${inboundEmailId}#${c.photo.key}`,
+          jobRunId: `card-${inboundEmailId}`,
+        });
+      } catch (e) {
+        await record(CARD_PROPOSED_ACTION, c.photo, {
+          photo_class: "business_card",
+          stage_kind: "card_match_check_failed",
+          stage_reason: `apply failed: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200),
+          business_name: c.card.businessName?.value ?? null,
+          matched_vendor_id: c.vendorId,
+          card: fields,
+        });
+        continue;
+      }
+      cardApplied.set(c.photo.key, res);
+      await record(CARD_APPLIED_ACTION, c.photo, {
+        photo_class: "business_card",
+        vendor_id: c.vendorId,
+        vendor_name: c.vendorName,
+        match_basis: c.matchBasis,
+        written: res.written,
+        staged: res.staged,
+        conflicts: res.conflicts,
+        already_pending: res.alreadyPending,
+        auto_write: autoWriteOn,
+        card: fields,
+      });
+    } else {
+      await record(CARD_PROPOSED_ACTION, c.photo, {
+        photo_class: "business_card",
+        stage_kind: c.stageKind,
+        stage_reason: c.reason,
+        business_name: c.card.businessName?.value ?? null,
+        website: c.card.website?.value ?? null,
+        failure_reason: c.card.failureReason ?? null,
+        ...(c.domainCandidates ? { domain_candidates: c.domainCandidates } : {}),
+        card: fields,
+      });
+    }
+  }
+  const cardNeedsReview =
+    cardOutcomes.some((c) => c.kind === "stage") ||
+    [...cardApplied.values()].some(
+      (r) => r.staged.length + r.conflicts.length + r.alreadyPending.length > 0
+    );
+
+  if (staged.length > 0 || cardNeedsReview) {
     await db
       .update(inboundEmails)
       .set({ flaggedForReview: 1 })
@@ -727,10 +965,26 @@ export async function runBoothPipeline(
     galleryFailed: gallery.failed,
     ...(holdReason ? { galleryHeld: gallery.held } : {}),
     autoWritten,
+    ...cardsSummary(cardApplied),
     // Named per photo so one bad frame in a batch is distinguishable from a
     // systemic failure (e.g. every photo returning `ai-run-threw`).
     visionFailures,
   };
+}
+
+/**
+ * OPE-1705 — the card as read, for the audit row a reviewer works from. Private
+ * (admin_actions is admin-only); this is where the contact values live until a
+ * person approves the matching enrichment candidate.
+ */
+function cardFieldsPayload(card: CardReading): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, f] of Object.entries(card)) {
+    if (k === "failureReason" || !f || typeof f !== "object") continue;
+    const field = f as { value: unknown; confidence: number };
+    out[k] = { value: field.value, confidence: field.confidence };
+  }
+  return out;
 }
 
 /** OPE-969 — has this exact (action, email, photo) already been recorded? */
