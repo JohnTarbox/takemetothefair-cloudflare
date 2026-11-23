@@ -65,6 +65,7 @@ import {
   shotAt,
   type PairingOutcome,
 } from "./card-pairing.js";
+import { createVendorFromCard, linkCardVendorToEvent } from "./card-vendor.js";
 import { vendors } from "../schema.js";
 import {
   extractSignDomain,
@@ -177,12 +178,17 @@ export interface BoothPipelineResult {
     applied: Array<{
       vendorId: string;
       vendorName: string;
-      matchBasis: "domain" | "name";
+      /** "created" = OPE-1705 slice 3: no vendor matched and "Add as vendor" was ticked. */
+      matchBasis: "domain" | "name" | "created";
       written: string[];
       staged: string[];
       conflicts: string[];
+      /** Slice 3 — the event the card's vendor was linked to (pinned fair / "Met them at…"). */
+      linkedEventId?: string | null;
     }>;
     proposed: Array<{ businessName: string | null; stageKind: CardStageKind }>;
+    /** Slice 3, dry run only — vendors a live run would create ("Add as vendor"). */
+    wouldCreate?: string[];
   };
   /**
    * OPE-1705 slice 2 — cards paired with a booth shot just before them, by this
@@ -190,6 +196,19 @@ export interface BoothPipelineResult {
    * a card that finished first). Absent when nothing was paired.
    */
   cardPairings?: PairingOutcome[];
+  /**
+   * OPE-1705 slice 3 — cards that got a decision row (applied, created or
+   * proposed). A card is a deliberate outcome, not a photo that "landed
+   * nowhere": `describePhotoStorage` counts it, or a lone card snap at a fair
+   * read as an unstored-photo defect and the OPE-403 sweep re-tried it.
+   */
+  cardsHandled?: number;
+  /**
+   * OPE-1705 slice 3 — an EVENT-LESS run (no fair: "No fair" mode, or the hold
+   * path asking "is this only cards?") found this many photos that are NOT
+   * cards. Nothing was written; the caller falls back to the ordinary path.
+   */
+  notCards?: number;
   /**
    * OPE-403 follow-up — per-photo vision failure reasons, when the model
    * produced nothing usable. Empty when every photo identified cleanly.
@@ -251,13 +270,25 @@ export interface BoothPipelineOptions {
    * on a roster on the strength of a nearest-pin guess.
    */
   holdAutoWriteReason?: string | null;
+  /**
+   * OPE-1705 slice 3 — what the photographer said about a card. `addAsVendor`:
+   * an unmatched, legibly-named card creates a vendor (still behind
+   * PHOTO_AUTOWRITE_ENABLED and any hold). `metAtEventId`: "Met them at…", the
+   * event an event-less card's vendor is linked to. Absent = unticked, no link.
+   */
+  cardIntent?: { addAsVendor: boolean; metAtEventId: string | null };
 }
 
+/**
+ * `eventId` null = an EVENT-LESS run (OPE-1705 slice 3). Only business cards
+ * are processed in one: if any photo is not a card, the run writes nothing and
+ * returns `notCards`, and the caller takes the ordinary fair-resolving path.
+ */
 export async function runBoothPipeline(
   env: BoothPipelineEnv,
   db: Db,
   inboundEmailId: string,
-  eventId: string,
+  eventId: string | null,
   photos: PipelinePhoto[],
   options: BoothPipelineOptions = {}
 ): Promise<BoothPipelineResult> {
@@ -326,6 +357,25 @@ export async function runBoothPipeline(
     }
   }
 
+  // OPE-1705 slice 3 — an event-less run handles cards only. Anything else
+  // needs a fair, so nothing is written and the caller resolves one as usual.
+  if (eventId === null) {
+    const notCards = results.filter((r) => r.d.action !== "card").length;
+    if (notCards > 0 || results.length === 0) {
+      return {
+        ...empty,
+        examined: results.length,
+        notCards,
+        visionFailures: results
+          .map((r) => r.d.identification.failureReason)
+          .filter((f): f is string => Boolean(f)),
+      };
+    }
+  }
+  // Non-null wherever a booth, performer or gallery photo is handled: an
+  // event-less run returned above unless every photo is a card.
+  const fairId = eventId as string;
+
   // OPE-969 — resolve performer photos against the performer table and THIS
   // event's roster. Reads only, so it runs before the dry-run boundary and a
   // replay reports the same outcome a live run would act on.
@@ -369,7 +419,7 @@ export async function runBoothPipeline(
     // OPE-1339 — never for a salvaged read: it is staged as read, whatever it names.
     if (boothName && !d.identification.salvaged && (d.action === "write" || d.action === "stage")) {
       try {
-        if (await matchRosterPerformer(db, eventId, boothName)) {
+        if (await matchRosterPerformer(db, fairId, boothName)) {
           d = {
             action: "performer",
             identification: {
@@ -500,7 +550,7 @@ export async function runBoothPipeline(
       });
     } else if (d.action === "performer") {
       try {
-        const res = await resolvePerformerPhoto(db, eventId, d.identification);
+        const res = await resolvePerformerPhoto(db, fairId, d.identification);
         if (res.outcome === "confirmed") {
           confirmed.push({
             photo: r.photo,
@@ -561,8 +611,20 @@ export async function runBoothPipeline(
         stageKind: CardStageKind;
         reason: string;
         domainCandidates?: Array<{ id: string; businessName: string }>;
+      }
+    | {
+        /** Slice 3 — unmatched + legible + "Add as vendor" ticked + auto-write open. */
+        kind: "create";
+        photo: PipelinePhoto;
+        card: CardReading;
+        businessName: string;
       };
   const cardOutcomes: CardOutcome[] = [];
+  const addAsVendor = options.cardIntent?.addAsVendor === true;
+  // The event a card's vendor is linked to: the fair this run resolved, else
+  // "Met them at…" (only an event-less card carries one).
+  const metAtEventId = eventId === null ? (options.cardIntent?.metAtEventId ?? null) : null;
+  const cardLinkEventId = eventId ?? metAtEventId;
   for (const r of results) {
     if (r.d.action !== "card") continue;
     const card = r.card ?? { failureReason: "card not read" };
@@ -602,8 +664,26 @@ export async function runBoothPipeline(
                 ? `the card could not be read: ${card.failureReason ?? "no fields"}`.slice(0, 200)
                 : "the business name on the card is not clearly legible"
           );
+        } else if (addAsVendor && autoWriteOn && card.businessName) {
+          // OPE-1705 slice 3 — John ticked "Add as vendor": his say-so is the
+          // evidence OPE-1695 asks a new vendor for. Only this hold is lifted —
+          // an unreadable or generic name staged above, before reaching here.
+          cardOutcomes.push({
+            kind: "create",
+            photo: r.photo,
+            card,
+            businessName: card.businessName.value,
+          });
         } else {
-          stage("card_unmatched", `no existing vendor matches "${card.businessName?.value}"`);
+          stage(
+            "card_unmatched",
+            addAsVendor
+              ? `no existing vendor matches "${card.businessName?.value}"; "Add as vendor" was ticked but nothing auto-writes here (${holdReason ?? "PHOTO_AUTOWRITE_ENABLED is off"}) — approve to create`.slice(
+                  0,
+                  300
+                )
+              : `no existing vendor matches "${card.businessName?.value}"`
+          );
         }
         continue;
       }
@@ -645,37 +725,56 @@ export async function runBoothPipeline(
       );
     }
   }
-  const cardsSummary = (applied: Map<string, CardApplyResult>) =>
+  /** Slice 3 — "Met them at…" links landed by the write half, per card photo key. */
+  const linkedByMetAt = new Map<string, string>();
+  /** Slice 3 — vendors created from a card this run, filled in by the write half. */
+  const createdFromCards: NonNullable<BoothPipelineResult["cards"]>["applied"] = [];
+  const cardsSummary = (applied: Map<string, CardApplyResult>, dry = false) =>
     cardOutcomes.length === 0
       ? {}
       : {
+          cardsHandled: cardOutcomes.length,
           cards: {
-            applied: cardOutcomes.flatMap((c) =>
-              c.kind !== "match"
-                ? []
-                : [
-                    {
-                      vendorId: c.vendorId,
-                      vendorName: c.vendorName,
-                      matchBasis: c.matchBasis,
-                      // Dry run: the plan; live: what actually landed.
-                      written:
-                        applied.get(c.photo.key)?.written ??
-                        c.plans.filter((p) => p.action === "write").map((p) => p.column),
-                      staged:
-                        applied.get(c.photo.key)?.staged ??
-                        c.plans.filter((p) => p.action === "stage").map((p) => p.column),
-                      conflicts:
-                        applied.get(c.photo.key)?.conflicts ??
-                        c.plans.filter((p) => p.action === "conflict").map((p) => p.column),
-                    },
-                  ]
-            ),
+            applied: [
+              ...cardOutcomes.flatMap((c) =>
+                c.kind !== "match"
+                  ? []
+                  : [
+                      {
+                        vendorId: c.vendorId,
+                        vendorName: c.vendorName,
+                        matchBasis: c.matchBasis,
+                        // Dry run: the plan; live: what actually landed.
+                        written:
+                          applied.get(c.photo.key)?.written ??
+                          c.plans.filter((p) => p.action === "write").map((p) => p.column),
+                        staged:
+                          applied.get(c.photo.key)?.staged ??
+                          c.plans.filter((p) => p.action === "stage").map((p) => p.column),
+                        conflicts:
+                          applied.get(c.photo.key)?.conflicts ??
+                          c.plans.filter((p) => p.action === "conflict").map((p) => p.column),
+                        ...(linkedByMetAt.has(c.photo.key)
+                          ? { linkedEventId: linkedByMetAt.get(c.photo.key) }
+                          : {}),
+                      },
+                    ]
+              ),
+              ...createdFromCards,
+            ],
             proposed: cardOutcomes.flatMap((c) =>
               c.kind === "stage"
                 ? [{ businessName: c.card.businessName?.value ?? null, stageKind: c.stageKind }]
                 : []
             ),
+            // Slice 3 — a dry run names the vendors a live run would create.
+            ...(dry && cardOutcomes.some((c) => c.kind === "create")
+              ? {
+                  wouldCreate: cardOutcomes.flatMap((c) =>
+                    c.kind === "create" ? [c.businessName] : []
+                  ),
+                }
+              : {}),
           },
         };
 
@@ -723,7 +822,7 @@ export async function runBoothPipeline(
       autoWritten: [],
       visionFailures,
       dryRun: true,
-      ...cardsSummary(new Map()),
+      ...cardsSummary(new Map(), true),
       wouldAutoWrite: toAutoWrite
         .map((r) => r.d.identification.businessName)
         .filter((n): n is string => Boolean(n)),
@@ -757,7 +856,7 @@ export async function runBoothPipeline(
         env,
         db,
         inboundEmailId,
-        eventId,
+        fairId,
         toAutoWrite.map((r) => ({
           photoKey: r.photo.key,
           photoName: r.photo.name,
@@ -864,6 +963,96 @@ export async function runBoothPipeline(
   const cardApplied = new Map<string, CardApplyResult>();
   for (const c of cardOutcomes) {
     const fields = cardFieldsPayload(c.card);
+    if (c.kind === "create") {
+      if (await alreadyLogged(db, CARD_APPLIED_ACTION, inboundEmailId, c.photo.key)) continue;
+      const made = await createVendorFromCard(db, {
+        businessName: c.businessName,
+        website: c.card.website?.value ?? null,
+        linkEventId: cardLinkEventId,
+      });
+      if (!made.ok || !made.vendorId) {
+        await record(CARD_PROPOSED_ACTION, c.photo, {
+          photo_class: "business_card",
+          stage_kind: "card_unmatched",
+          stage_reason:
+            `"Add as vendor" was ticked but the create failed — nothing written: ${made.error ?? "unknown"}`.slice(
+              0,
+              300
+            ),
+          business_name: c.businessName,
+          website: c.card.website?.value ?? null,
+          add_as_vendor: true,
+          auto_write: autoWriteOn,
+          card: fields,
+        });
+        continue;
+      }
+      // The new row's columns are what the create stored (name, website), so
+      // the card's remaining fields plan against the row as it now is — the
+      // same blank-fill + private-staging rule a matched card gets.
+      let res: CardApplyResult = { written: [], staged: [], conflicts: [], alreadyPending: [] };
+      let applyError: string | null = null;
+      try {
+        const [snap] = await db
+          .select({
+            website: vendors.website,
+            socialLinks: vendors.socialLinks,
+            address: vendors.address,
+            city: vendors.city,
+            state: vendors.state,
+            zip: vendors.zip,
+            contactEmail: vendors.contactEmail,
+            contactPhone: vendors.contactPhone,
+            contactName: vendors.contactName,
+          })
+          .from(vendors)
+          .where(eq(vendors.id, made.vendorId))
+          .limit(1);
+        if (snap) {
+          res = await applyCardPlan(
+            db,
+            made.vendorId,
+            planCardFields(c.card, snap, { autoWrite: autoWriteOn }),
+            {
+              sourceRef: `inbound-email:${inboundEmailId}#${c.photo.key}`,
+              jobRunId: `card-${inboundEmailId}`,
+            }
+          );
+        }
+      } catch (e) {
+        applyError = `fields not applied: ${e instanceof Error ? e.message : String(e)}`.slice(
+          0,
+          200
+        );
+      }
+      cardApplied.set(c.photo.key, res);
+      createdFromCards.push({
+        vendorId: made.vendorId,
+        vendorName: made.vendorName,
+        matchBasis: "created",
+        written: res.written,
+        staged: res.staged,
+        conflicts: res.conflicts,
+        linkedEventId: made.linkedEventId,
+      });
+      await record(CARD_APPLIED_ACTION, c.photo, {
+        photo_class: "business_card",
+        vendor_id: made.vendorId,
+        vendor_name: made.vendorName,
+        match_basis: "created",
+        created: made.created,
+        linked_event_id: made.linkedEventId,
+        written: res.written,
+        staged: res.staged,
+        conflicts: res.conflicts,
+        already_pending: res.alreadyPending,
+        ...(applyError ? { apply_error: applyError } : {}),
+        add_as_vendor: true,
+        auto_write: autoWriteOn,
+        card: fields,
+      });
+      continue;
+    }
     if (c.kind === "match") {
       if (await alreadyLogged(db, CARD_APPLIED_ACTION, inboundEmailId, c.photo.key)) continue;
       let res: CardApplyResult;
@@ -884,11 +1073,31 @@ export async function runBoothPipeline(
         continue;
       }
       cardApplied.set(c.photo.key, res);
+      // Slice 3 — "Met them at…" on an event-less card links its vendor. Same
+      // gate as every other write in this lane.
+      let metAt: { linked_event_id: string | null; link_error?: string } | null = null;
+      if (metAtEventId) {
+        if (autoWriteOn) {
+          const l = await linkCardVendorToEvent(db, {
+            vendorId: c.vendorId,
+            vendorName: c.vendorName,
+            eventId: metAtEventId,
+          });
+          metAt = l.ok
+            ? { linked_event_id: metAtEventId }
+            : { linked_event_id: null, link_error: l.error };
+          if (l.ok) linkedByMetAt.set(c.photo.key, metAtEventId);
+        } else {
+          metAt = { linked_event_id: null, link_error: "auto-write is off; not linked" };
+        }
+      }
       await record(CARD_APPLIED_ACTION, c.photo, {
         photo_class: "business_card",
         vendor_id: c.vendorId,
         vendor_name: c.vendorName,
         match_basis: c.matchBasis,
+        ...(metAt ? { met_at_event_id: metAtEventId, ...metAt } : {}),
+        add_as_vendor: addAsVendor,
         written: res.written,
         staged: res.staged,
         conflicts: res.conflicts,
@@ -904,6 +1113,9 @@ export async function runBoothPipeline(
         business_name: c.card.businessName?.value ?? null,
         website: c.card.website?.value ?? null,
         failure_reason: c.card.failureReason ?? null,
+        // Slice 3 — John's intent, shown to the reviewer.
+        add_as_vendor: addAsVendor,
+        ...(metAtEventId ? { met_at_event_id: metAtEventId } : {}),
         // Slice 2 — a later pairing writes only when the card's run could.
         auto_write: autoWriteOn,
         ...(c.domainCandidates ? { domain_candidates: c.domainCandidates } : {}),
@@ -917,7 +1129,7 @@ export async function runBoothPipeline(
   const cardPairings: PairingOutcome[] = [];
   try {
     const boothsHere = boothStaged.length + autoWritten.filter((a) => a.vendorId).length;
-    if (boothsHere > 0) {
+    if (boothsHere > 0 && eventId) {
       const [me] = await db
         .select({
           fromAddress: inboundEmails.fromAddress,
@@ -940,7 +1152,8 @@ export async function runBoothPipeline(
         }
       }
     }
-    if (cardOutcomes.length > 0) {
+    // An event-less card has no booth to pair with (pairing is same-event).
+    if (cardOutcomes.length > 0 && eventId) {
       for (const id of await cardRowsForEmail(db, inboundEmailId)) {
         const o = await pairCardRow(env, db, id, now);
         if (o) cardPairings.push(o);
@@ -997,7 +1210,7 @@ export async function runBoothPipeline(
       continue;
     }
     try {
-      one = await attachGeneralPhotos(env, eventId, [p]);
+      one = await attachGeneralPhotos(env, fairId, [p]);
     } catch (e) {
       one = {
         attached: 0,

@@ -58,6 +58,8 @@ export interface SnapStatus {
     /** OPE-1705 slice 2 — the booth this card was paired with, and how. */
     cardPairedWith?: string | null;
     cardPairing?: string | null;
+    /** OPE-1705 slice 3 — the card created its vendor ("Add as vendor"). */
+    cardCreated?: boolean;
   };
 }
 
@@ -127,7 +129,7 @@ export function describeSnap(
     else if (outcome.cardApplied)
       parts.push(
         outcome.cardApplied === 1 && outcome.cardVendorName
-          ? `Business card → ${outcome.cardVendorName}`
+          ? `Business card → ${outcome.cardCreated ? "new vendor " : ""}${outcome.cardVendorName}`
           : `${outcome.cardApplied} business card${outcome.cardApplied === 1 ? "" : "s"} matched`
       );
     if (outcome.cardProposed && !paired)
@@ -135,10 +137,27 @@ export function describeSnap(
     const what = parts.length ? parts.join(", ") : "matched";
     return { ...base, phase: "matched", label: `${eventName ?? "Matched"} — ${what}` };
   }
+  // OPE-1705 slice 3 — business cards handled with NO fair ("No fair" mode, or
+  // a card the hold path recognised): an ack with no resulting event.
+  if (row.replyKind === "photo-intake-ack" && !row.resultingEventId) {
+    const label = cardNoFairLabel(outcome);
+    if (label) return { ...base, phase: "matched", label };
+  }
   // photo-intake-unresolved (and -held, which a snap should never reach).
   const why =
     locationSource === "none" ? "no location and no pinned fair" : "no fair found here today";
   return { ...base, phase: "held", label: `Held — ${why}. Pin the fair and re-snap.` };
+}
+
+/** OPE-1705 slice 3 — the line for a card handled with no fair, else null. */
+export function cardNoFairLabel(outcome: SnapStatus["outcome"]): string | null {
+  const name = outcome.cardVendorName;
+  if (outcome.cardApplied) {
+    if (outcome.cardCreated) return `Business card → new vendor${name ? ` ${name}` : ""} (no fair)`;
+    return `Business card → ${name ?? "an existing vendor"} (no fair)`;
+  }
+  if (outcome.cardProposed) return "Business card — card only, kept for review (no fair)";
+  return null;
 }
 
 /** OPE-1705 slice 2 — the card's line once it is paired with a booth, else null. */
@@ -204,8 +223,12 @@ export async function loadSnapStatuses(db: Db, ids: string[]): Promise<SnapStatu
     else if (a.action === SNAP_DECISION_ACTIONS.cardApplied) {
       c.cardApplied = (c.cardApplied ?? 0) + 1;
       try {
-        const n = (JSON.parse(a.payloadJson ?? "{}") as { vendor_name?: unknown }).vendor_name;
-        c.cardVendorName = typeof n === "string" ? n : null;
+        const p = JSON.parse(a.payloadJson ?? "{}") as {
+          vendor_name?: unknown;
+          match_basis?: unknown;
+        };
+        c.cardVendorName = typeof p.vendor_name === "string" ? p.vendor_name : null;
+        c.cardCreated = p.match_basis === "created";
       } catch {
         c.cardVendorName = null;
       }

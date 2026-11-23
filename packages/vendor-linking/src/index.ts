@@ -641,6 +641,146 @@ export async function findFuzzyMatch(
   return best;
 }
 
+/** OPE-1705 — the fields `createVendorRow` stores, already sanitized/routed by the caller. */
+export interface NewVendorFields {
+  businessName: string;
+  vendorType: string | null;
+  sellsCategory: string | null;
+  businessSector: string | null;
+  vendorIdentity: string | null;
+  description: string | null;
+  /** JSON array string. */
+  productsJson: string;
+  website: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  logoUrl?: string | null;
+  city?: string | null;
+  state?: string | null;
+  location?: string | null;
+  /** The `enrichment_log` note; defaults to the create_or_link_vendor one. */
+  enrichmentNote?: string;
+}
+
+export type CreateVendorRowResult =
+  | { ok: true; vendorId: string; vendorSlug: Slug; city: string | null; state: string | null }
+  | { ok: false; error: string };
+
+/**
+ * Create ONE vendor row (with its placeholder owner) — the create branch of
+ * `createOrLinkVendor`, extracted so a writer with no event (OPE-1705: a business
+ * card shot away from a fair) creates vendors exactly the way a roster link does,
+ * instead of a second hand-written insert. No dedup here: the caller matches first.
+ */
+export async function createVendorRow(
+  db: VendorLinkDb,
+  f: NewVendorFields,
+  deps: CreateOrLinkVendorDeps
+): Promise<CreateVendorRowResult> {
+  const baseSlug = createSlug(f.businessName);
+  if (!baseSlug) {
+    return { ok: false, error: "Could not generate a valid slug from the business name." };
+  }
+
+  let finalSlug: Slug = baseSlug;
+  let suffix = 0;
+  while (true) {
+    const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
+    const slugCheck = await db
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(eq(vendors.slug, candidate))
+      .limit(1);
+    if (slugCheck.length === 0) {
+      finalSlug = candidate;
+      break;
+    }
+    suffix++;
+    if (suffix > 20) {
+      return { ok: false, error: "Too many slug collisions. Try a more unique business name." };
+    }
+  }
+
+  // OPE-835 — the third construction site. The filed ticket named only
+  // the promoter one; a fix wired there alone would have left this and
+  // the vendor site in admin.ts still minting invalid addresses.
+  // OPE-1223 — a FREE address: a tombstone's owner row can still hold the
+  // one this slug would give (the slug was renamed on merge, the email not).
+  const placeholderEmail = await freePlaceholderEmail("pending+", finalSlug, async (email) => {
+    const taken = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+    return taken.length > 0;
+  });
+  const userId = crypto.randomUUID();
+  await db.insert(users).values({
+    id: userId,
+    email: placeholderEmail,
+    // OPE-292 — a placeholder OWNER row, not a registration.
+    //
+    // ⚠️ This is the writer the original fix MISSED. `create_vendor` and
+    // `create_promoter` in mcp-server were both stamped in PR #900; this one
+    // lives in a shared package and was not, so it kept defaulting to
+    // `registration`. Between 2026-08-18 22:09 and 2026-08-20 00:20 it minted
+    // **389** mislabelled rows — enough that `origin='registration'` read 64%
+    // placeholder, making the column wrong in the exact way it was added to
+    // prevent.
+    //
+    // The audit that accompanied #900 enumerated `from(users)` sites across
+    // `src/` and `mcp-server/src/` and did not reach `packages/`. A fix wired
+    // into one of two parallel paths is this repo's most repeated defect;
+    // when stamping a field on creation, grep the WORKSPACE, not the app.
+    //
+    // The health-report invariant added alongside this makes a recurrence
+    // visible instead of silent.
+    origin: "ingestion",
+    role: "VENDOR",
+  });
+
+  // OPE-1094 — canonical city/state win; `location` remains as the alias so
+  // existing callers keep working. Resolved here rather than at the adapter
+  // so every runtime calling the core gets the same precedence.
+  const aliasLoc = f.location ? parseLocation(f.location) : { city: null, state: null };
+  const loc = {
+    city: f.city ?? aliasLoc.city,
+    state: f.state ?? aliasLoc.state,
+  };
+
+  const vendorId = crypto.randomUUID();
+  await db.insert(vendors).values({
+    id: vendorId,
+    userId,
+    businessName: f.businessName,
+    slug: finalSlug,
+    vendorType: f.vendorType,
+    sellsCategory: f.sellsCategory,
+    businessSector: f.businessSector,
+    vendorIdentity: f.vendorIdentity,
+    description: f.description,
+    products: f.productsJson,
+    website: f.website,
+    contactEmail: f.contactEmail ?? null,
+    contactPhone: f.contactPhone ?? null,
+    logoUrl: f.logoUrl ?? null,
+    city: loc.city,
+    state: loc.state,
+  });
+
+  await deps.recomputeVendorCompleteness(db, vendorId);
+  await deps.logEnrichment(db, {
+    targetType: "vendor",
+    targetId: vendorId,
+    source: "mcp_create",
+    status: "success",
+    actorUserId: deps.actorUserId,
+    notes: f.enrichmentNote ?? "create_or_link_vendor (new vendor)",
+  });
+
+  return { ok: true, vendorId, vendorSlug: finalSlug, city: loc.city, state: loc.state };
+}
+
 /**
  * Dedup-search, create-if-needed, and link a vendor to an event in one call.
  * The single source of truth for this write; the MCP tool and the app route are
@@ -861,112 +1001,33 @@ export async function createOrLinkVendor(
     vendorId = matched.row.id;
     vendorSlug = matched.row.slug;
   } else {
-    const baseSlug = createSlug(businessName);
-    if (!baseSlug) {
-      return { ok: false, error: "Could not generate a valid slug from the business name." };
-    }
-
-    let finalSlug: Slug = baseSlug;
-    let suffix = 0;
-    while (true) {
-      const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
-      const slugCheck = await db
-        .select({ id: vendors.id })
-        .from(vendors)
-        .where(eq(vendors.slug, candidate))
-        .limit(1);
-      if (slugCheck.length === 0) {
-        finalSlug = candidate;
-        break;
-      }
-      suffix++;
-      if (suffix > 20) {
-        return { ok: false, error: "Too many slug collisions. Try a more unique business name." };
-      }
-    }
-
-    // OPE-835 — the third construction site. The filed ticket named only
-    // the promoter one; a fix wired there alone would have left this and
-    // the vendor site in admin.ts still minting invalid addresses.
-    // OPE-1223 — a FREE address: a tombstone's owner row can still hold the
-    // one this slug would give (the slug was renamed on merge, the email not).
-    const placeholderEmail = await freePlaceholderEmail("pending+", finalSlug, async (email) => {
-      const taken = await db
-        .select({ id: users.id })
-        .from(users)
-        .where(eq(users.email, email))
-        .limit(1);
-      return taken.length > 0;
-    });
-    const userId = crypto.randomUUID();
-    await db.insert(users).values({
-      id: userId,
-      email: placeholderEmail,
-      // OPE-292 — a placeholder OWNER row, not a registration.
-      //
-      // ⚠️ This is the writer the original fix MISSED. `create_vendor` and
-      // `create_promoter` in mcp-server were both stamped in PR #900; this one
-      // lives in a shared package and was not, so it kept defaulting to
-      // `registration`. Between 2026-08-18 22:09 and 2026-08-20 00:20 it minted
-      // **389** mislabelled rows — enough that `origin='registration'` read 64%
-      // placeholder, making the column wrong in the exact way it was added to
-      // prevent.
-      //
-      // The audit that accompanied #900 enumerated `from(users)` sites across
-      // `src/` and `mcp-server/src/` and did not reach `packages/`. A fix wired
-      // into one of two parallel paths is this repo's most repeated defect;
-      // when stamping a field on creation, grep the WORKSPACE, not the app.
-      //
-      // The health-report invariant added alongside this makes a recurrence
-      // visible instead of silent.
-      origin: "ingestion",
-      role: "VENDOR",
-    });
-
-    // OPE-1094 — canonical city/state win; `location` remains as the alias so
-    // existing callers keep working. Resolved here rather than at the adapter
-    // so every runtime calling the core gets the same precedence.
-    const aliasLoc = input.location ? parseLocation(input.location) : { city: null, state: null };
-    const loc = {
-      city: input.city ?? aliasLoc.city,
-      state: input.state ?? aliasLoc.state,
-    };
-    createdLoc = loc;
-
-    vendorId = crypto.randomUUID();
-    await db.insert(vendors).values({
-      id: vendorId,
-      userId,
-      businessName,
-      slug: finalSlug,
-      vendorType,
-      sellsCategory: routed.values.sellsCategory ?? null,
-      businessSector: routed.values.businessSector ?? null,
-      vendorIdentity: routed.values.vendorIdentity ?? null,
-      description,
-      products: mergeProductsJson(
-        productsClean ? JSON.stringify(productsClean) : "[]",
-        routed.productsToAdd
-      ),
-      website,
-      contactEmail: input.contactEmail ?? null,
-      contactPhone: input.contactPhone ?? null,
-      logoUrl: input.logoUrl ?? null,
-      city: loc.city,
-      state: loc.state,
-    });
-
-    await deps.recomputeVendorCompleteness(db, vendorId);
-    await deps.logEnrichment(db, {
-      targetType: "vendor",
-      targetId: vendorId,
-      source: "mcp_create",
-      status: "success",
-      actorUserId: deps.actorUserId,
-      notes: "create_or_link_vendor (new vendor)",
-    });
-
-    vendorSlug = finalSlug;
+    const created = await createVendorRow(
+      db,
+      {
+        businessName,
+        vendorType,
+        sellsCategory: routed.values.sellsCategory ?? null,
+        businessSector: routed.values.businessSector ?? null,
+        vendorIdentity: routed.values.vendorIdentity ?? null,
+        description,
+        productsJson: mergeProductsJson(
+          productsClean ? JSON.stringify(productsClean) : "[]",
+          routed.productsToAdd
+        ),
+        website,
+        contactEmail: input.contactEmail ?? null,
+        contactPhone: input.contactPhone ?? null,
+        logoUrl: input.logoUrl ?? null,
+        city: input.city,
+        state: input.state,
+        location: input.location,
+      },
+      deps
+    );
+    if (!created.ok) return created;
+    vendorId = created.vendorId;
+    createdLoc = { city: created.city, state: created.state };
+    vendorSlug = created.vendorSlug;
     wasCreated = true;
   }
 

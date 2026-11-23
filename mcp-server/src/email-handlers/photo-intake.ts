@@ -36,7 +36,7 @@
 import { events, eventDays, venues, inboundEmails } from "../schema.js";
 import { getDb, type Db } from "../db.js";
 import { and, eq, inArray, isNull, isNotNull, gte, lte, or, sql } from "drizzle-orm";
-import type { HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
+import type { HandlerCtx, HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
 import type { InboundEmail } from "@takemetothefair/db-schema";
 import { parsePlusSegment } from "../email-intents.js";
 import { logError } from "../logger.js";
@@ -1065,7 +1065,13 @@ export function describePhotoStorage(
   // Without them a batch of only signage would read as an unstored-photo defect.
   const performerStaged = booths?.performerStaged ?? 0;
   const signageRecorded = booths?.signageRecorded ?? 0;
-  const accountedFor = stored + staged + autoWritten + performerStaged + signageRecorded;
+  // OPE-1705 slice 3 — a business card always gets a decision row (applied,
+  // created or proposed) and is never meant for the gallery. Uncounted, a lone
+  // card snap at a fair read as "landed nowhere", was flagged, and the OPE-403
+  // sweep (photos_stored = 0 with an event) kept re-trying it.
+  const cardsHandled = booths?.cardsHandled ?? 0;
+  const accountedFor =
+    stored + staged + autoWritten + performerStaged + signageRecorded + cardsHandled;
 
   // No images on the mail, or the photos went somewhere: nothing to explain.
   if (offered === 0 || accountedFor > 0) {
@@ -1178,6 +1184,29 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   }
 
   const db = getDb(env.DB);
+
+  // OPE-1705 slice 3 — what the photographer said about a card (Snap only; an
+  // emailed card has no checkbox, so it is the unticked default).
+  const snapMeta = snap ? parseCaptureMeta(row.captureMeta) : null;
+  const cardIntent = {
+    addAsVendor: snapMeta?.add_as_vendor === true,
+    metAtEventId: snapMeta?.met_at_event_id ?? null,
+  };
+  let cardsOnlyTried = false;
+  const tryCardsOnly = async (): Promise<HandlerResult | null> => {
+    cardsOnlyTried = true;
+    const cards = await runCardsOnly(env, db, row.id, imageRefs(refs), cardIntent);
+    return cards ? cardOnlyAck(row, photoCount, eventHint, ctx, cards) : null;
+  };
+
+  // OPE-1705 slice 3 — "No fair: vendor card only". The fair resolver is
+  // skipped: a card shot at home must not be pinned to whatever fair the GPS is
+  // near, nor held asking "which fair?". A shot that is NOT a card falls through
+  // to the ordinary resolution below, so the mode can never lose a booth photo.
+  if (snapMeta?.no_fair) {
+    const done = await tryCardsOnly();
+    if (done) return done;
+  }
 
   // Explicit override — plus-address first, then a slug or pasted /events/<slug>
   // URL in the subject. The fair NAMED in prose is handled inside
@@ -1348,6 +1377,7 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
     try {
       booths = await runBoothPipeline(env, db, row.id, resolution.eventId, imageRefs(refs), {
         holdAutoWriteReason,
+        cardIntent,
       });
     } catch (e) {
       await logError(env.DB, {
@@ -1479,6 +1509,15 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   // PENDING is the whole point: OPE-204's "no public writes from an unmeasured
   // classifier" holds, because PENDING is not public. Nothing this classifier
   // decides reaches a visitor without a human approving it.
+  // OPE-1705 slice 3 — the "which fair?" hold does not apply to business
+  // cards. Before holding (and before the poster branch, which would read a
+  // card's lettering as an announcement), ask whether every photo is a card; if
+  // so the cards are matched/created/kept with no event, like "No fair" mode.
+  if (!cardsOnlyTried) {
+    const done = await tryCardsOnly();
+    if (done) return done;
+  }
+
   // Already classified above on the hold path — do not OCR the image twice.
   if (poster && poster.classification.verdict === "POSTER") {
     const staged = await stagePosterAsPendingEvent(env, poster.text, row, imageRefs(refs)[0]);
@@ -1535,3 +1574,61 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
     status: "replied",
   };
 };
+
+/**
+ * OPE-1705 slice 3 — run the photo lane with NO event. Returns the result only
+ * when every photo was a business card and each got its decision row; null
+ * means "not (only) cards, or vision is off" and the caller carries on.
+ * Fail-soft: a fault here must not cost the photo its ordinary path.
+ */
+async function runCardsOnly(
+  env: HandlerEnv,
+  db: ReturnType<typeof getDb>,
+  rowId: string,
+  photos: ReturnType<typeof imageRefs>,
+  cardIntent: { addAsVendor: boolean; metAtEventId: string | null }
+): Promise<BoothPipelineResult | null> {
+  if (photos.length === 0) return null;
+  try {
+    const r = await runBoothPipeline(env, db, rowId, null, photos, { cardIntent });
+    if (r.disabledReason || (r.notCards ?? 0) > 0 || (r.cardsHandled ?? 0) === 0) return null;
+    await db.update(inboundEmails).set({ photosStored: 0 }).where(eq(inboundEmails.id, rowId));
+    return r;
+  } catch (e) {
+    await logError(env.DB, {
+      message: "card-only pass failed; taking the ordinary path",
+      error: e,
+      source: "email-handlers/photo-intake.ts:runCardsOnly",
+      context: { messageRowId: rowId },
+    });
+    return null;
+  }
+}
+
+/** OPE-1705 slice 3 — the ack for a batch that was only business cards, with no fair. */
+function cardOnlyAck(
+  row: { subject: string | null },
+  photoCount: number,
+  eventHint: string | null | undefined,
+  ctx: Pick<HandlerCtx, "emailAuth" | "senderTrust">,
+  cards: BoothPipelineResult
+): HandlerResult {
+  const applied = cards.cards?.applied ?? [];
+  return {
+    replyKind: "photo-intake-ack",
+    replyParams: {
+      subject: row.subject ?? "",
+      photoCount,
+      eventHint: eventHint ?? null,
+      authVerdict: ctx.emailAuth,
+      trust: ctx.senderTrust,
+      cardsOnly: true,
+      cardsMatched: applied.filter((a) => a.matchBasis !== "created").length,
+      cardsCreated: applied.filter((a) => a.matchBasis === "created").length,
+      cardsProposed: (cards.cards?.proposed ?? []).length,
+      cardVendorNames: applied.map((a) => a.vendorName),
+    },
+    resultingEventId: null,
+    status: "replied",
+  };
+}

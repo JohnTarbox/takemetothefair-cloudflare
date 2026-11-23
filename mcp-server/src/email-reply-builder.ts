@@ -815,6 +815,32 @@ ${SIGN_OFF}`;
       const noun = n === 1 ? "photo" : "photos";
       const hintLine = hint ? `\n\nWe noted the event hint "${hint}" from your address.` : "";
 
+      // OPE-1705 slice 3 — only business cards, matched with no fair. Said as
+      // what happened, so the copy never promises a fair match that is not
+      // coming ("we'll match them to the fair").
+      if (params.cardsOnly === true) {
+        const matched = Number(params.cardsMatched ?? 0);
+        const created = Number(params.cardsCreated ?? 0);
+        const proposed = Number(params.cardsProposed ?? 0);
+        const cardNames = Array.isArray(params.cardVendorNames)
+          ? (params.cardVendorNames as string[])
+          : [];
+        const lines: string[] = [];
+        if (matched > 0) lines.push(`${matched} matched an existing vendor`);
+        if (created > 0) lines.push(`${created} added as a new vendor`);
+        if (proposed > 0) lines.push(`${proposed} kept for review`);
+        const namesLine = cardNames.length ? `\n\nVendors: ${cardNames.join(", ")}` : "";
+        return `Thanks — we received ${n} ${noun} for Meet Me at the Fair and read ${n === 1 ? "it" : "them"} as business card${n === 1 ? "" : "s"}, not tied to any fair.
+
+Result: ${lines.length ? lines.join("; ") : "kept for review"}.${namesLine}
+
+Contact details from a card (email, phone, name) are never published on their own — each one waits for review. The card image itself is never shown on the site.${hintLine}
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+      }
+
       // OPE-203 — the resolver names the fair. Absent on a pre-OPE-203 ack (or
       // any future caller that doesn't resolve), so fall back to the original
       // "we'll match them" copy rather than printing "matched to undefined".

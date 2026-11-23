@@ -33,6 +33,12 @@ export interface SnapMeta {
    */
   eventChoice: "picked" | "auto_single" | "server" | null;
   note: string | null;
+  /** OPE-1705 slice 3 — "No fair: vendor card only". Optional: absent on a shot queued by an older build. */
+  noFair?: boolean;
+  /** OPE-1705 slice 3 — the "Add as vendor" box at the shutter. */
+  addAsVendor?: boolean;
+  /** OPE-1705 slice 3 — "Met them at…" (No fair only); null = none. */
+  metAtEventId?: string | null;
 }
 
 export interface QueuedShot {

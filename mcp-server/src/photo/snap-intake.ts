@@ -78,6 +78,21 @@ export interface CaptureMeta {
   note: string | null;
   /** The admin account that uploaded it (from the main app's session). */
   actor: string;
+  /**
+   * OPE-1705 slice 3 — "No fair: vendor card only". The shot is a business card
+   * taken away from any fair: the fair resolver is skipped (no event, no
+   * "which fair?" hold). A shot that turns out NOT to be a card falls back to
+   * the ordinary resolution, so the mode can never lose a booth photo.
+   */
+  no_fair?: boolean;
+  /**
+   * OPE-1705 slice 3 — the "Add as vendor" box. John vouching that this card is
+   * a vendor: an unmatched, legibly-named card creates one. Absent/false = never
+   * create (the card is kept privately as `card_unmatched`).
+   */
+  add_as_vendor?: boolean;
+  /** OPE-1705 slice 3 — "Met them at…": a past event to link the card's vendor to. No-fair only. */
+  met_at_event_id?: string | null;
 }
 
 /** What the phone sends beside the bytes. Every field optional except client_id. */
@@ -93,6 +108,12 @@ export interface SnapClientMeta {
   /** OPE-1697 — "picked" | "auto_single" | "server"; anything else is dropped. */
   eventChoice?: string | null;
   note?: string | null;
+  /** OPE-1705 slice 3 — "No fair: vendor card only". */
+  noFair?: boolean | null;
+  /** OPE-1705 slice 3 — the "Add as vendor" box. */
+  addAsVendor?: boolean | null;
+  /** OPE-1705 slice 3 — "Met them at…" event id (honoured only with noFair). */
+  metAtEventId?: string | null;
 }
 
 export function isSnapRow(row: { routingSource?: string | null }): boolean {
@@ -102,6 +123,8 @@ export function isSnapRow(row: { routingSource?: string | null }): boolean {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LOCAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/** An events.id: a UUID, or the short hex/slug-ish ids older rows carry. */
+const EVENT_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
 
 /**
  * The row id for a snap — derived from the phone's own id for the shot, so a
@@ -318,9 +341,18 @@ export async function ingestSnap(
   const stored = type === "image/jpeg" ? stripExifFromJpeg(input.bytes).bytes : input.bytes;
 
   const where = decideLocation(exif, input.meta);
+  // OPE-1705 slice 3 — "No fair" wins over any pin the page also sent: the
+  // photographer said this card is not from a fair.
+  const noFair = input.meta.noFair === true;
   const eventSlug =
-    typeof input.meta.eventSlug === "string" && SLUG_RE.test(input.meta.eventSlug)
+    !noFair && typeof input.meta.eventSlug === "string" && SLUG_RE.test(input.meta.eventSlug)
       ? input.meta.eventSlug
+      : null;
+  const metAt =
+    noFair &&
+    typeof input.meta.metAtEventId === "string" &&
+    EVENT_ID_RE.test(input.meta.metAtEventId)
+      ? input.meta.metAtEventId
       : null;
   const note =
     typeof input.meta.note === "string" && input.meta.note.trim()
@@ -332,9 +364,11 @@ export async function ingestSnap(
     ...where,
     event_id: eventSlug && typeof input.meta.eventId === "string" ? input.meta.eventId : null,
     event_slug: eventSlug,
-    event_choice_basis: parseSnapChoiceBasis(input.meta.eventChoice),
+    event_choice_basis: noFair ? null : parseSnapChoiceBasis(input.meta.eventChoice),
     note,
     actor: input.actor,
+    ...(noFair ? { no_fair: true, met_at_event_id: metAt } : {}),
+    ...(input.meta.addAsVendor === true ? { add_as_vendor: true } : {}),
   };
 
   const name = safeName(input.fileName, type);
