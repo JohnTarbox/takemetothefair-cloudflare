@@ -32,6 +32,8 @@ export const PROMOTER_FLAG_REASONS: Record<string, string> = {
   social_no_name_affinity: "No social handle shares a name with the promoter or its website.",
   previously_reverted: "A human reverted this exact value before.",
   previously_rejected: "A human rejected this exact value before.",
+  social_mixed_affinity:
+    "JSON-LD social payload mixes the promoter's accounts with accounts that are not its own.",
   contact_page_multiple: "Picked from a Contact page that lists several people.",
 };
 

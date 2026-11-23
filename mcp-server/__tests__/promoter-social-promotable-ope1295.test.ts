@@ -23,11 +23,13 @@ const ENV = {
 } as unknown as PromoterEnrichmentEnv;
 
 // Affine (handle carries the promoter's name), so only the new gate can hold it.
+// OPE-1707 — the social comes from a page ANCHOR (`social-link`): since John's
+// 2026-11-22 ruling a jsonld social bypasses this gate, so the promotable gate
+// is exercised on the method it still governs.
 const HTML = `<script type="application/ld+json">${JSON.stringify({
   "@type": "Organization",
   telephone: "(207) 555-0100",
-  sameAs: ["https://www.facebook.com/acmepromotions"],
-})}</script>`;
+})}</script><footer><a href="https://www.facebook.com/acmepromotions">Facebook</a></footer>`;
 
 let db: TestDb;
 let restore: () => void;
@@ -64,7 +66,7 @@ async function seed(
       proposedField: "social_links",
       proposedValue: "{}",
       sourceUrl: "https://hist.example.com",
-      extractionMethod: "jsonld",
+      extractionMethod: "social-link",
       createdAt: new Date(),
       reviewedBy: opts.reviewedBy ?? "u-admin",
       flags: opts.flags ?? "[]",
@@ -114,7 +116,7 @@ describe("OPE-1295 — a non-promotable rule holds the affine social payload", (
   it("FLAGGED or system-closed history does not count toward promotion", async () => {
     await seed(20, 0, { flags: '["social_no_name_affinity"]' });
     await seed(20, 0, { reviewedBy: "system:promoter-merge" });
-    expect(await socialRulePromotable(db, "jsonld")).toBe(false);
+    expect(await socialRulePromotable(db, "social-link")).toBe(false);
   });
 });
 
@@ -129,7 +131,7 @@ describe("OPE-1295 — a promotable rule applies it, as before", () => {
     expect((await socialCandidate()).decision).toBe("auto_merged");
   });
 
-  it("promotion is per extraction METHOD: a promotable regex rule does not open jsonld", async () => {
+  it("promotion is per extraction METHOD: a promotable regex rule does not open social-link", async () => {
     for (let i = 0; i < 20; i++) {
       await db.insert(promoterEnrichmentCandidates).values({
         promoterId: `rx-${i}`,
@@ -144,6 +146,6 @@ describe("OPE-1295 — a promotable rule applies it, as before", () => {
       } as never);
     }
     expect(await socialRulePromotable(db, "regex")).toBe(true);
-    expect(await socialRulePromotable(db, "jsonld")).toBe(false);
+    expect(await socialRulePromotable(db, "social-link")).toBe(false);
   });
 });
