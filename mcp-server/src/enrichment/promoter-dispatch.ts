@@ -278,6 +278,55 @@ export function jsonLdHasMultipleEntities(
   return socialUrls.some((u) => socialUrlIsUnaffine(u, companyName, website));
 }
 
+/** OPE-1707 — the confidence a jsonld social needs to auto-apply (the extractor emits 0.85). */
+export const JSONLD_SOCIAL_CONFIDENCE_FLOOR = 0.85;
+
+/**
+ * OPE-1707 — the name-affinity gate a jsonld social must pass to auto-apply.
+ * Flags it (so it stages, with a reason) when:
+ *   - the payload mixes accounts: some named handle shares nothing with the
+ *     promoter (`social_mixed_affinity`). We stage the WHOLE payload rather
+ *     than apply the affine subset, because a page that lists a second
+ *     business's accounts is not trustworthy about the first one's either;
+ *   - the page's JSON-LD describes more than one business
+ *     (`jsonld_multiple_entities`, OPE-1706), even if the extracted payload
+ *     happened to keep only the promoter's own accounts. Purity Spring
+ *     Resort's JSON-LD carried Highway West Vacations' accounts.
+ * A fully unaffine payload already carries `social_no_name_affinity`.
+ * Mutates in place; exported for tests.
+ */
+export function gateJsonLdSocial(
+  proposals: {
+    field: string;
+    method: string;
+    proposedValue: string;
+    flags: string[];
+    autoApply: boolean;
+  }[],
+  companyName: string | null | undefined,
+  website: string | null | undefined,
+  jsonLdMultipleEntities: boolean
+): void {
+  for (const p of proposals) {
+    if (p.field !== "social_links" || p.method !== "jsonld") continue;
+    if (p.flags.includes("social_no_name_affinity")) continue;
+    let links: Record<string, string> = {};
+    try {
+      links = JSON.parse(p.proposedValue) as Record<string, string>;
+    } catch {
+      // An unparseable payload carries no links to judge.
+    }
+    if (Object.values(links).some((u) => socialUrlIsUnaffine(u, companyName, website))) {
+      if (!p.flags.includes("social_mixed_affinity")) p.flags.push("social_mixed_affinity");
+      p.autoApply = false;
+    }
+    if (jsonLdMultipleEntities) {
+      if (!p.flags.includes("jsonld_multiple_entities")) p.flags.push("jsonld_multiple_entities");
+      p.autoApply = false;
+    }
+  }
+}
+
 /**
  * OPE-1686 — a social payload the pipeline has TWO independent reasons to
  * distrust is dropped, not re-staged.
@@ -606,12 +655,19 @@ export async function processPromoterEnrichmentJob(
   // two businesses, offsite / stock-photo logo). Each adds a flag; a flagged
   // contact stages instead of auto-applying. After the Contact-page hop, so its
   // contacts are checked too.
+  const jsonLdMultipleEntities = jsonLdHasMultipleEntities(
+    fetched.html,
+    row.companyName,
+    row.website
+  );
   applyPromoterSanityFlags(proposals, {
     state: row.state,
     website: row.website,
     finalUrl: fetched.finalUrl ?? null,
-    jsonLdMultipleEntities: jsonLdHasMultipleEntities(fetched.html, row.companyName, row.website),
+    jsonLdMultipleEntities,
   });
+  // OPE-1707 — a jsonld social auto-applies again, so it gets its own gate.
+  gateJsonLdSocial(proposals, row.companyName, row.website, jsonLdMultipleEntities);
 
   // OPE-964 — a value a human REVERTED is never auto-applied again. Under
   // fill-empty-only the revert leaves the field empty, so without this the next
@@ -807,6 +863,14 @@ async function holdSocialUnlessPromotable(db: Db, proposals: Proposal[]): Promis
   let held = 0;
   for (const p of proposals) {
     if (p.field !== "social_links" || !p.autoApply || p.flags.length > 0) continue;
+    // OPE-1707 — John, 2026-11-22: a social read from the site's OWN JSON-LD
+    // auto-applies again (72 auto-merged 07-01 → 10-01 at 98.7% machine
+    // agreement), behind the stricter jsonld gate in gateJsonLdSocial instead
+    // of this one. The 10-04 ruling this gate implements named `social-link`
+    // values, and jsonld (6 human decisions) could never reach its 20-decision
+    // floor, so it had silently become stage-only too. `social-link` still
+    // waits for promotion here.
+    if (p.method === "jsonld" && p.confidence >= JSONLD_SOCIAL_CONFIDENCE_FLOOR) continue;
     if (await socialRulePromotable(db, p.method)) continue;
     p.autoApply = false;
     held++;
