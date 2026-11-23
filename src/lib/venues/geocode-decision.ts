@@ -19,6 +19,7 @@
  * reused.
  */
 import { normalizeName, tokenize } from "@takemetothefair/utils";
+import { haversineDistance } from "../geo";
 import type { GeocodeDetail, PlaceLookupResult } from "../google-maps";
 
 export type GeocodeStatus =
@@ -84,6 +85,35 @@ export interface GeocodeOutcome {
    * says a human should look, and a `venue.pin.far_from_town` row records it.
    */
   pin_warning?: string;
+  /**
+   * OPE-1698 — set only by a `compare_only` call: how far the stored pin sits
+   * from a fresh geocode of the same row. Nothing was written. See
+   * `compareToStored`.
+   */
+  compare?: PinComparison;
+}
+
+/** OPE-1698 — distance buckets for the low-precision pin sweep. */
+export type PinDistanceBucket = "<100m" | "100m-1km" | ">1km";
+
+export interface PinComparison {
+  stored: { lat: number; lng: number } | null;
+  fresh: { lat: number; lng: number; place_id: string | null } | null;
+  /** Great-circle metres, stored → fresh. Null when either pin is missing. */
+  distance_m: number | null;
+  bucket: PinDistanceBucket | null;
+  /**
+   * The fresh pin would pass the write gate on its own (status `ok` — one
+   * candidate, no partial match, not a centroid) AND carries a place id. This
+   * is the ticket's "confident re-geocode": the only kind a correction may use.
+   */
+  confident: boolean;
+}
+
+export function distanceBucket(meters: number): PinDistanceBucket {
+  if (meters < 100) return "<100m";
+  if (meters <= 1000) return "100m-1km";
+  return ">1km";
 }
 
 /**
@@ -461,5 +491,36 @@ export function forcedOutcome(
     ...outcome,
     status: "forced",
     after: { lat: pin.lat, lng: pin.lng, place_id: pin.placeId },
+  };
+}
+
+/**
+ * OPE-1698 — compare a venue's STORED pin with what a fresh geocode returned.
+ * Pure. The caller must not write: this exists so a bulk correction can be
+ * sized (and reviewed) before any row moves.
+ *
+ * The fresh pin is reported even when the gate refused it (low-confidence,
+ * duplicate-with), because "Google now says 2.8 km away, but ambiguously" is
+ * exactly the row a human should look at. `confident` is what separates the
+ * correctable rows from the review pile.
+ */
+export function compareToStored(
+  v: Pick<VenueForGeocode, "latitude" | "longitude">,
+  outcome: GeocodeOutcome,
+  fresh: { lat: number; lng: number; placeId: string | null } | null
+): PinComparison {
+  const stored =
+    v.latitude !== null && v.longitude !== null ? { lat: v.latitude, lng: v.longitude } : null;
+  const freshPin = fresh ? { lat: fresh.lat, lng: fresh.lng, place_id: fresh.placeId } : null;
+  const distance_m =
+    stored && freshPin
+      ? Math.round(haversineDistance(stored.lat, stored.lng, freshPin.lat, freshPin.lng) * 1609.344)
+      : null;
+  return {
+    stored,
+    fresh: freshPin,
+    distance_m,
+    bucket: distance_m === null ? null : distanceBucket(distance_m),
+    confident: outcome.status === "ok" && Boolean(freshPin?.place_id),
   };
 }

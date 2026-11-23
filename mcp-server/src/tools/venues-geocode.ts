@@ -59,7 +59,11 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
       "slug in `duplicate`) instead of a raw DB error — a ready-made merge_venue candidate; not written even " +
       "with force. A stored pin more than 10 km from the median of the other venues in the same " +
       "city+state carries `pin_warning` and is logged (admin_actions venue.pin.far_from_town) — it is still " +
-      "written; verify it (OPE-1079). Returns a per-venue outcome record. Admin only.",
+      "written; verify it (OPE-1079). compare_only:true (with venue_id/venue_ids) is READ-ONLY: it re-geocodes " +
+      "even already-pinned venues and returns each fresh candidate with `compare` = stored pin, fresh pin, " +
+      "distance_m, bucket (<100m / 100m-1km / >1km) and `confident` (passes the gate on its own with a " +
+      "place id), plus a per-call compare_summary — and writes nothing (OPE-1698). Returns a per-venue " +
+      "outcome record. Admin only.",
     {
       venue_id: z.string().optional().describe("Geocode a single venue by id."),
       venue_ids: z
@@ -94,6 +98,13 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
           "Override the safety defaults: re-geocode a venue that already has coordinates (overwriting " +
             "them), AND store a reviewed low-confidence candidate (reported as 'forced'). Never stores an " +
             "insufficient-address or no-match venue."
+        ),
+      compare_only: z
+        .boolean()
+        .optional()
+        .describe(
+          "READ-ONLY sizing pass: re-geocode the given ids (even if already pinned) and report the " +
+            "distance between the stored and fresh pins. Writes nothing. Ids only; not with force or missing_only."
         ),
     },
     async (params) => {
@@ -135,6 +146,7 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
             after_id: params.after_id ?? undefined,
             limit: params.limit ?? undefined,
             force: params.force ?? false,
+            compare_only: params.compare_only ?? undefined,
           }),
         };
         response = env.MAIN_APP
