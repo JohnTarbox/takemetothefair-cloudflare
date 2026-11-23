@@ -51,32 +51,27 @@ export interface AutoWriteOutcome {
   wasAlreadyLinked: boolean;
   heroSet: boolean;
   /** OPE-1694 — "domain" when the sign's web address picked the existing vendor. */
-  matchBasis?: "domain" | "name" | null;
+  matchBasis?: "domain" | "name" | "id" | null;
   /** Present when the write failed — reported, never swallowed. */
   error?: string;
 }
 
 /**
- * Promote a booth photo to the vendor's logo when it has none. Crosses to the
- * app upload pipeline over X-Internal-Key (EXIF/GPS stripped, WebP, R2) rather
- * than storing the raw inbound original on the public CDN — the same path
- * OPE-205 §3's general-photos and §2's approve route use. Best-effort.
+ * Send a booth photo through the app upload pipeline over X-Internal-Key
+ * (EXIF/GPS stripped, WebP, R2) rather than storing the raw inbound original on
+ * the public CDN — the same path OPE-205 §3's general-photos and §2's approve
+ * route use. `logo` sets the vendor's logo; `gallery` (OPE-1704) appends a
+ * `vendor_photos` row, which the pipeline dedups on identical bytes (OPE-686).
+ * Best-effort: false on any failure, never a throw.
  */
-async function setHeroIfBlank(
+export async function postBoothPhoto(
   env: AutoWriteEnv,
-  db: Db,
   vendorId: string,
-  photoKey: string
+  photoKey: string,
+  role: "logo" | "gallery"
 ): Promise<boolean> {
   if (!env.VENDOR_ASSETS || !env.MAIN_APP_URL || !env.INTERNAL_API_KEY) return false;
   try {
-    const [v] = await db
-      .select({ logoUrl: vendors.logoUrl })
-      .from(vendors)
-      .where(eq(vendors.id, vendorId))
-      .limit(1);
-    if (!v || v.logoUrl) return false; // hero-IF-BLANK: never overwrite
-
     const obj = await env.VENDOR_ASSETS.get(photoKey);
     if (!obj) return false;
     const bytes = new Uint8Array(await obj.arrayBuffer());
@@ -86,7 +81,7 @@ async function setHeroIfBlank(
     form.append("file", new Blob([bytes], { type: contentType }), `booth-${vendorId}`);
     form.append("target_type", "vendor");
     form.append("target_id", vendorId);
-    // image_role defaults to "logo" for a vendor target.
+    form.append("image_role", role);
 
     const url = `${env.MAIN_APP_URL}/api/admin/upload-image-bytes`;
     const init: RequestInit = {
@@ -101,6 +96,27 @@ async function setHeroIfBlank(
   } catch {
     return false;
   }
+}
+
+/** Promote a booth photo to the vendor's logo when it has none. Never overwrites. */
+async function setHeroIfBlank(
+  env: AutoWriteEnv,
+  db: Db,
+  vendorId: string,
+  photoKey: string
+): Promise<boolean> {
+  if (!env.VENDOR_ASSETS || !env.MAIN_APP_URL || !env.INTERNAL_API_KEY) return false;
+  try {
+    const [v] = await db
+      .select({ logoUrl: vendors.logoUrl })
+      .from(vendors)
+      .where(eq(vendors.id, vendorId))
+      .limit(1);
+    if (!v || v.logoUrl) return false; // hero-IF-BLANK: never overwrite
+  } catch {
+    return false;
+  }
+  return postBoothPhoto(env, vendorId, photoKey, "logo");
 }
 
 /** Photo keys already auto-written for this email (re-send dedup). */

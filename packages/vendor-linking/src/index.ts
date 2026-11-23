@@ -125,6 +125,14 @@ export interface CreateOrLinkVendorInput {
    *     was not given, the domain becomes the new vendor's website.
    */
   matchByDomain?: boolean;
+  /**
+   * OPE-1704 — link THIS vendor; skip domain and name matching and never create.
+   * For a reviewer who already knows which record a booth photo shows. The id
+   * is followed through `redirect_to_vendor_id` to the canonical row, and a
+   * soft-deleted vendor (with no redirect) is refused rather than relinked.
+   * `businessName` is still required by the signature but is not used to match.
+   */
+  vendorId?: string | null;
 }
 
 /** DB-integrity side-effects each runtime supplies its own implementation of. */
@@ -157,7 +165,8 @@ export interface CreateOrLinkVendorSuccess {
   statusChanged: boolean;
   matchedExisting: { name: string; similarity_score: number | null } | null;
   /** OPE-1694 — why an existing vendor was used: its domain, or its name. Null on a create. */
-  matchBasis: "domain" | "name" | null;
+  /** "id" = the caller named the vendor (OPE-1704 `vendorId`). */
+  matchBasis: "domain" | "name" | "id" | null;
   /** OPE-1694 — the registrable domain the sign carried, when `matchByDomain` found one. */
   matchedDomain: string | null;
   /** True when the link is in a public status — the adapter decides whether to
@@ -692,9 +701,44 @@ export async function createOrLinkVendor(
   // 2a. OPE-1694 — domain first. A sign's web address names the business more
   // reliably than its lettering does.
   let matched: { row: VendorRow; score: number | null } | null = null;
-  let matchBasis: "domain" | "name" | null = null;
+  let matchBasis: "domain" | "name" | "id" | null = null;
   let matchedDomain: string | null = null;
-  if (input.matchByDomain) {
+
+  // 2·. OPE-1704 — an explicit vendor id wins over every heuristic.
+  if (input.vendorId) {
+    const rows = await db
+      .select({
+        id: vendors.id,
+        businessName: vendors.businessName,
+        vendorType: vendors.vendorType,
+        redirectToVendorId: vendors.redirectToVendorId,
+        slug: vendors.slug,
+        deletedAt: vendors.deletedAt,
+      })
+      .from(vendors)
+      .where(eq(vendors.id, input.vendorId))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return { ok: false, error: `Vendor not found: ${input.vendorId}` };
+    if (row.deletedAt && !row.redirectToVendorId) {
+      return { ok: false, error: `Vendor ${input.vendorId} is deleted; pick a live vendor.` };
+    }
+    try {
+      const canonical = await resolveRedirectChain(db, {
+        id: row.id,
+        businessName: row.businessName,
+        vendorType: row.vendorType,
+        redirectToVendorId: row.redirectToVendorId,
+        slug: row.slug,
+      });
+      matched = { row: canonical, score: null };
+      matchBasis = "id";
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  if (!matched && input.matchByDomain) {
     const sd = extractSignDomain(businessName, website);
     if (sd.domain) {
       matchedDomain = sd.domain;
