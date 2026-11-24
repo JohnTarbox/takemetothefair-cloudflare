@@ -1,20 +1,39 @@
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FlatCompat } from "@eslint/eslintrc";
+import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
+import nextTypescript from "eslint-config-next/typescript";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// FlatCompat lets us reuse Next.js's legacy `extends`-based shareable
-// configs (eslint-config-next) inside ESLint 9's flat config format.
-// Without this adapter, we'd have to wait for Next.js to publish a
-// flat-config-native version of eslint-config-next.
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
+// eslint-config-next 16 ships native flat configs, so the FlatCompat adapter
+// (@eslint/eslintrc) is gone. ESLint 10 removed eslintrc, and running these
+// configs back through FlatCompat crashed its validator with "Converting
+// circular structure to JSON" (PR #1736). The two imports below are the same
+// presets the old `compat.extends("next/core-web-vitals", "next/typescript")`
+// loaded.
 
 export default [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  ...nextCoreWebVitals,
+  ...nextTypescript,
+  // eslint-plugin-react-hooks 7 (pulled in by eslint-config-next 16) adds the
+  // React Compiler rules to the preset at "error". Every rule the old preset
+  // had is unchanged, and the new ones stay on. These five already fire on
+  // existing code (93 sites at the bump: set-state-in-effect 42,
+  // static-components 22, immutability 17, purity 7, refs 5), so they're
+  // warnings for now. Fixing them is component refactoring, not a dependency
+  // bump, and it belongs with the React 19 / Next 16 move (#1659). The other
+  // compiler rules found nothing and stay at "error" to guard new code. Move
+  // each of these back to "error" once its count reaches zero.
+  {
+    rules: {
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/static-components": "warn",
+      "react-hooks/immutability": "warn",
+      "react-hooks/purity": "warn",
+      "react-hooks/refs": "warn",
+    },
+  },
   // OPE-902 — type-aware promise rules, scoped to the two directories where a
   // dropped `await` is a security bug rather than a latency bug.
   //
