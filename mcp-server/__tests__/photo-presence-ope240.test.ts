@@ -128,6 +128,8 @@ describe("runBoothPipeline — the presence gate with auto-write ON", () => {
       createdAt: new Date(),
     } as never);
     const ai = vi.fn().mockResolvedValueOnce({ response: boothReply });
+    // OPE-1709 — the card-subject check runs between the read and the presence gate.
+    ai.mockResolvedValueOnce({ response: { main_subject: "booth_or_table" } });
     ai.mockResolvedValueOnce(presence);
     const env: BoothPipelineEnv = {
       AI: { run: ai },
@@ -149,8 +151,9 @@ describe("runBoothPipeline — the presence gate with auto-write ON", () => {
 
   it("a banner on a wall is staged, not written, and the answer is recorded", async () => {
     const { res, ai, payloads } = await run({ response: { mounted_on: "building_or_wall" } });
-    expect(ai).toHaveBeenCalledTimes(2);
-    expect(String(ai.mock.calls[1][1].prompt)).toContain("physically attached");
+    expect(ai).toHaveBeenCalledTimes(3);
+    expect(String(ai.mock.calls[1][1].prompt)).toContain("main_subject");
+    expect(String(ai.mock.calls[2][1].prompt)).toContain("physically attached");
     expect(res.autoWritten).toEqual([]);
     expect(payloads).toMatchObject([
       {

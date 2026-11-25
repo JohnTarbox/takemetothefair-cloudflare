@@ -40,6 +40,7 @@ import type { HandlerCtx, HandlerFn, HandlerEnv, HandlerResult } from "./types.j
 import type { InboundEmail } from "@takemetothefair/db-schema";
 import { parsePlusSegment } from "../email-intents.js";
 import { logError } from "../logger.js";
+import { recordWorkflowStep } from "../workflow-run-log.js";
 import { isOperatorAddress } from "../test-addresses.js";
 import { chunkedInArray, createSlug, snapAmbiguityRadiusMiles } from "@takemetothefair/utils";
 import { PUBLIC_EVENT_STATUSES } from "@takemetothefair/constants";
@@ -1193,9 +1194,12 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
     metAtEventId: snapMeta?.met_at_event_id ?? null,
   };
   let cardsOnlyTried = false;
-  const tryCardsOnly = async (): Promise<HandlerResult | null> => {
+  const tryCardsOnly = async (pass: "no-fair" | "before-hold"): Promise<HandlerResult | null> => {
     cardsOnlyTried = true;
-    const cards = await runCardsOnly(env, db, row.id, imageRefs(refs), cardIntent);
+    const cards = await runCardsOnly(env, db, row.id, imageRefs(refs), cardIntent, {
+      instanceId: ctx.sessionId,
+      pass,
+    });
     return cards ? cardOnlyAck(row, photoCount, eventHint, ctx, cards) : null;
   };
 
@@ -1204,7 +1208,7 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   // near, nor held asking "which fair?". A shot that is NOT a card falls through
   // to the ordinary resolution below, so the mode can never lose a booth photo.
   if (snapMeta?.no_fair) {
-    const done = await tryCardsOnly();
+    const done = await tryCardsOnly("no-fair");
     if (done) return done;
   }
 
@@ -1386,6 +1390,10 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
         source: "email-handlers/photo-intake.ts:runBoothPipeline",
       });
     }
+    await recordClassifyStep(db, ctx.sessionId, row.id, PHOTO_CLASSIFY_STEP, booths, {
+      pass: "fair",
+      eventId: resolution.eventId,
+    });
 
     // OPE-403 — record what actually reached `event_photos`, and make the row
     // drainable when the answer is "nothing".
@@ -1514,7 +1522,7 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   // card's lettering as an announcement), ask whether every photo is a card; if
   // so the cards are matched/created/kept with no event, like "No fair" mode.
   if (!cardsOnlyTried) {
-    const done = await tryCardsOnly();
+    const done = await tryCardsOnly("before-hold");
     if (done) return done;
   }
 
@@ -1586,14 +1594,13 @@ async function runCardsOnly(
   db: ReturnType<typeof getDb>,
   rowId: string,
   photos: ReturnType<typeof imageRefs>,
-  cardIntent: { addAsVendor: boolean; metAtEventId: string | null }
+  cardIntent: { addAsVendor: boolean; metAtEventId: string | null },
+  step: { instanceId: string; pass: "no-fair" | "before-hold" }
 ): Promise<BoothPipelineResult | null> {
   if (photos.length === 0) return null;
+  let r: BoothPipelineResult | null = null;
   try {
-    const r = await runBoothPipeline(env, db, rowId, null, photos, { cardIntent });
-    if (r.disabledReason || (r.notCards ?? 0) > 0 || (r.cardsHandled ?? 0) === 0) return null;
-    await db.update(inboundEmails).set({ photosStored: 0 }).where(eq(inboundEmails.id, rowId));
-    return r;
+    r = await runBoothPipeline(env, db, rowId, null, photos, { cardIntent });
   } catch (e) {
     await logError(env.DB, {
       message: "card-only pass failed; taking the ordinary path",
@@ -1601,8 +1608,58 @@ async function runCardsOnly(
       source: "email-handlers/photo-intake.ts:runCardsOnly",
       context: { messageRowId: rowId },
     });
-    return null;
   }
+  // OPE-1709 — recorded whatever the outcome: the first real card snap took the
+  // hold path here and left no trace of why.
+  await recordClassifyStep(db, step.instanceId, rowId, CARDS_ONLY_STEP, r, { pass: step.pass });
+  if (!r || r.disabledReason || (r.notCards ?? 0) > 0 || (r.cardsHandled ?? 0) === 0) return null;
+  await db.update(inboundEmails).set({ photosStored: 0 }).where(eq(inboundEmails.id, rowId));
+  return r;
+}
+
+/** OPE-1709 — workflow step names for the photo lane's vision passes. */
+export const CARDS_ONLY_STEP = "photo/cards-only";
+export const PHOTO_CLASSIFY_STEP = "photo/classify";
+
+/**
+ * OPE-1709 — record one vision pass as a workflow step: what each photo was
+ * read as (kind, the card check's answer, the action taken). `skipped` when
+ * vision is off, `failed` when the pipeline threw. Fail-soft by contract
+ * (recordWorkflowStep never throws).
+ */
+export async function recordClassifyStep(
+  db: Db,
+  instanceId: string,
+  rowId: string,
+  stepName: string,
+  r: BoothPipelineResult | null,
+  extra: Record<string, unknown>
+): Promise<void> {
+  const verdict = !r
+    ? "pipeline-threw"
+    : r.disabledReason
+      ? "vision-off"
+      : stepName === CARDS_ONLY_STEP
+        ? (r.notCards ?? 0) > 0 || (r.cardsHandled ?? 0) === 0
+          ? "not-only-cards"
+          : "all-cards"
+        : "classified";
+  await recordWorkflowStep(db, {
+    instanceId,
+    workflowName: "inbound-email",
+    inboundEmailId: rowId,
+    stepName,
+    status: !r ? "failed" : r.disabledReason ? "skipped" : "ok",
+    detail: {
+      ...extra,
+      verdict,
+      examined: r?.examined ?? 0,
+      notCards: r?.notCards ?? null,
+      cardsHandled: r?.cardsHandled ?? null,
+      disabledReason: r?.disabledReason ?? null,
+      photos: r?.classifications ?? [],
+    },
+  });
 }
 
 /** OPE-1705 slice 3 — the ack for a batch that was only business cards, with no fair. */

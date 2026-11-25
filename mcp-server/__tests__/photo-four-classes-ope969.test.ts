@@ -158,9 +158,21 @@ const bucket = {
   get: vi.fn(async () => ({ arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer })),
 } as unknown as R2Bucket;
 
+/**
+ * OPE-1709 — the card-subject check is answered by its prompt ("not a card"),
+ * so the scripted replies below stay in the order the test reads them.
+ */
+function scripted(responses: unknown[]) {
+  const queue = [...responses];
+  return vi.fn(async (_model: string, input: { prompt?: string }) =>
+    String(input?.prompt ?? "").includes("main_subject")
+      ? { response: { main_subject: "booth_or_table" } }
+      : queue.shift()
+  );
+}
+
 function env(...replies: Array<Record<string, unknown>>): BoothPipelineEnv {
-  const run = vi.fn();
-  for (const r of replies) run.mockResolvedValueOnce({ response: r });
+  const run = scripted(replies.map((r) => ({ response: r })));
   return { AI: { run }, VENDOR_ASSETS: bucket, PHOTO_VISION_ENABLED: "true" };
 }
 const photo = (n: number) => ({ key: `inbound-attachments/m/${n}-p.jpg`, name: `${n}-p.jpg` });
@@ -504,8 +516,7 @@ describe("OPE-969 — the Axe Women truck, as the model actually read it", () =>
 // reaching their class's path.
 describe("OPE-969 rework — fenced text replies route to their class", () => {
   const textEnv = (...texts: string[]): BoothPipelineEnv => {
-    const run = vi.fn();
-    for (const t of texts) run.mockResolvedValueOnce({ response: t });
+    const run = scripted(texts.map((t) => ({ response: t })));
     return { AI: { run }, VENDOR_ASSETS: bucket, PHOTO_VISION_ENABLED: "true" };
   };
   const fenced = (o: Record<string, unknown>, note = "") =>

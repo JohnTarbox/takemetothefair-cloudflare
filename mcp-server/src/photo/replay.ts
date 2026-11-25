@@ -55,6 +55,7 @@ import { runBoothPipeline, type BoothPipelineResult } from "./booth-pipeline.js"
 import type { HandlerEnv } from "../email-handlers/types.js";
 import type { BoothPipelineEnv } from "./booth-pipeline.js";
 import { parsePlusSegment } from "../email-intents.js";
+import { isSnapRow, parseCaptureMeta } from "./snap-intake.js";
 
 export type ReplayEnv = HandlerEnv & BoothPipelineEnv;
 
@@ -72,6 +73,12 @@ export interface ReplayOptions {
 export interface ReplayReport {
   inboundEmailId: string;
   dryRun: boolean;
+  /**
+   * OPE-1709 — which pass ran: "fair" (the fair resolved) or "cards-only" (a
+   * "No fair" snap, or no fair resolved — the live handler's event-less pass,
+   * which writes only if every photo is a business card).
+   */
+  pass: "fair" | "cards-only";
   /** Present when `commit: true` was asked for and refused, with the reason. */
   commitBlockedReason?: string;
   attachments: {
@@ -92,7 +99,7 @@ export interface ReplayReport {
     venueName?: string;
   };
   exif: { hasGps: boolean; takenOnLocalDate: string | null };
-  /** Null when the fair did not resolve — the pipeline never runs in that case. */
+  /** Null only when no pass ran; an unresolved fair runs the cards-only pass (OPE-1709). */
   vision: BoothPipelineResult | null;
   /**
    * What the ORIGINAL run recorded for this email, read straight from the row.
@@ -187,6 +194,8 @@ export async function replayInboundAttachment(
       resultingEventId: inboundEmails.resultingEventId,
       replyKind: inboundEmails.replyKind,
       flaggedForReview: inboundEmails.flaggedForReview,
+      routingSource: inboundEmails.routingSource,
+      captureMeta: inboundEmails.captureMeta,
     })
     .from(inboundEmails)
     .where(eq(inboundEmails.id, options.inboundEmailId))
@@ -232,8 +241,27 @@ export async function replayInboundAttachment(
     row.subject
   );
 
+  // OPE-1709 — the live handler's event-less "cards only" pass: a "No fair"
+  // snap goes there first, and an unresolved photo goes there before the hold.
+  // Without it a card that resolved no fair could not be replayed at all.
+  const snapMeta = isSnapRow(row) ? parseCaptureMeta(row.captureMeta) : null;
+  const cardIntent = {
+    addAsVendor: snapMeta?.add_as_vendor === true,
+    metAtEventId: snapMeta?.met_at_event_id ?? null,
+  };
+  const eventLess = snapMeta?.no_fair === true || resolution.status !== "resolved";
+
   let vision: BoothPipelineResult | null = null;
-  if (resolution.status === "resolved") {
+  if (eventLess) {
+    vision = await runBoothPipeline(
+      env,
+      db,
+      row.id,
+      null,
+      selected.map((r) => ({ key: r.key, name: r.name })),
+      { dryRun, cardIntent }
+    );
+  } else if (resolution.status === "resolved") {
     vision = await runBoothPipeline(
       env,
       db,
@@ -247,6 +275,7 @@ export async function replayInboundAttachment(
   const report: ReplayReport = {
     inboundEmailId: row.id,
     dryRun,
+    pass: eventLess ? "cards-only" : "fair",
     attachments: {
       total: refs.length,
       images: images.length,
