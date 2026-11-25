@@ -46,6 +46,7 @@ import {
   type CardSubject,
 } from "../src/photo/vision.js";
 import { SNAP_ROUTING_SOURCE, type CaptureMeta } from "../src/photo/snap-intake.js";
+import { replayInboundAttachment } from "../src/photo/replay.js";
 import type { Db } from "../src/db.js";
 
 const f = (value: unknown, confidence = 1) => ({ value, confidence });
@@ -331,5 +332,30 @@ describe("photo-intake handler — the 2026-11-25 card, replayed", () => {
     const s = steps();
     expect(s[0]).toMatchObject({ stepName: CARDS_ONLY_STEP, status: "skipped" });
     expect(detail(s[0]).verdict).toBe("vision-off");
+  });
+});
+
+describe("replay — the event-less cards pass (so the 11-25 row can be reprocessed)", () => {
+  it("a 'No fair' card snap replays through the cards-only pass: reads it as a card, writes nothing", async () => {
+    const { e } = env("business_card");
+    const row = seedRow({ no_fair: true, add_as_vendor: true });
+    const before = JSON.stringify(row);
+    const r = await replayInboundAttachment(e as never, db as unknown as Db, {
+      inboundEmailId: ROW,
+    });
+    expect(r.dryRun).toBe(true);
+    expect(r.pass).toBe("cards-only");
+    expect(r.vision?.cardsHandled).toBe(1);
+    expect(r.vision?.cards?.wouldCreate).toEqual(["Birch Hollow Woodworks"]);
+    expect(r.vision?.classifications?.[0]).toMatchObject({
+      kind: "business_card",
+      reclassifiedFrom: "booth",
+    });
+    // Landmark for "writes nothing": the row, vendors and audit rows are untouched.
+    expect(
+      JSON.stringify(db.select().from(inboundEmails).where(eq(inboundEmails.id, ROW)).get())
+    ).toBe(before);
+    expect(vendorByName("Birch Hollow Woodworks")).toEqual([]);
+    expect(db.select().from(adminActions).all()).toEqual([]);
   });
 });

@@ -23,7 +23,8 @@ const SCHEMA_SQL = `
     attachment_refs TEXT, attachment_count INTEGER DEFAULT 0,
     photos_stored INTEGER, resulting_event_id TEXT,
     reply_kind TEXT, flagged_for_review INTEGER DEFAULT 0,
-    received_at INTEGER, status TEXT
+    received_at INTEGER, status TEXT,
+    routing_source TEXT, capture_meta TEXT
   );
   CREATE TABLE events (
     id TEXT PRIMARY KEY, slug TEXT, name TEXT,
