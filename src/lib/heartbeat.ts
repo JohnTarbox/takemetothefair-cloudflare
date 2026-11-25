@@ -2112,6 +2112,45 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         eq(adminActions.action, "vendor.card_paired")
       ),
   },
+  {
+    // OPE-1709 — every Snap photo's vision pass records a workflow step
+    // (`photo/cards-only` before a fair is chosen or the hold, `photo/classify`
+    // at a resolved fair) naming what each photo was read as. The first real
+    // card took the hold path and left no such trace.
+    //
+    // SERVED-NESS, not a clock (the extract-context-telemetry shape): photo
+    // intake is seasonal, so "no step in N days" would page all winter. It
+    // fires only when a Snap upload arrived AFTER the newest step row and is
+    // older than the window — a photo the vision pass never recorded. Every
+    // Snap row is eligible (OPE-1341) and reaches one of the two passes, so an
+    // unserved one is a real miss. Inputs before enabled_at are ignored.
+    name: "photo-classify-step",
+    ownerOpe: "OPE-1709",
+    label: "Snap photo → vision classification recorded as a workflow step",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const evidence = await maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        inArray(workflowRunSteps.stepName, ["photo/cards-only", "photo/classify"])
+      );
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${inboundEmails.receivedAt})` })
+        .from(inboundEmails)
+        .where(
+          and(
+            eq(inboundEmails.intent, "photo_intake"),
+            eq(inboundEmails.routingSource, "snap-app"),
+            // Newer than the newest evidence ⇒ unserved by construction.
+            sql`${inboundEmails.receivedAt} > ${evidence ? Math.floor(evidence.getTime() / 1000) : 0}`,
+            sql`${inboundEmails.receivedAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'photo-classify-step'), 4102444800)`
+          )
+        );
+      return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
+    },
+  },
   // ── OPE-309 (assurance audit A6 / A7) ──────────────────────────────
   //
   // Three genuinely PERIODIC feeds. All three are written by the 06:00Z daily

@@ -35,9 +35,14 @@ import {
   identifyBooth,
   checkBoothPresence,
   applyPresenceGate,
+  applyCardCheck,
+  checkCardSubject,
+  needsCardCheck,
   disposition,
   unidentified,
   type BoothIdentification,
+  type CardSubject,
+  type PhotoKind,
   type Disposition,
   type StageKind,
   type VisionAi,
@@ -210,6 +215,13 @@ export interface BoothPipelineResult {
    */
   notCards?: number;
   /**
+   * OPE-1709 — per photo, what vision read it as and what was done with it.
+   * Absent only when vision never ran (`disabledReason`). The caller records it
+   * as a workflow step: the first real card took the hold path and nothing
+   * showed that the main prompt had called it a booth.
+   */
+  classifications?: PhotoClassification[];
+  /**
    * OPE-403 follow-up — per-photo vision failure reasons, when the model
    * produced nothing usable. Empty when every photo identified cleanly.
    *
@@ -218,6 +230,18 @@ export interface BoothPipelineResult {
    * only as `confidence: 0` with an unactionable rationale string.
    */
   visionFailures: string[];
+}
+
+/** OPE-1709 — one photo's classification, as recorded in the workflow step. */
+export interface PhotoClassification {
+  photoKey: string;
+  kind: PhotoKind;
+  action: Disposition["action"];
+  confidence: number;
+  /** The card-subject answer; undefined = not asked, null = asked, no answer. */
+  cardCheck: CardSubject | null | undefined;
+  reclassifiedFrom: PhotoKind | null;
+  failure: string | null;
 }
 
 export interface BoothPipelineEnv {
@@ -333,7 +357,11 @@ export async function runBoothPipeline(
         continue;
       }
       const bytes = new Uint8Array(await obj.arrayBuffer());
-      const id = await identifyBooth(ai, bytes);
+      let id = await identifyBooth(ai, bytes);
+      // OPE-1709 — the main prompt reads a card as a booth; ask what the photo's
+      // main subject is before anything treats it as one (incl. the presence gate,
+      // which a card on a table passes).
+      if (needsCardCheck(id)) id = applyCardCheck(id, await checkCardSubject(ai, bytes));
       let d = disposition(id);
       // OPE-240 — booth / not-booth. Asked only of a photo that would publish,
       // so it costs one call per would-write and nothing on the rest.
@@ -357,6 +385,18 @@ export async function runBoothPipeline(
     }
   }
 
+  // OPE-1709 — what each photo was read as, for the caller's workflow step: a
+  // card that took the wrong path must show which verdict sent it there.
+  const classifications: PhotoClassification[] = results.map((r) => ({
+    photoKey: r.photo.key,
+    kind: r.d.identification.kind,
+    action: r.d.action,
+    confidence: r.d.identification.confidence,
+    cardCheck: r.d.identification.cardCheck,
+    reclassifiedFrom: r.d.identification.reclassifiedFrom ?? null,
+    failure: r.d.identification.failureReason ?? null,
+  }));
+
   // OPE-1705 slice 3 — an event-less run handles cards only. Anything else
   // needs a fair, so nothing is written and the caller resolves one as usual.
   if (eventId === null) {
@@ -366,6 +406,7 @@ export async function runBoothPipeline(
         ...empty,
         examined: results.length,
         notCards,
+        classifications,
         visionFailures: results
           .map((r) => r.d.identification.failureReason)
           .filter((f): f is string => Boolean(f)),
@@ -821,6 +862,7 @@ export async function runBoothPipeline(
       galleryFailed: 0,
       autoWritten: [],
       visionFailures,
+      classifications,
       dryRun: true,
       ...cardsSummary(new Map(), true),
       wouldAutoWrite: toAutoWrite
@@ -1251,6 +1293,7 @@ export async function runBoothPipeline(
     // Named per photo so one bad frame in a batch is distinguishable from a
     // systemic failure (e.g. every photo returning `ai-run-threw`).
     visionFailures,
+    classifications,
   };
 }
 

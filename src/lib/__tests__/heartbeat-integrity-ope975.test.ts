@@ -283,6 +283,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "business-card-lane": 30 * 24,
       // OPE-1705 slice 2 — card↔booth pairing, same window; dormant until the first live pair.
       "card-booth-pairing": 30 * 24,
+      // OPE-1709 — served-ness: a Snap upload unrecorded for 24h (processing takes seconds).
+      "photo-classify-step": 24,
       "series-write-path": 336,
       "venue-decision-writer": 336,
       "venue-geocode-sweep": 48,
