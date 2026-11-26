@@ -291,6 +291,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "feed-review-labels": 24,
       "feed-drop-sample-built": 8 * 24,
       "feed-drop-sample-filed": 72,
+      "feed-item-snapshot-history": 2,
+      "feed-rule-change-followup": 3,
       "series-write-path": 336,
       "venue-decision-writer": 336,
       "venue-geocode-sweep": 48,

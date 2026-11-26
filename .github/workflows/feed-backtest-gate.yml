@@ -1,0 +1,40 @@
+name: Feed Backtest Gate
+
+# OPE-1635 — a change to the organizer-feed inclusion rules or the matcher must
+# say what it flips BEFORE it ships. Two halves:
+#   1. The labelled fixture backtest — packages/utils/src/__tests__/
+#      feed-backtest-gate-ope1635.test.ts — runs in CI's workspace-package tests
+#      on every PR and fails on any NEW wrong verdict against a label.
+#   2. THIS workflow: a PR touching those files must carry a `## Backtest`
+#      section in its body — paste `backtest_feed_rules`' summary_markdown,
+#      run over the live corpus. Fixtures cannot see prod's items; the summary can.
+# `edited` is in the trigger types so fixing the PR body re-runs the check
+# without a push. The body is passed through env, never interpolated into the
+# script (a PR body is untrusted input).
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+    paths:
+      - "packages/utils/src/feeds/inclusion.ts"
+      - "packages/utils/src/feeds/matcher.ts"
+
+permissions:
+  contents: read
+
+jobs:
+  backtest-summary:
+    name: PR body carries a backtest summary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a "## Backtest" section in the PR body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if printf '%s\n' "$PR_BODY" | grep -qE '^#{2,3}[[:space:]]*Backtest\b'; then
+            echo "Found a Backtest section in the PR body."
+          else
+            echo "::error::This PR changes the feed inclusion rules or the matcher. Run backtest_feed_rules (MCP) with the proposed change over the live corpus, and paste its summary_markdown into the PR body as a '## Backtest' section. Then record the merged change with record_feed_rule_change (OPE-1635)."
+            exit 1
+          fi

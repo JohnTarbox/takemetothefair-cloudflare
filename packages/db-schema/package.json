@@ -10,7 +10,8 @@
     "./intent-feedback": "./src/intent-feedback.ts",
     "./email-suppression": "./src/email-suppression.ts",
     "./field-history": "./src/field-history.ts",
-    "./feed-quality": "./src/feed-quality.ts"
+    "./feed-quality": "./src/feed-quality.ts",
+    "./feed-backtest": "./src/feed-backtest.ts"
   },
   "scripts": {
     "test": "vitest --run --passWithNoTests"

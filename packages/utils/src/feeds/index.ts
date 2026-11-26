@@ -10,3 +10,5 @@ export * from "./ical";
 export * from "./jsonld";
 export * from "./inclusion";
 export * from "./self-contradictions";
+export * from "./matcher";
+export * from "./backtest";

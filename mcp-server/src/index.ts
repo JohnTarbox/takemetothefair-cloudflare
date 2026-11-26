@@ -85,6 +85,7 @@ import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledPendingContactAttach } from "./inbound/pending-promoter-contact-attach.js";
 import { runScheduledFeedPoll, runScheduledPingedFeedPass } from "./feeds/schedule.js";
 import { ensureWeeklyDropSample } from "@takemetothefair/db-schema/feed-quality";
+import { fillDueRuleChangeFollowups } from "@takemetothefair/db-schema/feed-backtest";
 import { WEBSUB_CALLBACK_PATH, handleWebSubCallback } from "./feeds/websub.js";
 import { runScheduledPromoterOnboarding } from "./inbound/promoter-onboarding.js";
 import { runScheduledRepliedLedgerCheck } from "./inbound/replied-without-ledger.js";
@@ -1913,6 +1914,12 @@ export default {
           // OPE-1634 — this week's feed drop sample for the analyst; one row per
           // week (unique week_start), so 167 of 168 hourly fires are one SELECT.
           ["feed-drop-sample", () => ensureWeeklyDropSample(getDb(env.DB), new Date())],
+          // OPE-1635 — the feed rule change log's "after" metrics, 7 days on.
+          // Idempotent; nothing owed is one SELECT.
+          [
+            "feed-rule-change-followup",
+            () => fillDueRuleChangeFollowups(getDb(env.DB), new Date()),
+          ],
           // OPE-1637 — Battleship host silence (75 min). Mails once on silent, once on clear.
           ["host-silence-watch", () => runHostSilenceWatch(env)],
           // OPE-1655 — production behind main for > 2h (both Workers' live SHA vs

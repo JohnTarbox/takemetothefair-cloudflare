@@ -67,7 +67,10 @@ import {
   promoterApiEventRefs,
   feedDropSamples,
   feedItemLabels,
+  promoterFeedItems,
+  promoterFeedItemSnapshots,
 } from "@/lib/db/schema";
+import { oldestOwedRuleChangeFollowup } from "@takemetothefair/db-schema/feed-backtest";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
 import { FULL_SWEEP_TYPES } from "@/lib/duplicates/full-sweep-types";
@@ -2233,6 +2236,44 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         .where(and(isNull(feedDropSamples.opeId), sql`${feedDropSamples.itemCount} > 0`));
       return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
     },
+  },
+  {
+    // OPE-1635 — the ingest keeps every distinct version of a feed item. The
+    // write rides the same read that updates the item, so ANY item whose
+    // current content_hash has no history row is a miss; the clock starts at
+    // that item's last read. None outstanding reads healthy.
+    name: "feed-item-snapshot-history",
+    ownerOpe: "OPE-1635",
+    label: "Feed item versions kept for the backtest replay corpus",
+    priority: "P1",
+    expectedWindowHours: 2,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${promoterFeedItems.lastSeenAt})` })
+        .from(promoterFeedItems)
+        .where(
+          and(
+            isNotNull(promoterFeedItems.contentHash),
+            isNotNull(promoterFeedItems.snapshot),
+            sql`NOT EXISTS (SELECT 1 FROM ${promoterFeedItemSnapshots} h
+              WHERE h.feed_item_id = ${promoterFeedItems.id}
+                AND h.content_hash = ${promoterFeedItems.contentHash})`
+          )
+        );
+      return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
+    },
+  },
+  {
+    // OPE-1635 — the change log's "after" metrics, taken by the hourly cron
+    // once a change is 7 days old. Demand-conditional: nothing owed reads
+    // healthy; an owed row starts the clock when it BECAME owed.
+    name: "feed-rule-change-followup",
+    ownerOpe: "OPE-1635",
+    label: "Feed rule change log: metrics 7 days after each change",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: async (db) =>
+      (await oldestOwedRuleChangeFollowup(db, new Date())) ?? new Date(),
   },
   // ── OPE-309 (assurance audit A6 / A7) ──────────────────────────────
   //

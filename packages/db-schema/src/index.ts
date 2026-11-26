@@ -7069,6 +7069,64 @@ export const feedDropSamples = sqliteTable(
   (t) => [uniqueIndex("uq_feed_drop_samples_week").on(t.weekStart)]
 );
 
+/**
+ * OPE-1635 (drizzle/0440) — the replay corpus's history. One row per DISTINCT
+ * version of a feed item (a new `content_hash`), so `backtest_feed_rules` can
+ * replay what each read actually said, not only the latest snapshot that
+ * `promoter_feed_items.snapshot` holds. Written by the ingest on every read
+ * that changes an item (INSERT OR IGNORE on the hash), capped to the newest
+ * FEED_ITEM_SNAPSHOT_KEEP per item.
+ */
+export const promoterFeedItemSnapshots = sqliteTable(
+  "promoter_feed_item_snapshots",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    feedItemId: text("feed_item_id")
+      .notNull()
+      .references(() => promoterFeedItems.id, { onDelete: "cascade" }),
+    feedId: text("feed_id").notNull(),
+    contentHash: text("content_hash").notNull(),
+    /** JSON FeedEvent, exactly as the ingest decided on it. */
+    snapshot: text("snapshot").notNull(),
+    capturedAt: integer("captured_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_feed_item_snapshots_hash").on(t.feedItemId, t.contentHash),
+    index("idx_feed_item_snapshots_item").on(t.feedItemId, t.capturedAt),
+  ]
+);
+
+/**
+ * OPE-1635 (drizzle/0440) — the change log for inclusion-rule and matcher
+ * changes. Each merged change records its PR, the backtest summary it shipped
+ * with, the feed-quality metrics at the time, and — filled by the MCP hourly
+ * cron once `after_due_at` passes (7 days on) — the same metrics afterwards.
+ * Readable through `get_feed_lane_metrics.rule_changes`.
+ */
+export const feedRuleChanges = sqliteTable("feed_rule_changes", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  changedAt: integer("changed_at", { mode: "timestamp" }).notNull(),
+  /** `inclusion` | `matcher` | `both`. */
+  kind: text("kind", { enum: ["inclusion", "matcher", "both"] }).notNull(),
+  pr: text("pr"),
+  opeId: text("ope_id"),
+  summary: text("summary").notNull(),
+  /** The backtest summary the change shipped with (text, as in the PR). */
+  backtest: text("backtest"),
+  /** JSON FeedQuality at record time; NULL for a backfilled entry (never captured). */
+  metricsBefore: text("metrics_before"),
+  metricsBeforeNote: text("metrics_before_note"),
+  afterDueAt: integer("after_due_at", { mode: "timestamp" }).notNull(),
+  /** JSON FeedQuality captured by the cron at or after `after_due_at`. */
+  metricsAfter: text("metrics_after"),
+  metricsAfterAt: integer("metrics_after_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
 /** A validated contact's answer, holding a field above the feed. */
 export const eventFieldPins = sqliteTable(
   "event_field_pins",
