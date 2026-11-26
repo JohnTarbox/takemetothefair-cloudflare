@@ -31,11 +31,14 @@ import {
   sources,
 } from "../schema.js";
 import { feedSourceKey } from "@takemetothefair/db-schema/feed-quality";
-import { chunkIds, createSlug } from "@takemetothefair/utils";
+import { chunkIds } from "@takemetothefair/utils";
+import { recordFeedItemSnapshot } from "@takemetothefair/db-schema/feed-backtest";
 import { isPubliclyVisible } from "@takemetothefair/constants";
 import type { Db } from "../db.js";
 import type { FeedEvent } from "./tec.js";
 import {
+  dateNameMatch,
+  DEFAULT_MATCHER_SETTINGS,
   detectSelfContradictions as sharedSelfContradictions,
   to12h,
 } from "@takemetothefair/utils/feeds";
@@ -187,9 +190,6 @@ async function isPublishedEvent(db: Db, eventId: string): Promise<boolean> {
   return !!row && isPubliclyVisible(row.status, row.lifecycle ?? "SCHEDULED");
 }
 
-/** A comparison key, not a stored slug: createSlug (#120) with the hyphens dropped. */
-const nameKey = (s: string) => createSlug(s).replace(/-/g, "");
-
 async function linkItem(
   db: Db,
   feed: { id: string; promoterId: string },
@@ -212,16 +212,19 @@ async function linkItem(
       .select({ id: events.id, name: events.name, startDate: events.startDate })
       .from(events)
       .where(eq(events.promoterId, feed.promoterId));
-    const key = nameKey(ev.title);
-    const hits = candidates.filter(
-      (c) =>
-        c.id !== unlinkedEventId &&
-        c.startDate?.toISOString().slice(0, 10) === ev.startDate &&
-        key.length >= 6 &&
-        (nameKey(c.name).includes(key) || key.includes(nameKey(c.name)))
-    );
+    // OPE-1635 — the shared predicate, so backtest_feed_rules replays exactly this.
     // Only an unambiguous match links; two candidates stay for review.
-    if (hits.length === 1) return { eventId: hits[0].id, basis: "promoter_date_name" };
+    const hit = dateNameMatch(
+      ev,
+      candidates.map((c) => ({
+        id: c.id,
+        name: c.name,
+        startDate: c.startDate?.toISOString().slice(0, 10) ?? null,
+      })),
+      DEFAULT_MATCHER_SETTINGS,
+      unlinkedEventId
+    );
+    if (hit) return { eventId: hit, basis: "promoter_date_name" };
   }
   return { eventId: null, basis: null };
 }
@@ -486,15 +489,27 @@ export async function ingestFeedItems(
         snapshot,
         lastSeenAt: now,
       };
+      const itemId = prior?.id ?? crypto.randomUUID();
       if (prior) {
         await db.update(promoterFeedItems).set(values).where(eq(promoterFeedItems.id, prior.id));
       } else {
         await db.insert(promoterFeedItems).values({
-          id: crypto.randomUUID(),
+          id: itemId,
           feedId,
           externalId: ev.externalId,
           firstSeenAt: now,
           ...values,
+        });
+      }
+      // OPE-1635 — the replay corpus keeps every distinct version, not only the
+      // latest, so a backtest can rebuild what each read said. Unchanged → no write.
+      if (!prior || prior.contentHash !== hash) {
+        await recordFeedItemSnapshot(db, {
+          feedItemId: itemId,
+          feedId,
+          contentHash: hash,
+          snapshot,
+          now,
         });
       }
     }

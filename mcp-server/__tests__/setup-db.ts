@@ -2044,6 +2044,20 @@ const FEED_QUALITY_SQL = (() => {
   return sql.slice(0, end);
 })();
 
+// OPE-1635 — the replay corpus history + rule change log, loaded from the
+// migration itself (heartbeat_probes seed cut: this harness has no such table).
+// Its OPE-1629 change-log row is kept, so every suite sees it as prod does.
+const FEED_REPLAY_SQL = (() => {
+  const sql = readFileSync(
+    join(__dirname, "../../drizzle/0440_ope1635_feed_replay_corpus.sql"),
+    "utf8"
+  );
+  const end = sql.indexOf("INSERT INTO heartbeat_probes");
+  if (end < 0 || !sql.includes("CREATE TABLE IF NOT EXISTS promoter_feed_item_snapshots"))
+    throw new Error("0440 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
   const raw = new Database(":memory:");
   raw.pragma("foreign_keys = ON");
@@ -2064,6 +2078,7 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   raw["exec"](FIELD_HISTORY_SQL);
   raw["exec"](FEED_HEALTH_SQL);
   raw["exec"](FEED_QUALITY_SQL);
+  raw["exec"](FEED_REPLAY_SQL);
   const db = drizzle(raw, { schema });
   shimBatch(db);
   return { db, raw };

@@ -1,0 +1,611 @@
+{
+  "_source": "OPE-1635 — the labelled replay corpus for the CI backtest gate. `labels` label the OPE-1629 fixture (ope1629-tec-feeds-2026-11-11.json) by feed + TEC id; `items` are FeedEvents copied from prod promoter_feed_items.snapshot on 2026-11-26 (Boothbay Railway Village), plus one marked SYNTHETIC. Every label names its source. `known_violations` are labelled items the CURRENT default rules already get wrong — the gate fails only on a change to that set.",
+  "labels": [
+    {
+      "feed": "ohtm",
+      "external_id": "5722",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5704",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5450",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5724",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5452",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "4209",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "1859",
+      "label": "approved",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5893",
+      "label": "approved",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5454",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5726",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5456",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "1861",
+      "label": "approved",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5458",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5728",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5460",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5706",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5462",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5730",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "5465",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "ohtm",
+      "external_id": "4211",
+      "label": "correct_drop",
+      "source": "codified: OPE-1629 test — OHTM includes exactly these 3 of 20 and drops every program and closure"
+    },
+    {
+      "feed": "marsh",
+      "external_id": "10000311",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "marsh",
+      "external_id": "10000312",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "marsh",
+      "external_id": "10000313",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "marsh",
+      "external_id": "10000314",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "marsh",
+      "external_id": "10000315",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "marsh",
+      "external_id": "10000316",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "marsh",
+      "external_id": "10000317",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "saco",
+      "external_id": "14132",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "saco",
+      "external_id": "14134",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "saco",
+      "external_id": "14136",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "saco",
+      "external_id": "14138",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "saco",
+      "external_id": "14140",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "saco",
+      "external_id": "15929",
+      "label": "approved",
+      "source": "ruling: OPE-1629 (John, 2026-11-11) — public markets and town events are listed"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "317",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "306",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "332",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "465",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "427",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "450",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "454",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "431",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "456",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "469",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "315",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "339",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    },
+    {
+      "feed": "gurley",
+      "external_id": "435",
+      "label": "approved",
+      "source": "prod review: approved (review_approve) 2026-11-12"
+    }
+  ],
+  "items": [
+    {
+      "feed": "boothbay",
+      "label": "approved",
+      "source": "prod review: approved (review_approve)",
+      "event": {
+        "externalId": "10000654",
+        "title": "North Pole Express",
+        "url": "https://railwayvillage.org/event/north-pole-express-11/2026-12-05/",
+        "startDate": "2026-12-05",
+        "endDate": "2026-12-05",
+        "startTime": "10:45",
+        "endTime": "16:00",
+        "allDay": false,
+        "timezone": "UTC+0",
+        "venue": {
+          "name": "Boothbay Railway Village",
+          "address": null,
+          "city": null,
+          "state": null,
+          "zip": null
+        },
+        "organizerEmails": [],
+        "imageUrl": "https://railwayvillage.org/wp-content/uploads/2026/01/NPE-Promo.jpg",
+        "description": "NORTH POLE EXPRESS Weekends| SATURDAYS & SUNDAYS\n DEC 5 & 6 | DEC 12 & 13 | DEC 19 & 20    Train every 45 minutes | 10:45 am | 11:30 am | 12:15 pm   | 1 pm | 1:45 pm | 2:30 pm    | 3:15 pm | 4:00 pm\n On Saturdays and Sundays, December 6th through December 15th the Boothbay Railway Village Museum will be running the “North Pole Express!” Departures will run 8 times each day beginning at 10:45am. Tickets must be purchased in advance and will only be available for purchase online.",
+        "categories": [],
+        "cost": null,
+        "statusCancelled": false
+      }
+    },
+    {
+      "feed": "boothbay",
+      "label": "approved",
+      "source": "prod review: approved (review_approve)",
+      "event": {
+        "externalId": "10000655",
+        "title": "North Pole Express",
+        "url": "https://railwayvillage.org/event/north-pole-express-11/2026-12-06/",
+        "startDate": "2026-12-06",
+        "endDate": "2026-12-06",
+        "startTime": "10:45",
+        "endTime": "16:00",
+        "allDay": false,
+        "timezone": "UTC+0",
+        "venue": {
+          "name": "Boothbay Railway Village",
+          "address": null,
+          "city": null,
+          "state": null,
+          "zip": null
+        },
+        "organizerEmails": [],
+        "imageUrl": "https://railwayvillage.org/wp-content/uploads/2026/01/NPE-Promo.jpg",
+        "description": "NORTH POLE EXPRESS Weekends| SATURDAYS & SUNDAYS\n DEC 5 & 6 | DEC 12 & 13 | DEC 19 & 20    Train every 45 minutes | 10:45 am | 11:30 am | 12:15 pm   | 1 pm | 1:45 pm | 2:30 pm    | 3:15 pm | 4:00 pm\n On Saturdays and Sundays, December 6th through December 15th the Boothbay Railway Village Museum will be running the “North Pole Express!” Departures will run 8 times each day beginning at 10:45am. Tickets must be purchased in advance and will only be available for purchase online.",
+        "categories": [],
+        "cost": null,
+        "statusCancelled": false
+      }
+    },
+    {
+      "feed": "boothbay",
+      "label": "approved",
+      "source": "prod review: approved (review_approve)",
+      "event": {
+        "externalId": "10000656",
+        "title": "North Pole Express",
+        "url": "https://railwayvillage.org/event/north-pole-express-11/2026-12-12/",
+        "startDate": "2026-12-12",
+        "endDate": "2026-12-12",
+        "startTime": "10:45",
+        "endTime": "16:00",
+        "allDay": false,
+        "timezone": "UTC+0",
+        "venue": {
+          "name": "Boothbay Railway Village",
+          "address": null,
+          "city": null,
+          "state": null,
+          "zip": null
+        },
+        "organizerEmails": [],
+        "imageUrl": "https://railwayvillage.org/wp-content/uploads/2026/01/NPE-Promo.jpg",
+        "description": "NORTH POLE EXPRESS Weekends| SATURDAYS & SUNDAYS\n DEC 5 & 6 | DEC 12 & 13 | DEC 19 & 20    Train every 45 minutes | 10:45 am | 11:30 am | 12:15 pm   | 1 pm | 1:45 pm | 2:30 pm    | 3:15 pm | 4:00 pm\n On Saturdays and Sundays, December 6th through December 15th the Boothbay Railway Village Museum will be running the “North Pole Express!” Departures will run 8 times each day beginning at 10:45am. Tickets must be purchased in advance and will only be available for purchase online.",
+        "categories": [],
+        "cost": null,
+        "statusCancelled": false
+      }
+    },
+    {
+      "feed": "boothbay",
+      "label": "approved",
+      "source": "prod review: approved (review_approve)",
+      "event": {
+        "externalId": "10000657",
+        "title": "North Pole Express",
+        "url": "https://railwayvillage.org/event/north-pole-express-11/2026-12-13/",
+        "startDate": "2026-12-13",
+        "endDate": "2026-12-13",
+        "startTime": "10:45",
+        "endTime": "16:00",
+        "allDay": false,
+        "timezone": "UTC+0",
+        "venue": {
+          "name": "Boothbay Railway Village",
+          "address": null,
+          "city": null,
+          "state": null,
+          "zip": null
+        },
+        "organizerEmails": [],
+        "imageUrl": "https://railwayvillage.org/wp-content/uploads/2026/01/NPE-Promo.jpg",
+        "description": "NORTH POLE EXPRESS Weekends| SATURDAYS & SUNDAYS\n DEC 5 & 6 | DEC 12 & 13 | DEC 19 & 20    Train every 45 minutes | 10:45 am | 11:30 am | 12:15 pm   | 1 pm | 1:45 pm | 2:30 pm    | 3:15 pm | 4:00 pm\n On Saturdays and Sundays, December 6th through December 15th the Boothbay Railway Village Museum will be running the “North Pole Express!” Departures will run 8 times each day beginning at 10:45am. Tickets must be purchased in advance and will only be available for purchase online.",
+        "categories": [],
+        "cost": null,
+        "statusCancelled": false
+      }
+    },
+    {
+      "feed": "boothbay",
+      "label": "approved",
+      "source": "prod review: approved (review_approve)",
+      "event": {
+        "externalId": "10000658",
+        "title": "North Pole Express",
+        "url": "https://railwayvillage.org/event/north-pole-express-11/2026-12-19/",
+        "startDate": "2026-12-19",
+        "endDate": "2026-12-19",
+        "startTime": "10:45",
+        "endTime": "16:00",
+        "allDay": false,
+        "timezone": "UTC+0",
+        "venue": {
+          "name": "Boothbay Railway Village",
+          "address": null,
+          "city": null,
+          "state": null,
+          "zip": null
+        },
+        "organizerEmails": [],
+        "imageUrl": "https://railwayvillage.org/wp-content/uploads/2026/01/NPE-Promo.jpg",
+        "description": "NORTH POLE EXPRESS Weekends| SATURDAYS & SUNDAYS\n DEC 5 & 6 | DEC 12 & 13 | DEC 19 & 20    Train every 45 minutes | 10:45 am | 11:30 am | 12:15 pm   | 1 pm | 1:45 pm | 2:30 pm    | 3:15 pm | 4:00 pm\n On Saturdays and Sundays, December 6th through December 15th the Boothbay Railway Village Museum will be running the “North Pole Express!” Departures will run 8 times each day beginning at 10:45am. Tickets must be purchased in advance and will only be available for purchase online.",
+        "categories": [],
+        "cost": null,
+        "statusCancelled": false
+      }
+    },
+    {
+      "feed": "boothbay",
+      "label": "approved",
+      "source": "prod review: approved (review_approve)",
+      "event": {
+        "externalId": "10000659",
+        "title": "North Pole Express",
+        "url": "https://railwayvillage.org/event/north-pole-express-11/2026-12-20/",
+        "startDate": "2026-12-20",
+        "endDate": "2026-12-20",
+        "startTime": "10:45",
+        "endTime": "16:00",
+        "allDay": false,
+        "timezone": "UTC+0",
+        "venue": {
+          "name": "Boothbay Railway Village",
+          "address": null,
+          "city": null,
+          "state": null,
+          "zip": null
+        },
+        "organizerEmails": [],
+        "imageUrl": "https://railwayvillage.org/wp-content/uploads/2026/01/NPE-Promo.jpg",
+        "description": "NORTH POLE EXPRESS Weekends| SATURDAYS & SUNDAYS\n DEC 5 & 6 | DEC 12 & 13 | DEC 19 & 20    Train every 45 minutes | 10:45 am | 11:30 am | 12:15 pm   | 1 pm | 1:45 pm | 2:30 pm    | 3:15 pm | 4:00 pm\n On Saturdays and Sundays, December 6th through December 15th the Boothbay Railway Village Museum will be running the “North Pole Express!” Departures will run 8 times each day beginning at 10:45am. Tickets must be purchased in advance and will only be available for purchase online.",
+        "categories": [],
+        "cost": null,
+        "statusCancelled": false
+      }
+    },
+    {
+      "feed": "boothbay",
+      "label": "approved",
+      "source": "prod review: approved (review_approve)",
+      "event": {
+        "externalId": "16860",
+        "title": "North Pole Nightcap",
+        "url": "https://railwayvillage.org/event/north-pole-nightcap-2/",
+        "startDate": "2026-12-12",
+        "endDate": "2026-12-12",
+        "startTime": "17:30",
+        "endTime": "20:00",
+        "allDay": false,
+        "timezone": "America/New_York",
+        "venue": {
+          "name": "Boothbay Railway Village",
+          "address": null,
+          "city": null,
+          "state": null,
+          "zip": null
+        },
+        "organizerEmails": [],
+        "imageUrl": "https://railwayvillage.org/wp-content/uploads/2026/10/RVM26-Event-Promo-15.jpg",
+        "description": "Join us for a North Pole Nightcap!\n Tickets include a North Pole Express train ride and a Christmas cocktail to toast the season, followed by light hors d' oeuvres and holiday cheer in  the Town Hall.\nCash bar available.  Event is 21+\n PURCHASE TICKETS HERE",
+        "categories": [],
+        "cost": null,
+        "statusCancelled": false
+      }
+    },
+    {
+      "feed": "boothbay",
+      "label": "rejected",
+      "source": "prod review: rejected — a private booking, not a public event",
+      "event": {
+        "externalId": "15107",
+        "title": "Private Event: Teele Wedding",
+        "url": "https://railwayvillage.org/event/private-event-teele-wedding/",
+        "startDate": "2026-11-21",
+        "endDate": "2026-11-21",
+        "startTime": "14:00",
+        "endTime": "19:00",
+        "allDay": false,
+        "timezone": "America/New_York",
+        "venue": null,
+        "organizerEmails": [],
+        "imageUrl": null,
+        "description": "",
+        "categories": [],
+        "cost": null,
+        "statusCancelled": false
+      }
+    },
+    {
+      "feed": "boothbay",
+      "label": "rejected",
+      "source": "prod review: rejected — a private booking, not a public event",
+      "event": {
+        "externalId": "16751",
+        "title": "Private Event: Bristol Marine Holiday Party",
+        "url": "https://railwayvillage.org/event/private-event-bristol-marine-holiday-party/",
+        "startDate": "2026-12-17",
+        "endDate": "2026-12-17",
+        "startTime": "17:30",
+        "endTime": "20:00",
+        "allDay": false,
+        "timezone": "America/New_York",
+        "venue": null,
+        "organizerEmails": [],
+        "imageUrl": null,
+        "description": "",
+        "categories": [],
+        "cost": null,
+        "statusCancelled": false
+      }
+    },
+    {
+      "feed": "boothbay",
+      "label": "rejected",
+      "source": "prod review: rejected — a private booking, not a public event",
+      "event": {
+        "externalId": "16753",
+        "title": "Emerson Wedding",
+        "url": "https://railwayvillage.org/event/emerson-wedding/",
+        "startDate": "2027-09-12",
+        "endDate": "2027-09-12",
+        "startTime": "08:00",
+        "endTime": "17:00",
+        "allDay": false,
+        "timezone": "America/New_York",
+        "venue": null,
+        "organizerEmails": [],
+        "imageUrl": null,
+        "description": "",
+        "categories": [],
+        "cost": null,
+        "statusCancelled": false
+      }
+    },
+    {
+      "feed": "boothbay",
+      "label": "rejected",
+      "source": "prod review: rejected — a private booking, not a public event",
+      "event": {
+        "externalId": "16788",
+        "title": "Coro/Burnham Wedding",
+        "url": "https://railwayvillage.org/event/coro-burnham-wedding/",
+        "startDate": "2027-06-26",
+        "endDate": "2027-06-26",
+        "startTime": "16:00",
+        "endTime": "22:00",
+        "allDay": false,
+        "timezone": "America/New_York",
+        "venue": null,
+        "organizerEmails": [],
+        "imageUrl": null,
+        "description": "",
+        "categories": [],
+        "cost": null,
+        "statusCancelled": false
+      }
+    },
+    {
+      "feed": "synthetic",
+      "label": "approved",
+      "source": "SYNTHETIC — no real fair is in any feed yet; it exists so a rule that drops `fair` has a labelled item to flip (OPE-1635 acceptance 2)",
+      "event": {
+        "externalId": "synthetic-fair-1",
+        "title": "Example County Agricultural Fair",
+        "url": "https://fair.example/2027",
+        "startDate": "2027-08-20",
+        "endDate": "2027-08-20",
+        "startTime": "09:00",
+        "endTime": "22:00",
+        "allDay": false,
+        "timezone": "America/New_York",
+        "venue": {
+          "name": "Example Fairgrounds",
+          "address": null,
+          "city": null,
+          "state": null,
+          "zip": null
+        },
+        "organizerEmails": [],
+        "imageUrl": null,
+        "description": "Livestock shows, a midway, 4-H exhibits for kids, and the pulling ring.",
+        "categories": [],
+        "cost": null,
+        "statusCancelled": false
+      }
+    }
+  ],
+  "known_violations": {
+    "_why": "The default rules include any title no rule decides ('default include'), and nothing marks a private booking. John rejected these four in review. Listed so the gate is green on main and red on any NEW wrong verdict; delete a line when a rule change fixes it (the gate fails until you do, so the list cannot go stale).",
+    "ids": ["boothbay:15107", "boothbay:16751", "boothbay:16753", "boothbay:16788"]
+  }
+}

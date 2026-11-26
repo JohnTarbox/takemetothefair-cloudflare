@@ -35,6 +35,7 @@ import {
 } from "./index";
 import { upcomingEndPredicate } from "./event-end-predicates";
 import { loadFeedQuality, type FeedQuality } from "./feed-quality";
+import { listFeedRuleChanges } from "./feed-backtest";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -208,6 +209,8 @@ export interface FeedLaneMetrics {
    *  false-drop rate, matcher accuracy and feed-vs-us accuracy. Set by
    *  loadFeedLaneMetrics; absent from a bare buildFeedLaneMetrics call. */
   quality?: FeedQuality;
+  /** OPE-1635 — newest 10 feed rule/matcher changes (feed_rule_changes). */
+  rule_changes?: Awaited<ReturnType<typeof listFeedRuleChanges>>;
 }
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
@@ -725,5 +728,11 @@ export async function loadFeedLaneMetrics(
     changes,
     coverage,
   });
-  return { ...built, quality: await loadFeedQuality(db, feedIds) };
+  return {
+    ...built,
+    quality: await loadFeedQuality(db, feedIds),
+    // OPE-1635 — the change log: each rule/matcher change with its backtest
+    // and the quality metrics at the change and 7 days on. Engine-wide.
+    rule_changes: await listFeedRuleChanges(db, 10),
+  };
 }
