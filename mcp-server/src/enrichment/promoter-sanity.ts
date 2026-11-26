@@ -10,6 +10,11 @@
  *     also carried a 949 number and another business's social accounts.
  *   - City of Portsmouth auto-merged `hotline@portsmouthnh.gov`.
  *   - Love Burlington staged a jumpstory stock photo as its logo, unflagged.
+ *
+ * OPE-1714 — two more logo shapes (2026-11-26 drain):
+ *   - North Shore Pride staged `…/Eastern-Bank-Logo.jpg` from its OWN site: a
+ *     sponsor's logo, which logo_offsite cannot see → logo_other_org_name.
+ *   - Clark Farms and Greater Old Saybrook Chamber staged favicons → logo_favicon.
  */
 
 export type PromoterSanityFlag =
@@ -17,7 +22,9 @@ export type PromoterSanityFlag =
   | "jsonld_multiple_entities"
   | "email_role_address"
   | "logo_offsite"
-  | "logo_stock_photo";
+  | "logo_stock_photo"
+  | "logo_other_org_name"
+  | "logo_favicon";
 
 /** One-line reason per flag, for the review row. Exported for the review tool. */
 export const PROMOTER_FLAG_REASONS: Record<string, string> = {
@@ -28,6 +35,9 @@ export const PROMOTER_FLAG_REASONS: Record<string, string> = {
     "Email is a role mailbox (hotline@, webmaster@, …), not a contact for the promoter.",
   logo_offsite: "Logo is hosted off the promoter's own site and not on a known site-builder CDN.",
   logo_stock_photo: "Logo URL names a stock-photo service.",
+  logo_other_org_name:
+    "Logo filename names a different organization (or sits under a sponsor/partner path) — likely a sponsor's logo.",
+  logo_favicon: "Logo is a favicon (named favicon, or under 128px on its short side).",
   // Pre-existing flags, so every row a reviewer sees carries a reason.
   social_no_name_affinity: "No social handle shares a name with the promoter or its website.",
   previously_reverted: "A human reverted this exact value before.",
@@ -163,6 +173,139 @@ export function logoStockPhoto(imageUrl: string): boolean {
   return STOCK_PHOTO_MARKERS.some((m) => u.includes(m));
 }
 
+/** Short side below this is an icon, not a logo a page can show (OPE-1714). */
+export const FAVICON_MAX_SHORT_SIDE = 128;
+
+/** Path segments of a URL, lowercased and decoded; [] when it does not parse. */
+function pathSegments(url: string): string[] {
+  try {
+    return new URL(url).pathname
+      .split("/")
+      .filter(Boolean)
+      .map((seg) => {
+        try {
+          return decodeURIComponent(seg).toLowerCase();
+        } catch {
+          return seg.toLowerCase();
+        }
+      });
+  } catch {
+    return [];
+  }
+}
+
+/** The probed image is under FAVICON_MAX_SHORT_SIDE on its short side. Unmeasured → false. */
+export function logoBelowIconSize(width?: number | null, height?: number | null): boolean {
+  if (!width || !height || width <= 0 || height <= 0) return false;
+  return Math.min(width, height) < FAVICON_MAX_SHORT_SIDE;
+}
+
+/**
+ * OPE-1714 — a favicon staged as a logo: the path names `favicon` (or an
+ * apple-touch-icon), or the probed image is under FAVICON_MAX_SHORT_SIDE on its
+ * short side. Dimensions are optional; the probe cannot always measure.
+ */
+export function logoFavicon(
+  imageUrl: string,
+  width?: number | null,
+  height?: number | null
+): boolean {
+  const path = pathSegments(imageUrl).join("/");
+  return /favicon|apple-touch-icon/.test(path) || logoBelowIconSize(width, height);
+}
+
+/** Words that appear in logo filenames without naming anyone. */
+const LOGO_FILENAME_NOISE = new Set([
+  "logo",
+  "logos",
+  "icon",
+  "the",
+  "and",
+  "new",
+  "final",
+  "web",
+  "site",
+  "main",
+  "header",
+  "footer",
+  "small",
+  "large",
+  "medium",
+  "full",
+  "color",
+  "colour",
+  "white",
+  "black",
+  "dark",
+  "light",
+  "transparent",
+  "trans",
+  "scaled",
+  "cropped",
+  "copy",
+  "min",
+  "retina",
+  "png",
+  "jpg",
+  "jpeg",
+  "svg",
+  "webp",
+  "gif",
+]);
+
+/** Name words too common to show affinity on their own. */
+const NAME_STOPWORDS = new Set(["the", "and", "of", "inc", "llc", "for", "at", "in", "co"]);
+
+/** Lowercased alphanumeric tokens (callers apply their own length floor). */
+function wordTokens(s: string): string[] {
+  return s.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+}
+
+/**
+ * OPE-1714 — the logo names a DIFFERENT organization. Two triggers:
+ *   1. the path has a `sponsor`/`partner` segment (…/sponsors/…, partner-logos);
+ *   2. the filename contains `logo` and every naming word left after dropping
+ *      noise (sizes, colours, `scaled`, WordPress suffixes) has no affinity with
+ *      the promoter: not one of its name words, not inside its website's domain
+ *      label, not its initials.
+ * A filename with no naming word (`logo.png`, `logo-white-1024x512.png`) never
+ * flags: there is nothing to compare.
+ */
+export function logoOtherOrgName(
+  imageUrl: string,
+  promoterName: string | null | undefined,
+  website: string | null | undefined
+): boolean {
+  const segs = pathSegments(imageUrl);
+  if (segs.length === 0) return false;
+  if (segs.some((seg) => /sponsor|partner/.test(seg))) return true;
+
+  const file = segs[segs.length - 1].replace(/\.[a-z0-9]+$/, "");
+  if (!file.includes("logo")) return false;
+  const naming = wordTokens(file).filter(
+    (t) =>
+      t.length >= 3 &&
+      !LOGO_FILENAME_NOISE.has(t) &&
+      !/^\d+$/.test(t) &&
+      !/^\d+x\d+$/.test(t) &&
+      // WordPress duplicate / crop suffixes: e1597412345678, v2.
+      !/^e\d{6,}$/.test(t) &&
+      !/^v\d+$/.test(t)
+  );
+  if (naming.length === 0) return false;
+
+  const nameWords = wordTokens(promoterName ?? "").filter((t) => !NAME_STOPWORDS.has(t));
+  const initials = nameWords.map((w) => w[0]).join("");
+  const domainLabel = (hostOf(website) ?? "").split(".")[0] ?? "";
+
+  const affine = (t: string) =>
+    nameWords.includes(t) ||
+    (domainLabel.length > 0 && (domainLabel.includes(t) || t.includes(domainLabel))) ||
+    (initials.length >= 2 && t === initials) ||
+    nameWords.some((w) => w.length >= 4 && (t.includes(w) || w.includes(t)));
+  return !naming.some(affine);
+}
+
 /** Email domain equals (or is under) the promoter's website domain. */
 export function emailOnOwnDomain(email: string, website: string | null | undefined): boolean {
   const domain = email.trim().toLowerCase().split("@")[1];
@@ -181,6 +324,8 @@ export interface SanityProposal {
 
 export interface SanityContext {
   state: string | null | undefined;
+  /** The promoter's company name (OPE-1714 logo_other_org_name). */
+  name?: string | null;
   website: string | null | undefined;
   /** The URL the homepage fetch actually landed on (after redirects). */
   finalUrl?: string | null;
@@ -231,6 +376,12 @@ export function applyPromoterSanityFlags(proposals: SanityProposal[], ctx: Sanit
         addFlag(p, "logo_offsite", true);
       }
       if (logoStockPhoto(p.proposedValue)) addFlag(p, "logo_stock_photo", true);
+      if (logoOtherOrgName(p.proposedValue, ctx.name, ctx.website)) {
+        addFlag(p, "logo_other_org_name", true);
+      }
+      // The size half of logo_favicon is added where the probe measured it
+      // (promoter-dispatch.ts buildProposals); this is the URL half.
+      if (logoFavicon(p.proposedValue)) addFlag(p, "logo_favicon", true);
     }
   }
 }
