@@ -27,6 +27,8 @@ import { runSyncStaleSweep } from "../src/sync-stale-sweep.js";
 import { applyFieldValue } from "../src/feeds/provenance.js";
 import { applyDenormColumn } from "../src/tools/admin-citations.js";
 import { registerAdminTools } from "../src/tools/admin.js";
+import { registerOrganizerFeedTools } from "../src/tools/admin-organizer-feeds.js";
+import { applyCardPlan } from "../src/photo/business-card.js";
 
 const NOW = new Date("2026-11-26T12:00:00Z");
 let db: TestDb;
@@ -215,5 +217,63 @@ describe("group 6 — other content writes: a citation's denormalised column", (
     const r = await applyDenormColumn(db, "e1", "estimated_attendance", "1000");
     expect(r.skipReason).toBe("unchanged");
     expect(history()).toEqual([]);
+  });
+});
+
+describe("found by the inventory re-grep — writers shipped after #1806", () => {
+  it("a business card's guarded vendor fill records null → the card's value", async () => {
+    db.insert(users).values({ id: "u-v", email: "v@test", role: "VENDOR" }).run();
+    db.insert(vendors)
+      .values({ id: "v-2", userId: "u-v", businessName: "Kettle Corn Co", slug: unsafeSlug("kc") })
+      .run();
+    const res = await applyCardPlan(
+      db,
+      "v-2",
+      [
+        {
+          column: "contact_phone",
+          value: "207-555-0100",
+          confidence: 0.95,
+          current: null,
+          action: "write",
+        },
+      ],
+      { sourceRef: "inbound:abc", jobRunId: "job-1" },
+      NOW
+    );
+    expect(res.written).toEqual(["contact_phone"]); // landmark
+    expect(history()).toMatchObject([
+      {
+        entityType: "vendor",
+        entityId: "v-2",
+        field: "contact_phone",
+        oldValue: null,
+        newValue: "207-555-0100",
+        actor: "system:business-card",
+        requestId: "inbound:abc",
+      },
+    ]);
+  });
+
+  it("set_promoter_camps_workshops records the flag it flipped", async () => {
+    db.insert(users).values({ id: "u-p", email: "p@test", role: "PROMOTER" }).run();
+    db.update(promoters).set({ claimed: true, userId: "u-p" }).where(eq(promoters.id, "p1")).run();
+    const server = new CapturingMcpServer();
+    registerOrganizerFeedTools(server as never, db, { userId: "u-admin", role: "ADMIN" as const });
+
+    await server.invoke("set_promoter_camps_workshops", { promoter_id: "p1", enabled: true });
+
+    const after = db.select().from(promoters).where(eq(promoters.id, "p1")).all()[0];
+    expect(after.includeCampsWorkshops).toBe(true); // landmark
+    expect(history()).toMatchObject([
+      {
+        entityType: "promoter",
+        entityId: "p1",
+        field: "include_camps_workshops",
+        newValue: "true",
+        actor: "u-admin",
+        source: "mcp:set_promoter_camps_workshops",
+      },
+    ]);
   });
 });
