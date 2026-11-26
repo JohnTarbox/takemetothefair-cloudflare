@@ -8,10 +8,14 @@
  * logo control gone.
  */
 import { describe, it, expect } from "vitest";
-import { checkBundle, loadPageChunks } from "../../../scripts/check-vendor-logo-control";
+import {
+  checkBundle,
+  loadPageChunks,
+  manifestPathFor,
+} from "../../../scripts/check-vendor-logo-control";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const LOGO_CONTROL =
   '(0,s.jsx)(d.A,{className:"h-4 w-4","aria-hidden":"true"}),m?"Replace logo":"Upload logo",' +
@@ -54,32 +58,58 @@ describe("checkBundle", () => {
   });
 });
 
+/** Write a client reference manifest the way Next 16 does: a script assigning into globalThis. */
+function writeManifest(dir: string, entries: Record<string, unknown>): void {
+  const path = manifestPathFor(dir);
+  mkdirSync(dirname(path), { recursive: true });
+  const body = Object.entries(entries)
+    .map(([k, v]) => `globalThis.__RSC_MANIFEST[${JSON.stringify(k)}] = ${JSON.stringify(v)};`)
+    .join("\n");
+  writeFileSync(path, `globalThis.__RSC_MANIFEST = globalThis.__RSC_MANIFEST || {};\n${body}\n`);
+}
+
 describe("loadPageChunks", () => {
   it("throws when there is no build manifest — a guard with nothing to read is a failure", () => {
     const dir = mkdtempSync(join(tmpdir(), "ope1666-"));
-    expect(() => loadPageChunks(dir)).toThrow(/app-build-manifest\.json not found/);
+    expect(() => loadPageChunks(dir)).toThrow(/page_client-reference-manifest\.js not found/);
   });
 
   it("throws when the manifest has no /vendor/profile entry", () => {
     const dir = mkdtempSync(join(tmpdir(), "ope1666-"));
-    writeFileSync(join(dir, "app-build-manifest.json"), JSON.stringify({ pages: {} }));
+    writeManifest(dir, { "/some/other/page": { entryJSFiles: {}, clientModules: {} } });
     expect(() => loadPageChunks(dir)).toThrow(/is not in/);
   });
 
-  it("reads exactly the chunks the manifest lists for the page", () => {
+  it("reads exactly the chunks the manifest lists for the page (entry files + client modules)", () => {
     const dir = mkdtempSync(join(tmpdir(), "ope1666-"));
     mkdirSync(join(dir, "static/chunks"), { recursive: true });
     writeFileSync(join(dir, "static/chunks/a.js"), LOGO_CONTROL);
     writeFileSync(join(dir, "static/chunks/b.js"), UPLOAD + REMOVE);
     writeFileSync(join(dir, "static/chunks/unlisted.js"), "nothing");
-    writeFileSync(
-      join(dir, "app-build-manifest.json"),
-      JSON.stringify({
-        pages: { "/vendor/profile/page": ["static/chunks/a.js", "static/chunks/b.js", "x.css"] },
-      })
-    );
+    writeManifest(dir, {
+      "/vendor/profile/page": {
+        entryJSFiles: { "[project]/src/app/vendor/profile/page": ["static/chunks/a.js", "x.css"] },
+        // Client-module chunks carry the /_next/ prefix; a.js is listed twice on purpose.
+        clientModules: {
+          m1: { chunks: ["/_next/static/chunks/b.js", "/_next/static/chunks/a.js"] },
+        },
+      },
+    });
     const texts = loadPageChunks(dir);
     expect(texts).toHaveLength(2);
     expect(checkBundle(texts).missing).toEqual([]);
+  });
+
+  it("fails the control check when the page's chunks lack it, even if another chunk has it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ope1666-"));
+    mkdirSync(join(dir, "static/chunks"), { recursive: true });
+    writeFileSync(join(dir, "static/chunks/page.js"), UPLOAD + REMOVE);
+    writeFileSync(join(dir, "static/chunks/unlisted.js"), LOGO_CONTROL);
+    writeManifest(dir, {
+      "/vendor/profile/page": { entryJSFiles: { p: ["static/chunks/page.js"] }, clientModules: {} },
+    });
+    expect(checkBundle(loadPageChunks(dir)).missing.map((m) => m.name)).toEqual([
+      "logo upload control",
+    ]);
   });
 });

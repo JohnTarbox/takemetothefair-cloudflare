@@ -231,7 +231,7 @@ jobs:
 
       # OPE-1666 — refuse to deploy a build whose /vendor/profile bundle has lost
       # the vendor's own logo upload control (OPE-1112). Reads this build's
-      # .next/app-build-manifest.json — the chunks that page actually ships — so
+      # client reference manifest for that page — the chunks that page actually ships — so
       # it needs no login, no network and no browser, and cannot flake. The page
       # is auth-gated, so a post-deploy curl could only ever see /login.
       - name: Guard vendor logo upload control in the built bundle
