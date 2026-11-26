@@ -19,6 +19,7 @@ export const dynamic = "force-dynamic";
  * timestamp suffix defeats CDN caching when the image is replaced.
  */
 
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { NextResponse } from "next/server";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
@@ -149,7 +150,15 @@ export const POST = withAuthorized<{ id: string }>(async ({ request, db, params,
   const url = `${CDN_BASE}/${key}`;
 
   try {
-    await db.update(events).set({ imageUrl: url }).where(eq(events.id, id));
+    // OPE-1653 — record the hero this upload replaced.
+    await updateWithFieldHistory(db, {
+      table: events,
+      entityType: "event",
+      entityId: id,
+      patch: { imageUrl: url },
+      actor: userId ?? systemActor("upload-image"),
+      source: "api:POST /api/admin/events/[id]/upload-image",
+    });
     await recomputeEventCompleteness(db, id);
   } catch (e) {
     await logError(db, {

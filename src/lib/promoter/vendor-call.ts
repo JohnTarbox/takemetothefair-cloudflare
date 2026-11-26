@@ -32,6 +32,11 @@
  * The route-row rules are `buildApplicationPatch`, shared with the admin MCP
  * tool `upsert_event_application`, so the two writers cannot drift.
  */
+import {
+  buildFieldHistoryRows,
+  fieldHistoryBeforeSelect,
+  fieldHistoryInserts,
+} from "@takemetothefair/db-schema/field-history";
 import { and, eq, isNull } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
@@ -228,11 +233,32 @@ export async function applyPromoterVendorCall(
   const appId = app?.id ?? crypto.randomUUID();
   const stmts: unknown[] = [];
   if (Object.keys(eventPatch).length) {
+    // OPE-1653 — read exactly the columns the patch writes (the loaded event is
+    // a projection), and record the fee / deadline / link it replaces in the
+    // same batch as the write.
+    const [historyBefore] = await db
+      .select(fieldHistoryBeforeSelect(events, eventPatch))
+      .from(events)
+      .where(eq(events.id, event.id))
+      .limit(1);
     stmts.push(
       db
         .update(events)
         .set({ ...eventPatch, updatedAt: now })
-        .where(eq(events.id, event.id))
+        .where(eq(events.id, event.id)),
+      ...fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: events,
+          entityType: "event",
+          entityId: event.id,
+          before: historyBefore,
+          patch: eventPatch,
+          actor: userId,
+          source: "lib:promoter/vendor-call",
+          at: now,
+        })
+      )
     );
   }
   if (Object.keys(appPatch).length) {

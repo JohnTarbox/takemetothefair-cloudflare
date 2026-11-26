@@ -25,6 +25,7 @@
  * preview call and COMMIT_PAGE per commit call (the UI and the operator tool
  * loop). Citation inserts are chunked under D1's 100-bound-parameter cap.
  */
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { and, eq, inArray } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
@@ -485,7 +486,17 @@ export async function createEvent(db: Db, ctx: CommitContext, r: ImportRow): Pro
     );
   if (formerVenue.kind === "flag") await raiseEventReviewFlag(db, eventId, "former_venue");
   if (ctx.seriesId) {
-    await db.update(events).set({ seriesId: ctx.seriesId }).where(eq(events.id, eventId));
+    // OPE-1653 — a just-created row, so the series it joins replaces null.
+    await updateWithFieldHistory(db, {
+      table: events,
+      entityType: "event",
+      entityId: eventId,
+      before: { seriesId: null },
+      patch: { seriesId: ctx.seriesId },
+      actor: ctx.uploadedBy ?? systemActor(`promoter-import:${ctx.channel}`),
+      at: ctx.now,
+      source: "lib:promoter-import/run",
+    });
   } else {
     await attachEventToSeries(db, eventId, { name: v.name, venueId, promoterId: ctx.promoterId });
   }

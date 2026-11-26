@@ -16,6 +16,7 @@ export const dynamic = "force-dynamic";
  * defeats CDN caching when the admin replaces a logo.
  */
 
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
@@ -145,7 +146,15 @@ export const POST = withAuth<{ id: string }>(
     // (rather than expecting the client to PATCH separately) keeps the upload
     // atomic from the admin's perspective: one click → R2 + DB consistent.
     try {
-      await db.update(vendors).set({ logoUrl: url }).where(eq(vendors.id, id));
+      // OPE-1653 — record the logo this upload replaced.
+      await updateWithFieldHistory(db, {
+        table: vendors,
+        entityType: "vendor",
+        entityId: id,
+        patch: { logoUrl: url },
+        actor: session.user.id,
+        source: "api:POST /api/admin/vendors/[id]/upload-logo",
+      });
       await recomputeVendorCompleteness(db, id);
     } catch (e) {
       await logError(db, {

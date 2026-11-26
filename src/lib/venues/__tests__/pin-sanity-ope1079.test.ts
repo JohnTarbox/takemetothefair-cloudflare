@@ -4,6 +4,7 @@
  * the outcome), never blocked. Real SQLite, schema-derived DDL, the shipped
  * `geocodeVenueRow` with only the Google call mocked.
  */
+import { shimBatch } from "../../../../mcp-server/__tests__/setup-db";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -56,6 +57,8 @@ beforeEach(() => {
     if (is(t, SQLiteTable)) raw.exec(ddlFor(t as never));
   }
   db = drizzle(raw, { schema });
+  // OPE-1653 — the writers under test now batch their field-history rows.
+  shimBatch(db);
   db.insert(venues)
     .values(
       FREEPORT.map((f) => ({

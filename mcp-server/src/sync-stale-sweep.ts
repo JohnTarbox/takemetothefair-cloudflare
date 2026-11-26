@@ -22,6 +22,11 @@
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { isQualifyingDateCitation, organizerHostsFrom } from "@takemetothefair/utils";
 import {
+  buildFieldHistoryRows,
+  recordFieldHistory,
+  systemActor,
+} from "@takemetothefair/db-schema/field-history";
+import {
   adminActions,
   eventDataCitations,
   events,
@@ -111,6 +116,21 @@ export async function runSyncStaleSweep(db: Db, now: Date = new Date()): Promise
       .returning({ id: events.id });
     if (res.length === 0) continue;
     downgraded.push(c.id);
+    // OPE-1653 — the guard above only matched a TRUE row, so the old value is
+    // known without a read. Recorded after the guarded write landed.
+    await recordFieldHistory(
+      db,
+      buildFieldHistoryRows({
+        table: events,
+        entityType: "event",
+        entityId: c.id,
+        before: { datesConfirmed: true },
+        patch: { datesConfirmed: false },
+        actor: systemActor("sync-stale-sweep"),
+        source: "mcp:schedule:sync-stale-sweep",
+        at: now,
+      })
+    );
     await db.insert(adminActions).values({
       action: SYNC_STALE_DOWNGRADE_ACTION,
       actorUserId: null,

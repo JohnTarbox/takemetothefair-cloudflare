@@ -69,7 +69,11 @@ describe("every venue writer that touches imageUrl applies the gate", () => {
     let writers = 0;
     for (const f of walk(join(ROOT, "src"))) {
       const src = readFileSync(f, "utf8");
-      if (!/\.(insert|update)\(venues\)/.test(src) || !/\bimageUrl\b/.test(src)) continue;
+      // OPE-1653 — a writer can now reach `venues` through the field-history
+      // helpers (`updateWithFieldHistory({ table: venues, … })`) with no literal
+      // `.update(venues)` in the file; count those too, or the helper hides them.
+      const writesVenues = /\.(insert|update)\(venues\)|\btable:\s*venues\b/.test(src);
+      if (!writesVenues || !/\bimageUrl\b/.test(src)) continue;
       writers++;
       const rel = f.slice(ROOT.length + 1);
       if (REVIEWED_NO_GATE_NEEDED[rel]) continue;

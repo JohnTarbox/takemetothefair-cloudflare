@@ -37,8 +37,9 @@ export const dynamic = "force-dynamic";
  *
  * Auth: admin session OR X-Internal-Key, matching the events sweep.
  */
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { NextResponse } from "next/server";
-import { asc, eq } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
@@ -199,7 +200,15 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
       // that changed at 04:00:20Z with the candidate causes indistinguishable
       // from the evidence. Six weeks from now "why did this venue lose its
       // photo?" must be answerable from the row, not reconstructed.
-      await db.update(venues).set({ imageUrl: null }).where(eq(venues.id, v.id));
+      // OPE-1653 — keep the dead URL this heal cleared.
+      await updateWithFieldHistory(db, {
+        table: venues,
+        entityType: "venue",
+        entityId: v.id,
+        patch: { imageUrl: null },
+        actor: userId ?? systemActor("venue-image-heal"),
+        source: "api:POST /api/admin/venues/image-heal (clear)",
+      });
       await recordMutation(db, {
         entityType: "venue",
         entityId: v.id,
@@ -287,7 +296,15 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
 
     const cdnUrl = `${CDN_BASE}/${key}`;
     try {
-      await db.update(venues).set({ imageUrl: cdnUrl }).where(eq(venues.id, v.id));
+      // OPE-1653 — the rehosted URL replaces the hotlinked one.
+      await updateWithFieldHistory(db, {
+        table: venues,
+        entityType: "venue",
+        entityId: v.id,
+        patch: { imageUrl: cdnUrl },
+        actor: userId ?? systemActor("venue-image-heal"),
+        source: "api:POST /api/admin/venues/image-heal (rehost)",
+      });
       // Audited too, though it is the benign direction: it still changes what a
       // public page shows, and an audit trail with only the destructive half
       // recorded cannot answer "when did this venue's image last change?".

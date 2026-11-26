@@ -20,6 +20,7 @@
  *
  * Admin only.
  */
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
@@ -681,7 +682,16 @@ export function registerEnrichmentReviewTools(
       } else {
         update[col] = cand.proposedValue;
       }
-      await db.update(vendors).set(update).where(eq(vendors.id, vendor.id));
+      // OPE-1653 — `vendor` is a partial projection, so the helper reads the
+      // written columns first; a forced overwrite is now recoverable.
+      await updateWithFieldHistory(db, {
+        table: vendors,
+        entityType: "vendor",
+        entityId: vendor.id,
+        patch: update,
+        actor: auth.userId,
+        source: "mcp:review_enrichment_candidate (approve)",
+      });
 
       await logEnrichment(db, {
         targetType: "vendor",

@@ -6,6 +6,7 @@
  * used/expired → 410, and the event row is untouched. Positive: a live token
  * applies the edit once and is marked used (a second POST → 410).
  */
+import { FIELD_HISTORY_SQL, shimBatch } from "../../../../../../mcp-server/__tests__/setup-db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -63,6 +64,9 @@ beforeEach(() => {
   ins.run(USED, nowSec() + 3600, nowSec() - 10, nowSec());
   ins.run(EXPIRED, nowSec() - 60, null, nowSec() - 3600);
   db = drizzle(raw, { schema });
+  // OPE-1653 — the writers under test now batch their field-history rows.
+  raw.exec(FIELD_HISTORY_SQL); // this harness hand-writes its DDL
+  shimBatch(db);
 });
 
 describe("POST /api/submit-event/[token] (OPE-1377)", () => {

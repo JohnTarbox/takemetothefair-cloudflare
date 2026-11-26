@@ -40,6 +40,11 @@
  * and card proposals use their own audit action (`vendor.card_proposed`) so the
  * booth approve tails — which post the photo — never select them.
  */
+import {
+  buildFieldHistoryRows,
+  recordFieldHistory,
+  systemActor,
+} from "@takemetothefair/db-schema/field-history";
 import { and, eq, isNull } from "drizzle-orm";
 import { extractJsonObject } from "../model-json.js";
 import { VISION_MODEL, cleanWebsite, type VisionAi } from "./vision.js";
@@ -521,8 +526,25 @@ export async function applyCardPlan(
       .set({ [prop]: p.value })
       .where(and(eq(vendors.id, vendorId), isNull(vendors[prop])))
       .returning({ id: vendors.id });
-    if (r.length > 0) res.written.push(p.column);
-    else {
+    if (r.length > 0) {
+      res.written.push(p.column);
+      // OPE-1653 — the IS NULL guard matched, so null is what the card replaced.
+      // Not on #1806's inventory: this writer shipped after it (OPE-1705).
+      await recordFieldHistory(
+        db,
+        buildFieldHistoryRows({
+          table: vendors,
+          entityType: "vendor",
+          entityId: vendorId,
+          before: { [prop]: null },
+          patch: { [prop]: p.value },
+          actor: systemActor("business-card"),
+          source: "mcp:photo/business-card.applyCardPlan",
+          requestId: source.sourceRef,
+          at: now,
+        })
+      );
+    } else {
       // Filled by someone else since the read: keep the card's value as a candidate instead.
       p.action = "conflict";
     }

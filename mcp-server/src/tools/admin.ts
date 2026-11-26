@@ -2735,11 +2735,28 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         // which the comment below already calls the least expected way a
         // published venue changes. It owes a redirect exactly like a direct
         // update_venue does, and is the easiest of the three to forget.
-        if (venueSlugRename) {
+        // OPE-1653 — the venue's own field history, in the same batch.
+        const venueHistory = fieldHistoryInserts(
+          db,
+          buildFieldHistoryRows({
+            table: venues,
+            entityType: "venue",
+            entityId: venue.id,
+            before: venue,
+            patch: venueUpdates,
+            actor: auth.userId,
+            source: "mcp:update_event (venue side effect)",
+          })
+        );
+        const venueExtra = [
+          ...(venueSlugRename ? [venueSlugRename.historyInsert] : []),
+          ...venueHistory,
+        ];
+        if (venueExtra.length > 0) {
           await db.batch([
             db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id)),
-            venueSlugRename.historyInsert,
-          ]);
+            ...venueExtra,
+          ] as unknown as Parameters<typeof db.batch>[0]);
         } else {
           await db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id));
         }

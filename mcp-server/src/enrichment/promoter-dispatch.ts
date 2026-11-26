@@ -11,6 +11,11 @@
 // exponential backoff. A fetch miss is NOT a retryable failure — a dead/blocked
 // site is itself a signal; we mark BLOCKED (+ reason) and ack. Only an
 // unexpected DB error retries → DLQ after max_retries.
+import {
+  buildFieldHistoryRows,
+  recordFieldHistory,
+  systemActor,
+} from "@takemetothefair/db-schema/field-history";
 import { and, eq, inArray } from "drizzle-orm";
 import { applyHumanVeto } from "./human-veto.js";
 import {
@@ -909,6 +914,21 @@ async function applyFills(
   // never overwritten; only the fills that land count as applied.
   const applied = await writeGuardedFills(db, promoters, promoters.id, promoterId, fills);
   if (applied.length === 0) return [];
+  // OPE-1653 — each landed fill matched its read value (the guard), so that is
+  // what it replaced.
+  const landed = fills.filter((f) => applied.includes(f.field));
+  await recordFieldHistory(
+    db,
+    buildFieldHistoryRows({
+      table: promoters,
+      entityType: "promoter",
+      entityId: promoterId,
+      before: Object.fromEntries(landed.map((f) => [f.key, f.readValue])),
+      patch: Object.fromEntries(landed.map((f) => [f.key, f.value])),
+      actor: systemActor("promoter-enrichment-auto-merge"),
+      source: "mcp:enrichment/promoter-dispatch.applyFills",
+    })
+  );
   await db
     .update(promoterEnrichmentCandidates)
     .set({ decision: "auto_merged", reviewedAt: new Date(), reviewedBy: "auto-merge" })

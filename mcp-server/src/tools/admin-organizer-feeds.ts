@@ -9,6 +9,7 @@
  * out through `review_operator_draft`, and none is composed while the feed's
  * `questions_hold` is set.
  */
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
@@ -501,10 +502,17 @@ export function registerOrganizerFeedTools(
       const t = now();
       const before = pr.includeCampsWorkshops === true;
       if (before !== p.enabled) {
-        await db
-          .update(promoters)
-          .set({ includeCampsWorkshops: p.enabled })
-          .where(eq(promoters.id, pr.id));
+        // OPE-1653 — not on #1806's inventory: this tool shipped after it (OPE-1682).
+        await updateWithFieldHistory(db, {
+          table: promoters,
+          entityType: "promoter",
+          entityId: pr.id,
+          before: pr,
+          patch: { includeCampsWorkshops: p.enabled },
+          actor: actor,
+          source: "mcp:set_promoter_camps_workshops",
+          at: t,
+        });
       }
       const [after] = await db
         .select({

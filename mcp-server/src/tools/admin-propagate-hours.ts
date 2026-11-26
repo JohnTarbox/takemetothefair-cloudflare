@@ -33,6 +33,11 @@
  * one writer · idempotent · read back (the response re-reads what it wrote) ·
  * rollback = delete rows whose internal_notes start with the stamp.
  */
+import {
+  buildFieldHistoryRows,
+  recordFieldHistory,
+  systemActor,
+} from "@takemetothefair/db-schema/field-history";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, eq, inArray, isNull } from "drizzle-orm";
@@ -249,6 +254,16 @@ export function registerPropagateHoursTool(server: McpServer, db: Db, auth: Auth
             .from(eventDays)
             .where(eq(eventDays.eventId, p.event_id));
           const { publicStartDate, publicEndDate } = computePublicDates(days);
+          // OPE-1653 — the old public span, for the field history below.
+          const [datesBefore] = await db
+            .select({
+              publicStartDate: events.publicStartDate,
+              publicEndDate: events.publicEndDate,
+              mergedInto: events.mergedInto,
+            })
+            .from(events)
+            .where(eq(events.id, p.event_id))
+            .limit(1);
           await db
             .update(events)
             .set({ publicStartDate, publicEndDate, updatedAt: new Date() })
@@ -266,6 +281,20 @@ export function registerPropagateHoursTool(server: McpServer, db: Db, auth: Auth
             },
             note: `mcp propagate_recurring_hours from ${src.id} (OPE-1078)`,
           });
+          if (datesBefore && datesBefore.mergedInto === null) {
+            await recordFieldHistory(
+              db,
+              buildFieldHistoryRows({
+                table: events,
+                entityType: "event",
+                entityId: p.event_id,
+                before: datesBefore,
+                patch: { publicStartDate, publicEndDate },
+                actor: auth.userId ?? systemActor("propagate_recurring_hours"),
+                source: "mcp:propagate_recurring_hours",
+              })
+            );
+          }
           written.push(dayId);
         }
       }

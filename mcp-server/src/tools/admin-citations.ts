@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { z } from "zod";
 import { and, desc, eq, gt, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { adminActions, citationSupersedeScope, events, eventDataCitations } from "../schema.js";
@@ -269,10 +270,17 @@ export async function applyDenormColumn(
     return { column: String(denorm.column), previousValue, newValue, skipReason: "unchanged" };
   }
 
-  await db
-    .update(events)
-    .set({ [denorm.column]: parsed, updatedAt: new Date() })
-    .where(eq(events.id, eventId));
+  // OPE-1653 — a citation that moves the denormalised column records what it
+  // replaced; `before` above is the value at this instant.
+  await updateWithFieldHistory(db, {
+    table: events,
+    entityType: "event",
+    entityId: eventId,
+    before: { [denorm.column]: before[0].v },
+    patch: { [denorm.column]: parsed, updatedAt: new Date() },
+    actor: systemActor("citation-denorm"),
+    source: "mcp:admin-citations.applyDenorm",
+  });
 
   return { column: String(denorm.column), previousValue, newValue, skipReason: null };
 }

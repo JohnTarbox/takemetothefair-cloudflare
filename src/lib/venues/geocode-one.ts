@@ -27,6 +27,7 @@
  *
  * The batch route now calls this too, so there is one gate, not two.
  */
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { and, eq, ne } from "drizzle-orm";
 import { venues, adminActions, entityDataCitations } from "@/lib/db/schema";
 import { buildEntityCitations, toCitationFields } from "@takemetothefair/utils";
@@ -164,7 +165,15 @@ export async function geocodeVenueRow(
     // Fill blanks from the geocode, but never overwrite what is stored.
     if (!v.zip && pin.zip) updates.zip = pin.zip;
     if (!v.address?.trim() && pin.address) updates.address = pin.address;
-    await db.update(venues).set(updates).where(eq(venues.id, v.id));
+    // OPE-1653 — the pin (and any filled zip / address) this geocode replaced.
+    await updateWithFieldHistory(db, {
+      table: venues,
+      entityType: "venue",
+      entityId: v.id,
+      patch: updates,
+      actor: systemActor("venues_geocode"),
+      source: "lib:venues/geocode-one",
+    });
 
     // OPE-433 scope 5 — THE specimen. Venue 5e6f81ed was mutated in production
     // at 04:00:20Z on 2026-08-17 (city normalised, address filled, lat/long

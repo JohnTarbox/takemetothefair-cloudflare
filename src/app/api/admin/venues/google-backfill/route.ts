@@ -1,4 +1,8 @@
 export const dynamic = "force-dynamic";
+import {
+  buildFieldHistoryRows,
+  fieldHistoryInserts,
+} from "@takemetothefair/db-schema/field-history";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { recordMutation } from "@/lib/audit/record-mutation";
@@ -120,8 +124,23 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
             }
           }
           const venueUpdate = db.update(venues).set(updates).where(eq(venues.id, venue.id));
-          if (slugRename) {
-            await db.batch([venueUpdate, slugRename.historyInsert]);
+          // OPE-1653 — a Google backfill can rename a venue; the old name (and
+          // whatever else it replaced) rides in the same batch as the write.
+          const historyInserts = fieldHistoryInserts(
+            db,
+            buildFieldHistoryRows({
+              table: venues,
+              entityType: "venue",
+              entityId: venue.id,
+              before: venue,
+              patch: updates,
+              actor: session.user.id,
+              source: "api:POST /api/admin/venues/google-backfill",
+            })
+          );
+          const extra = [...(slugRename ? [slugRename.historyInsert] : []), ...historyInserts];
+          if (extra.length > 0) {
+            await db.batch([venueUpdate, ...extra] as unknown as Parameters<typeof db.batch>[0]);
           } else {
             await venueUpdate;
           }

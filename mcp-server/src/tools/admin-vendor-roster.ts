@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { z } from "zod";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { adminActions, events, eventVendors, vendors } from "../schema.js";
@@ -177,7 +178,16 @@ export function registerVendorRosterTools(server: McpServer, db: Db, auth: AuthC
         setValues.vendorRosterOffset = null;
       }
 
-      await db.update(events).set(setValues).where(eq(events.id, event.id));
+      // OPE-1653 — the roster status / source URL / offset it replaced.
+      await updateWithFieldHistory(db, {
+        table: events,
+        entityType: "event",
+        entityId: event.id,
+        patch: setValues,
+        actor: auth.userId,
+        source: "mcp:set_vendor_roster_status",
+        ignore: ["vendorRosterCheckedAt"],
+      });
 
       await db.insert(adminActions).values({
         action: "event.vendor_roster_status",

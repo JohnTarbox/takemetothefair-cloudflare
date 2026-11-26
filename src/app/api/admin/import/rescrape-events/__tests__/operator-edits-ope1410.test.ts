@@ -7,6 +7,7 @@
  * uploaded through MCP upload_event_image (enrichment_log manual_admin
  * ["image_url"], no admin_actions row), then a rescrape on 06-16 overwrote both.
  */
+import { shimBatch } from "../../../../../../../mcp-server/__tests__/setup-db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -111,6 +112,8 @@ beforeEach(() => {
     if (is(t, SQLiteTable)) raw.exec(ddlFor(t as never));
   }
   db = drizzle(raw, { schema });
+  // OPE-1653 — the writers under test now batch their field-history rows.
+  shimBatch(db);
   for (const id of ["e1", "e2"]) {
     db.insert(events)
       .values({

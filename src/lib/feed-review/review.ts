@@ -48,6 +48,7 @@ import {
 } from "@/lib/db/schema";
 import type { FeedEvent } from "@takemetothefair/utils/feeds";
 import { eventApprovalBlockReason } from "@takemetothefair/utils";
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { findDuplicate } from "@/lib/duplicates/find-duplicate";
 import { autoLinkVenue } from "@/lib/venue-matching";
 import { parseApiRow } from "@/lib/promoter-api/fields";
@@ -507,10 +508,17 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
     .where(eq(events.id, created.event_id))
     .limit(1);
   const status = gate && !eventApprovalBlockReason(gate) ? "APPROVED" : "TENTATIVE";
-  await db
-    .update(events)
-    .set({ status, updatedAt: input.now })
-    .where(eq(events.id, created.event_id));
+  // OPE-1653 — the gate's PENDING → APPROVED/TENTATIVE move, in the field history
+  // beside the status-change tracker below.
+  await updateWithFieldHistory(db, {
+    table: events,
+    entityType: "event",
+    entityId: created.event_id,
+    patch: { status, updatedAt: input.now },
+    actor: input.actorUserId ?? systemActor("feed-review"),
+    source: "feed-review:approve",
+    at: input.now,
+  });
   await trackEventStatusChange(
     db,
     created.event_id,
