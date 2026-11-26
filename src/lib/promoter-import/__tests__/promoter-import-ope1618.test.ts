@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * OPE-1618 — season spreadsheet import: parsing (CSV + a real XLSX built here),
  * row validation, preview/commit against the MCP suite's full schema (with the
