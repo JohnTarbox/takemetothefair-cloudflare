@@ -9,6 +9,11 @@ import { logError } from "@/lib/logger";
 import { assessAllHeartbeat } from "@/lib/heartbeat";
 import type { ActionQueueEntry } from "@/lib/analytics-overview/types";
 import {
+  loadFeedFaultFamilies,
+  type FeedFaultReport,
+} from "@takemetothefair/db-schema/feed-fault-families";
+import { feedFaultActionEntry } from "@/lib/cpi/feed-faults";
+import {
   DEFAULT_RATE_CAP_PER_RUN,
   isFileable,
   reconcileFilings,
@@ -77,7 +82,31 @@ export const POST = withInternalKey({ source: "cpi:fileable-signals" }, async ({
       });
     }
 
-    const fileable = [...actionQueue.filter((e) => isFileable(e, now)), ...heartbeatFileable];
+    // OPE-1636 — feed fault families: every family's counts ride along in the
+    // response (`feedFaultFamilies`, the CPI drain's feed section), and the top
+    // family becomes ONE fileable P1 once it clears the threshold and has been
+    // seen for 72h (isFileable). Defensive like the heartbeat load: a failure
+    // here reports `feedFaultFamilies: null` and files nothing for feeds.
+    let feedFaultFamilies: FeedFaultReport | null = null;
+    let feedFileable: ActionQueueEntry[] = [];
+    try {
+      feedFaultFamilies = await loadFeedFaultFamilies(db, { now });
+      const entry = feedFaultActionEntry(feedFaultFamilies, now);
+      if (entry && isFileable(entry, now)) feedFileable = [entry];
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:fileable-signals",
+        message: "feed fault families load failed; reporting none",
+        error: err,
+      });
+    }
+
+    const fileable = [
+      ...actionQueue.filter((e) => isFileable(e, now)),
+      ...heartbeatFileable,
+      ...feedFileable,
+    ];
 
     const rows = await db.select().from(cpiSignalFilings);
     const ledger: LedgerRow[] = rows.map((r) => ({
@@ -171,6 +200,7 @@ export const POST = withInternalKey({ source: "cpi:fileable-signals" }, async ({
       toFile: result.toFile,
       existing: result.existing,
       deferred: result.deferred,
+      feedFaultFamilies,
       // The agent closes/comments these — enough to find + annotate the OPE.
       resolved: result.resolved.map((r) => ({
         fingerprint: r.fingerprint,
@@ -195,6 +225,7 @@ export const POST = withInternalKey({ source: "cpi:fileable-signals" }, async ({
       existing: [],
       deferred: [],
       resolved: [],
+      feedFaultFamilies: null,
     });
   }
 });

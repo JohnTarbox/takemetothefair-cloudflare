@@ -8134,6 +8134,7 @@ export * from "./org-domains";
 export * from "./feed-ping";
 // OPE-1632 — feed-lane funnel metrics (MCP tool, /admin tile, digest line).
 export * from "./feed-lane-metrics";
+export * from "./feed-fault-families";
 export * from "./gallery-photos";
 // OPE-759 — the hours-review rule, shared because event_days has five writers.
 export * from "./hours-review-flag";
