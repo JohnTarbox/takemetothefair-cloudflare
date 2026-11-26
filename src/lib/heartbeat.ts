@@ -2078,10 +2078,10 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // candidates) or staged as a card proposal. OPE-246: the new execution path
     // ships with its probe.
     //
-    // DORMANT (drizzle/0434 seeds enabled_at NULL). Cards arrive only when John
+    // Seeded DORMANT (drizzle/0434, enabled_at NULL): cards arrive only when John
     // photographs one, so a window armed before the first real card would page
-    // on a lane nobody has used yet. Set `enabled_at` the day the first live
-    // card writes one of these rows — that is the lane's first evidence.
+    // on a lane nobody has used yet. ARMED by drizzle/0437 (OPE-1709) from the
+    // first live `vendor.card_applied` row, 2026-11-26T03:39:05Z.
     name: "business-card-lane",
     ownerOpe: "OPE-1705",
     label: "Business-card photo → vendor fields / card proposal",

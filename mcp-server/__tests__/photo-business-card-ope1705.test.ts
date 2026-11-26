@@ -25,6 +25,8 @@ import {
   type BoothPipelineEnv,
 } from "../src/photo/booth-pipeline.js";
 import {
+  applyCardPlan,
+  cardFromPayload,
   cardNameProblem,
   normalizePhone,
   parseCardReply,
@@ -115,6 +117,111 @@ describe("parseCardReply — every field passes a shape check, or is absent", ()
     ]);
     expect(parseSocialEntry("instagram.com")).toBeNull(); // no handle
     expect(parseSocialEntry("fernhollow.com")).toBeNull(); // not a social host
+  });
+});
+
+// OPE-1709 rework — the `social` arrays below are the SHAPES (values anonymised) of 2026-11-26
+// replays of the prod CARD_PROMPT on the stored Maple Grain Co card
+// (snap-dc426dc2) — the 20/2o misread is kept. The model read the email and website correctly but filed them
+// under `social`, leaving `email` / `website` absent — 5 of 6 runs.
+describe("parseCardReply — a misfiled email / website is salvaged from social (OPE-1709)", () => {
+  const reply = (social: string[], extra: Record<string, unknown> = {}) => ({
+    business_name: f("Maple Grain Co"),
+    contact_name: f("Pat Example"),
+    social: { value: social, confidence: 1 },
+    ...extra,
+  });
+
+  it("salvages the one email and the one plain domain (prod run 0)", () => {
+    const r = parseCardReply(
+      reply([
+        "maplegrain20@example.com",
+        "maplegrain.example",
+        "maplegrain20@",
+        "maplegrain.example",
+        "@MapleGrainCo",
+      ])
+    );
+    expect(r.email).toEqual({ value: "maplegrain20@example.com", confidence: 1, salvaged: true });
+    expect(r.website).toEqual({ value: "maplegrain.example", confidence: 1, salvaged: true });
+    expect(r.social).toBeUndefined(); // the bare @handle is still dropped
+  });
+
+  it("salvages nothing when two DIFFERENT emails were read (prod run 3: 20 vs 2o)", () => {
+    const r = parseCardReply(
+      reply(["maplegrain2o@example.com", "maplegrain.example", "maplegrain20@example.com"])
+    );
+    expect(r.email).toBeUndefined();
+    expect(r.website?.value).toBe("maplegrain.example");
+  });
+
+  it("never overrides a value the model put in its own field", () => {
+    const r = parseCardReply(
+      reply(["other@elsewhere.com", "elsewhere.com"], {
+        email: f("maplegrain20@example.com"),
+        website: f("maplegrain.example"),
+      })
+    );
+    expect(r.email).toEqual({ value: "maplegrain20@example.com", confidence: 1 });
+    expect(r.website).toEqual({ value: "maplegrain.example", confidence: 1 });
+  });
+
+  it("does not salvage a social-host URL as the website", () => {
+    const r = parseCardReply(reply(["instagram.com/maplegrain"]));
+    expect(r.website).toBeUndefined();
+    expect(r.social?.value).toEqual({ instagram: "https://instagram.com/maplegrain" });
+  });
+
+  it("a salvaged website STAGES even at 1.0 with auto-write on; a read one writes", () => {
+    const salvaged = parseCardReply(reply(["maplegrain.example"]));
+    const plans = planCardFields(salvaged, EMPTY, { autoWrite: true });
+    const site = plans.find((p) => p.column === "website");
+    expect(site?.action).toBe("stage");
+    expect(site?.salvaged).toBe(true);
+    const read = parseCardReply(reply([], { website: f("maplegrain.example") }));
+    const readSite = planCardFields(read, EMPTY, { autoWrite: true }).find(
+      (p) => p.column === "website"
+    );
+    expect(readSite?.action).toBe("write");
+    expect(readSite?.salvaged).toBeUndefined();
+  });
+
+  it("`salvaged` survives the stored-proposal round trip (cardFromPayload)", () => {
+    const stored = JSON.parse(JSON.stringify(parseCardReply(reply(["maplegrain.example"]))));
+    const back = cardFromPayload(stored);
+    expect(back.website).toEqual({ value: "maplegrain.example", confidence: 1, salvaged: true });
+    const site = planCardFields(back, EMPTY, { autoWrite: true }).find(
+      (p) => p.column === "website"
+    );
+    expect(site?.action).toBe("stage");
+  });
+
+  it("a staged salvaged field carries the card_field_salvaged flag", async () => {
+    const { db } = createTestDb();
+    db.insert(users).values({ id: "u-mg", email: "mg@test", role: "VENDOR" }).run();
+    db.insert(vendors)
+      .values({
+        id: "v-mg",
+        userId: "u-mg",
+        businessName: "Maple Grain Co",
+        slug: "maple-grain-co",
+      })
+      .run();
+    const card = parseCardReply(reply(["maplegrain20@example.com"]));
+    const res = await applyCardPlan(
+      db as unknown as Db,
+      "v-mg",
+      planCardFields(card, EMPTY, { autoWrite: true }),
+      { sourceRef: "test", jobRunId: "test" }
+    );
+    expect(res.staged).toContain("contact_email");
+    const rows = db
+      .select()
+      .from(vendorEnrichmentCandidates)
+      .where(eq(vendorEnrichmentCandidates.proposedField, "contact_email"))
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0].flags)).toEqual(["business_card", "card_field_salvaged"]);
   });
 });
 
