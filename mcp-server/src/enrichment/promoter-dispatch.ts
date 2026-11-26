@@ -39,7 +39,7 @@ import { probePromoterImage } from "./promoter-image.js";
 import { contactPageSignals, findContactLink } from "./contact-page.js";
 import { writeGuardedFills, type GuardedFill } from "./guarded-fill.js";
 import { jsonLdIdentitySummary } from "./extract.js";
-import { applyPromoterSanityFlags } from "./promoter-sanity.js";
+import { applyPromoterSanityFlags, logoBelowIconSize } from "./promoter-sanity.js";
 
 /** One promoter pre-extraction job. */
 export interface PromoterEnrichmentMessage {
@@ -402,7 +402,9 @@ async function buildProposals(
           proposedValue: probed.url,
           method: "og-image",
           confidence: 0.5,
-          flags: [],
+          // OPE-1714 — the size half of logo_favicon: only here is the probed
+          // size known. The URL half runs in applyPromoterSanityFlags.
+          flags: logoBelowIconSize(probed.width, probed.height) ? ["logo_favicon"] : [],
           // Logo is never auto-applied (a square og:image is often a hero crop
           // or a generic share card — a human confirms).
           autoApply: false,
@@ -667,6 +669,7 @@ export async function processPromoterEnrichmentJob(
   );
   applyPromoterSanityFlags(proposals, {
     state: row.state,
+    name: row.companyName,
     website: row.website,
     finalUrl: fetched.finalUrl ?? null,
     jsonLdMultipleEntities,
