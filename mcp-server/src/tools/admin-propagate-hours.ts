@@ -254,9 +254,7 @@ export function registerPropagateHoursTool(server: McpServer, db: Db, auth: Auth
             .from(eventDays)
             .where(eq(eventDays.eventId, p.event_id));
           const { publicStartDate, publicEndDate } = computePublicDates(days);
-          // OPE-1653 — the derived public dates move when a day is added; read
-          // them first so the history shows the old span. A merged tombstone is
-          // skipped by the guard, so it gets no history row either.
+          // OPE-1653 — the old public span, for the field history below.
           const [datesBefore] = await db
             .select({
               publicStartDate: events.publicStartDate,
@@ -270,6 +268,19 @@ export function registerPropagateHoursTool(server: McpServer, db: Db, auth: Auth
             .update(events)
             .set({ publicStartDate, publicEndDate, updatedAt: new Date() })
             .where(and(eq(events.id, p.event_id), isNull(events.mergedInto)));
+          await recordMutation(db, {
+            entityType: "event_day",
+            entityId: dayId,
+            verb: "create",
+            actor: auth.userId ?? "mcp:propagate_recurring_hours",
+            after: {
+              date: p.date,
+              openTime: src.openTime,
+              closeTime: src.closeTime,
+              inheritedFrom: src.id,
+            },
+            note: `mcp propagate_recurring_hours from ${src.id} (OPE-1078)`,
+          });
           if (datesBefore && datesBefore.mergedInto === null) {
             await recordFieldHistory(
               db,
@@ -284,19 +295,6 @@ export function registerPropagateHoursTool(server: McpServer, db: Db, auth: Auth
               })
             );
           }
-          await recordMutation(db, {
-            entityType: "event_day",
-            entityId: dayId,
-            verb: "create",
-            actor: auth.userId ?? "mcp:propagate_recurring_hours",
-            after: {
-              date: p.date,
-              openTime: src.openTime,
-              closeTime: src.closeTime,
-              inheritedFrom: src.id,
-            },
-            note: `mcp propagate_recurring_hours from ${src.id} (OPE-1078)`,
-          });
           written.push(dayId);
         }
       }
