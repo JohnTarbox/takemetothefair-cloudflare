@@ -6,7 +6,7 @@
  *
  *   list_feed_items  — read-only: the review queue, with the closest existing event.
  *   review_feed_item — one action on one item: approve / approve_as_occurrence /
- *                      link / reject. Audit-logged. Sends nothing.
+ *                      link / reject / unlink. Audit-logged. Sends nothing.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -55,10 +55,12 @@ export function registerFeedReviewTools(server: McpServer, auth: AuthContext, en
       "Two reviewer answers to those refusals, both audit-logged: venue_id — the venue you PICKED (from venue_candidates); the listing takes that venue's name and location, so it also completes an item whose feed gives a venue name with no town. not_duplicate_of — the event_id dedup matched, which you checked is a DIFFERENT event (same venue or town within a week, a different show); it overrides that one match only, and a match on any other event still refuses. " +
       "'approve_as_occurrence' — the same, attached to series_id instead of resolving a series by name (for an organizer that alternates a show's name). " +
       "'link' — event_id: the item IS this existing listing; links it, changes no event field. " +
-      "'reject' — note is REQUIRED (the reason, e.g. 'private event'); remembered by the item's external id: later reads keep it rejected, never re-queue, link or ask about it. A rejected item cannot be approved (reverse it deliberately, not by accident).",
+      "'reject' — note is REQUIRED (the reason, e.g. 'private event'); remembered by the item's external id: later reads keep it rejected, never re-queue, link or ask about it. A rejected item cannot be approved (reverse it deliberately, not by accident). " +
+      "'unlink' (OPE-1634) — the item is linked to the WRONG event; note is REQUIRED (why). Clears the link, remembers that event so later reads never re-match the item to it, and returns the item to awaiting_review (or dropped, if the filter drops it). " +
+      "Every action also records a label (OPE-1634: approve → approved, reject → rejected, link → missed_match, unlink → wrong_match) — the ground truth behind get_feed_lane_metrics.quality.",
     {
       feed_item_id: z.string().min(1),
-      action: z.enum(["approve", "approve_as_occurrence", "link", "reject"]),
+      action: z.enum(["approve", "approve_as_occurrence", "link", "reject", "unlink"]),
       event_id: z.string().min(1).optional().describe("link: the existing event."),
       series_id: z.string().min(1).optional().describe("approve_as_occurrence: the series."),
       venue_id: z
@@ -78,7 +80,9 @@ export function registerFeedReviewTools(server: McpServer, auth: AuthContext, en
         .max(1000)
         .transform(decodeHtmlEntities)
         .optional()
-        .describe("Reviewer's note; REQUIRED for reject (the reason)."),
+        .describe(
+          "Reviewer's note; REQUIRED for reject (the reason) and unlink (why the match is wrong)."
+        ),
     },
     async (p) => {
       if (!env?.INTERNAL_API_KEY && !env?.MAIN_APP)

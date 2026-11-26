@@ -564,3 +564,109 @@ describe("OPE-1659 — approve_as_occurrence and the series' own other dates", (
     ).toMatchObject({ ok: false, code: "duplicate", suggest: { event_id: a.event!.id } });
   });
 });
+
+// ── OPE-1634 — every review action records a quality label ─────────────────
+describe("OPE-1634 labels", () => {
+  const labels = () =>
+    raw
+      .prepare(
+        "SELECT feed_item_id, label, rule_key, included, link_basis, event_id, source FROM feed_item_labels ORDER BY created_at, rowid"
+      )
+      .all();
+  beforeEach(() => {
+    raw
+      .prepare("UPDATE promoter_feed_items SET inclusion_reason = 'title matches /antique/'")
+      .run();
+  });
+
+  it("approve → approved, against the rule that let the item through", async () => {
+    const r = await review({ feedItemId: "i-bath1", action: "approve" });
+    if (!r.ok) throw new Error(JSON.stringify(r));
+    expect(labels()).toEqual([
+      {
+        feed_item_id: "i-bath1",
+        label: "approved",
+        rule_key: "include_title:antique",
+        included: 1,
+        link_basis: "review_approve",
+        event_id: r.event!.id,
+        source: "review",
+      },
+    ]);
+    expect(
+      one<{ b: string }>("SELECT link_basis b FROM promoter_feed_items WHERE id='i-bath1'").b
+    ).toBe("review_approve");
+  });
+
+  it("reject → rejected; link → missed_match", async () => {
+    await review({ feedItemId: "i-wedding", action: "reject", note: "private event" });
+    await review({ feedItemId: "i-bath1", action: "link", eventId: "e-tsg" });
+    expect(labels()).toEqual([
+      expect.objectContaining({
+        feed_item_id: "i-wedding",
+        label: "rejected",
+        rule_key: "include_title:antique",
+        link_basis: null,
+      }),
+      expect.objectContaining({
+        feed_item_id: "i-bath1",
+        label: "missed_match",
+        event_id: "e-tsg",
+        link_basis: "review_link",
+      }),
+    ]);
+  });
+
+  it("unlink → wrong_match with the basis the link had; the item returns to review and remembers the event", async () => {
+    raw
+      .prepare(
+        "UPDATE promoter_feed_items SET review_state='linked', event_id='e-tsg', link_basis='source_url' WHERE id='i-bath1'"
+      )
+      .run();
+    const r = await review({ feedItemId: "i-bath1", action: "unlink", note: "a different show" });
+    expect(r).toMatchObject({ ok: true, action: "unlink", review_state: "awaiting_review" });
+    expect(
+      one(
+        "SELECT review_state, event_id, link_basis, unlinked_event_id FROM promoter_feed_items WHERE id='i-bath1'"
+      )
+    ).toEqual({
+      review_state: "awaiting_review",
+      event_id: null,
+      link_basis: null,
+      unlinked_event_id: "e-tsg",
+    });
+    expect(labels()).toEqual([
+      expect.objectContaining({
+        label: "wrong_match",
+        event_id: "e-tsg",
+        link_basis: "source_url",
+      }),
+    ]);
+    expect(n("SELECT COUNT(*) n FROM admin_actions WHERE action='feed_item.unlink'")).toBe(1);
+  });
+
+  it("unlink needs a linked item and a note; a refusal records no label", async () => {
+    expect(await review({ feedItemId: "i-bath1", action: "unlink", note: "x" })).toMatchObject({
+      ok: false,
+      code: "bad_request",
+    });
+    raw
+      .prepare(
+        "UPDATE promoter_feed_items SET review_state='linked', event_id='e-tsg' WHERE id='i-bath1'"
+      )
+      .run();
+    expect(await review({ feedItemId: "i-bath1", action: "unlink" })).toMatchObject({
+      ok: false,
+      code: "bad_request",
+    });
+    expect(labels()).toEqual([]);
+  });
+
+  it("a refused approve (venue_unmatched) records no label", async () => {
+    expect(await review({ feedItemId: "i-novenue", action: "approve" })).toMatchObject({
+      ok: false,
+      code: "venue_unmatched",
+    });
+    expect(labels()).toEqual([]);
+  });
+});

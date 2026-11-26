@@ -65,6 +65,8 @@ import {
   promoterOnboardingRequests,
   promoterEventFeeds,
   promoterApiEventRefs,
+  feedDropSamples,
+  feedItemLabels,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
@@ -2148,6 +2150,66 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
             sql`${inboundEmails.receivedAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'photo-classify-step'), 4102444800)`
           )
         );
+      return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
+    },
+  },
+  // ── OPE-1634 — feed quality labels and the weekly drop sample ───────
+  {
+    // Every review_feed_item action writes a feed_item_labels row beside its
+    // admin_actions row (src/lib/feed-review/review.ts). Served-ness: a
+    // feed_item.* action newer than enabled_at with no review label at or after
+    // it is a miss. A quiet review week is healthy (no demand).
+    name: "feed-review-labels",
+    ownerOpe: "OPE-1634",
+    label: "Feed review actions record quality labels",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const demand = await maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        and(
+          sql`${adminActions.action} LIKE 'feed_item.%'`,
+          sql`${adminActions.createdAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'feed-review-labels'), 4102444800)`
+        )
+      );
+      const evidence = await maxTs(
+        db,
+        feedItemLabels,
+        feedItemLabels.createdAt,
+        eq(feedItemLabels.source, "review")
+      );
+      return demandConditionalEvidence(demand, evidence, new Date());
+    },
+  },
+  {
+    // The MCP hourly cron writes one feed_drop_samples row per week, EVEN WHEN
+    // EMPTY (packages/db-schema/src/feed-quality.ts ensureWeeklyDropSample), so
+    // this is genuinely periodic: 8 days of silence = a missed week.
+    name: "feed-drop-sample-built",
+    ownerOpe: "OPE-1634",
+    label: "Weekly feed drop sample built",
+    priority: "P1",
+    expectedWindowHours: 8 * 24,
+    lastEvidenceAt: (db) => maxTs(db, feedDropSamples, feedDropSamples.createdAt),
+  },
+  {
+    // The Worker cannot file Linear issues (no token — OPE-76's rail), so an
+    // agent files each non-empty sample via list_feed_drop_samples and stamps
+    // it with record_feed_drop_sample_filing. A sample unfiled past the window
+    // means no agent is doing that: the silence clock starts at the OLDEST
+    // unfiled non-empty sample; none outstanding reads healthy.
+    name: "feed-drop-sample-filed",
+    ownerOpe: "OPE-1634",
+    label: "Weekly feed drop sample filed as a ticket for the analyst",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${feedDropSamples.createdAt})` })
+        .from(feedDropSamples)
+        .where(and(isNull(feedDropSamples.opeId), sql`${feedDropSamples.itemCount} > 0`));
       return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
     },
   },

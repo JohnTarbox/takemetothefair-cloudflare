@@ -6966,11 +6966,107 @@ export const promoterFeedItems = sqliteTable(
     lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
     /** OPE-1617 — a read no longer carries this item (cancellation signal); cleared when it returns. */
     missingSince: integer("missing_since", { mode: "timestamp" }),
+    /** OPE-1634 — the inclusion verdict's reason, kept for included items too
+     *  (`exclusion_reason` is NULL when included). Written on every read. */
+    inclusionReason: text("inclusion_reason"),
+    /** OPE-1634 — how the item came to be linked: `source_url` /
+     *  `promoter_date_name` (automatic, by the ingest), `review_link` or
+     *  `review_approve` (a reviewer). NULL when unlinked. */
+    linkBasis: text("link_basis"),
+    /** OPE-1634 — the event a reviewer UNLINKED this item from (a wrong match).
+     *  The ingest never auto-links the item to that event again. */
+    unlinkedEventId: text("unlinked_event_id"),
   },
   (t) => [
     uniqueIndex("uq_promoter_feed_items_ext").on(t.feedId, t.externalId),
     index("idx_promoter_feed_items_event").on(t.eventId),
   ]
+);
+
+/**
+ * OPE-1634 (drizzle/0438) — reviewer decisions as ground-truth labels on feed
+ * items. One row per decision, with the rule or match that produced the item's
+ * state at that moment, so per-rule precision and matcher accuracy are counts
+ * over this table. Written by `recordFeedItemLabel` (./feed-quality.ts) from the
+ * review step (main app) and `label_dropped_feed_item` (MCP).
+ */
+export const FEED_ITEM_LABELS = [
+  /** review approve / approve_as_occurrence on the item. */
+  "approved",
+  /** review reject. */
+  "rejected",
+  /** review link: the item was one of our listings the matcher missed. */
+  "missed_match",
+  /** review unlink: the item was linked to the wrong event. */
+  "wrong_match",
+  /** analyst: a dropped item that was rightly dropped. */
+  "correct_drop",
+  /** analyst: a dropped item that should have been kept — a false drop. */
+  "false_drop",
+] as const;
+export type FeedItemLabel = (typeof FEED_ITEM_LABELS)[number];
+
+export const feedItemLabels = sqliteTable(
+  "feed_item_labels",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    feedItemId: text("feed_item_id")
+      .notNull()
+      .references(() => promoterFeedItems.id, { onDelete: "cascade" }),
+    feedId: text("feed_id").notNull(),
+    label: text("label", { enum: FEED_ITEM_LABELS }).notNull(),
+    /** Stable rule key (inclusionRuleKey) of the verdict in force, e.g. `program_title:\bstem\b`. */
+    ruleKey: text("rule_key"),
+    /** The verdict's full reason text at labelling time. */
+    reason: text("reason"),
+    /** Whether the item was included by the filter at labelling time. */
+    included: integer("included", { mode: "boolean" }),
+    /** For match labels: the link basis in force (automatic vs reviewer). */
+    linkBasis: text("link_basis"),
+    eventId: text("event_id"),
+    /** Who decided: `review` (the review step) or `analyst` (drop sample). */
+    source: text("source", { enum: ["review", "analyst"] }).notNull(),
+    actor: text("actor"),
+    note: text("note"),
+    /** analyst labels: the drop sample the item came from. */
+    sampleId: text("sample_id"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_feed_item_labels_item").on(t.feedItemId, t.createdAt),
+    index("idx_feed_item_labels_created").on(t.createdAt),
+  ]
+);
+
+/**
+ * OPE-1634 (drizzle/0438) — the weekly dropped-item sample (John 2026-11-11:
+ * it goes to the analyst). Built each Monday by the MCP hourly cron, one row
+ * per week (`week_start` = that Monday, YYYY-MM-DD UTC), EVEN WHEN EMPTY, so
+ * "the builder ran" is visible. The Worker has no Linear token (OPE-76's rail
+ * shape), so an agent session files the ticket via `list_feed_drop_samples`
+ * and stamps it with `record_feed_drop_sample_filing`.
+ */
+export const feedDropSamples = sqliteTable(
+  "feed_drop_samples",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    weekStart: text("week_start").notNull(),
+    windowStart: integer("window_start", { mode: "timestamp" }).notNull(),
+    windowEnd: integer("window_end", { mode: "timestamp" }).notNull(),
+    /** JSON DropSampleItem[] — everything the ticket body lists. */
+    items: text("items").notNull(),
+    itemCount: integer("item_count").notNull(),
+    /** Dropped items in the window, before sampling (the denominator). */
+    droppedTotal: integer("dropped_total").notNull(),
+    opeId: text("ope_id"),
+    filedAt: integer("filed_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [uniqueIndex("uq_feed_drop_samples_week").on(t.weekStart)]
 );
 
 /** A validated contact's answer, holding a field above the feed. */
@@ -7095,6 +7191,8 @@ export const sources = sqliteTable("sources", {
       "social",
       "aggregator",
       "community",
+      // OPE-1634 — an organizer's own event feed (key `organizer_feed:<feed id>`).
+      "organizer_feed",
       "unknown",
     ],
   }).notNull(),

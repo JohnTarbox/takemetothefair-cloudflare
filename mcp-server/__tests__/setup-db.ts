@@ -2030,6 +2030,20 @@ const FEED_HEALTH_SQL = (() => {
   return sql.slice(0, end);
 })();
 
+// OPE-1634 — feed quality labels, the weekly drop sample, link basis and the
+// organizer_feed reliability source, loaded from the migration itself (DDL and
+// its backfills; the heartbeat_probes seed is cut — this harness has no table).
+const FEED_QUALITY_SQL = (() => {
+  const sql = readFileSync(
+    join(__dirname, "../../drizzle/0438_ope1634_feed_quality_labels.sql"),
+    "utf8"
+  );
+  const end = sql.indexOf("INSERT INTO heartbeat_probes");
+  if (end < 0 || !sql.includes("CREATE TABLE IF NOT EXISTS feed_item_labels"))
+    throw new Error("0438 shape changed — the loader is reading the wrong file");
+  return sql.slice(0, end);
+})();
+
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
   const raw = new Database(":memory:");
   raw.pragma("foreign_keys = ON");
@@ -2049,6 +2063,7 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   raw["exec"](FEED_REVIEW_SQL);
   raw["exec"](FIELD_HISTORY_SQL);
   raw["exec"](FEED_HEALTH_SQL);
+  raw["exec"](FEED_QUALITY_SQL);
   const db = drizzle(raw, { schema });
   shimBatch(db);
   return { db, raw };

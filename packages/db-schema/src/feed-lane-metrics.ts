@@ -34,6 +34,7 @@ import {
   promoters,
 } from "./index";
 import { upcomingEndPredicate } from "./event-end-predicates";
+import { loadFeedQuality, type FeedQuality } from "./feed-quality";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -203,6 +204,10 @@ export interface FeedLaneMetrics {
       healthy: boolean;
     } & FeedLaneSection
   >;
+  /** OPE-1634 — quality checks on our own rules: per-rule precision, the
+   *  false-drop rate, matcher accuracy and feed-vs-us accuracy. Set by
+   *  loadFeedLaneMetrics; absent from a bare buildFeedLaneMetrics call. */
+  quality?: FeedQuality;
 }
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
@@ -710,7 +715,7 @@ export async function loadFeedLaneMetrics(
         )
     : [];
 
-  return buildFeedLaneMetrics({
+  const built = buildFeedLaneMetrics({
     now,
     windowDays,
     flags: flagRows,
@@ -720,4 +725,5 @@ export async function loadFeedLaneMetrics(
     changes,
     coverage,
   });
+  return { ...built, quality: await loadFeedQuality(db, feedIds) };
 }

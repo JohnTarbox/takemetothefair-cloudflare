@@ -28,7 +28,9 @@ import {
   promoterEventFeeds,
   promoterFeedItems,
   promoters,
+  sources,
 } from "../schema.js";
+import { feedSourceKey } from "@takemetothefair/db-schema/feed-quality";
 import { chunkIds, createSlug } from "@takemetothefair/utils";
 import { isPubliclyVisible } from "@takemetothefair/constants";
 import type { Db } from "../db.js";
@@ -192,7 +194,9 @@ async function linkItem(
   db: Db,
   feed: { id: string; promoterId: string },
   ev: FeedEvent,
-  priorEventId: string | null
+  priorEventId: string | null,
+  /** OPE-1634 — the event a reviewer unlinked this item from: never re-matched. */
+  unlinkedEventId: string | null = null
 ): Promise<{ eventId: string | null; basis: IngestItemReport["link_basis"] }> {
   if (priorEventId) return { eventId: priorEventId, basis: "prior" };
   if (ev.url) {
@@ -201,7 +205,7 @@ async function linkItem(
       .from(events)
       .where(and(eq(events.sourceUrl, ev.url), eq(events.promoterId, feed.promoterId)))
       .limit(1);
-    if (byUrl) return { eventId: byUrl.id, basis: "source_url" };
+    if (byUrl && byUrl.id !== unlinkedEventId) return { eventId: byUrl.id, basis: "source_url" };
   }
   if (ev.startDate) {
     const candidates = await db
@@ -211,6 +215,7 @@ async function linkItem(
     const key = nameKey(ev.title);
     const hits = candidates.filter(
       (c) =>
+        c.id !== unlinkedEventId &&
         c.startDate?.toISOString().slice(0, 10) === ev.startDate &&
         key.length >= 6 &&
         (nameKey(c.name).includes(key) || key.includes(nameKey(c.name)))
@@ -228,6 +233,8 @@ async function upsertDiscrepancy(
     finding: Finding;
     ourValue: string | null;
     feedItem: FeedEvent;
+    /** OPE-1634 — the feed's source_reliability key (`organizer_feed:<id>`). */
+    sourceKey: string;
     now: Date;
     dryRun: boolean;
   }
@@ -290,7 +297,9 @@ async function upsertDiscrepancy(
       authoritativeSourceKey: null,
       authoritativeSourceUrl: null,
       divergentValue: finding.feedValue,
-      divergentSourceKey: null,
+      // OPE-1634 — the feed is the divergent source, so a resolution scores it
+      // (updateReliability). Our listing has no key: "us" is not a source.
+      divergentSourceKey: args.sourceKey,
       divergentSourceUrl: args.feedItem.url,
       detectedBy: FEED_DETECTOR,
       detectedAt: now,
@@ -356,6 +365,25 @@ export async function ingestFeedItems(
     .where(eq(promoters.id, feed.promoterId))
     .limit(1);
   const campsWorkshopsOptIn = campsWorkshopsOptInActive(owner);
+  if (!dryRun) {
+    // OPE-1634 — register the feed as a reliability source (type organizer_feed)
+    // so its discrepancies score against organizer_feed priors, not `unknown`.
+    const [p] = await db
+      .select({ name: promoters.companyName })
+      .from(promoters)
+      .where(eq(promoters.id, feed.promoterId))
+      .limit(1);
+    await db
+      .insert(sources)
+      .values({
+        sourceKey: feedSourceKey(feedId),
+        displayName: `${p?.name ?? feed.promoterId} calendar feed`,
+        sourceType: "organizer_feed",
+        notes: feed.feedUrl,
+        createdAt: now,
+      })
+      .onConflictDoNothing();
+  }
 
   const report: IngestReport = {
     feed_id: feedId,
@@ -387,6 +415,8 @@ export async function ingestFeedItems(
         eventId: promoterFeedItems.eventId,
         contentHash: promoterFeedItems.contentHash,
         reviewState: promoterFeedItems.reviewState,
+        linkBasis: promoterFeedItems.linkBasis,
+        unlinkedEventId: promoterFeedItems.unlinkedEventId,
       })
       .from(promoterFeedItems)
       .where(
@@ -403,7 +433,7 @@ export async function ingestFeedItems(
     // page silently stops being checked because a rule was tuned.
     const link = rejected
       ? { eventId: null, basis: null }
-      : await linkItem(db, feed, ev, prior?.eventId ?? null);
+      : await linkItem(db, feed, ev, prior?.eventId ?? null, prior?.unlinkedEventId ?? null);
     const reviewState: IngestItemReport["review_state"] = rejected
       ? "rejected"
       : link.eventId
@@ -443,6 +473,15 @@ export async function ingestFeedItems(
           : null,
         included: verdict.included,
         exclusionReason: verdict.included ? null : verdict.reason,
+        // OPE-1634 — kept for included items too: per-rule precision needs it.
+        inclusionReason: verdict.reason,
+        // OPE-1634 — a "prior" link keeps the basis it was made with (automatic
+        // or a reviewer's); a new automatic match records how it matched.
+        linkBasis: !link.eventId
+          ? null
+          : link.basis === "prior"
+            ? (prior?.linkBasis ?? null)
+            : link.basis,
         reviewState,
         snapshot,
         lastSeenAt: now,
@@ -547,6 +586,7 @@ export async function ingestFeedItems(
             finding,
             ourValue,
             feedItem: ev,
+            sourceKey: feedSourceKey(feedId),
             now,
             dryRun,
           });
@@ -674,6 +714,7 @@ async function detectDropped(
               cost: null,
               statusCancelled: false,
             },
+            sourceKey: feedSourceKey(feedId),
             now,
             dryRun,
           });

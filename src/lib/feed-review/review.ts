@@ -17,6 +17,16 @@
  *                           missed. Link it; no event field changes.
  *   reject                — `rejected`, with a reason, remembered by external_id:
  *                           the ingest never re-queues or links it again.
+ *   unlink                — OPE-1634: the item was linked to the WRONG event.
+ *                           Clears the link, remembers that event so the ingest
+ *                           never re-matches the item to it, and puts the item
+ *                           back in review (or `dropped`, if the filter drops it).
+ *
+ * OPE-1634 — every action also records a LABEL (`feed_item_labels`, via the
+ * shared `recordFeedItemLabel`) with the inclusion rule in force and, for a
+ * match, the link basis: approve → approved, reject → rejected, link →
+ * missed_match, unlink → wrong_match. These are the ground truth behind the
+ * per-rule precision and matcher accuracy in `get_feed_lane_metrics`.
  *
  * Every action writes an `admin_actions` row (`feed_item.<action>`). Nothing here
  * sends email: the approval notification the admin approve route sends is
@@ -49,6 +59,8 @@ import {
 import type { FeedEvent } from "@takemetothefair/utils/feeds";
 import { eventApprovalBlockReason } from "@takemetothefair/utils";
 import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
+import { itemReason, recordFeedItemLabel } from "@takemetothefair/db-schema/feed-quality";
+import type { FeedItemLabel } from "@takemetothefair/db-schema";
 import { findDuplicate } from "@/lib/duplicates/find-duplicate";
 import { autoLinkVenue } from "@/lib/venue-matching";
 import { parseApiRow } from "@/lib/promoter-api/fields";
@@ -60,7 +72,13 @@ import { toIsoDateOnlyInVenueZone } from "@takemetothefair/datetime";
 
 type Db = ReturnType<typeof getCloudflareDb>;
 
-export const REVIEW_ACTIONS = ["approve", "approve_as_occurrence", "link", "reject"] as const;
+export const REVIEW_ACTIONS = [
+  "approve",
+  "approve_as_occurrence",
+  "link",
+  "reject",
+  "unlink",
+] as const;
 export type ReviewAction = (typeof REVIEW_ACTIONS)[number];
 
 export const REVIEW_STATES = ["none", "awaiting_review", "linked", "dropped", "rejected"] as const;
@@ -195,11 +213,39 @@ async function audit(
   });
 }
 
+/** OPE-1634 — the label for one review decision, with the rule and match in force. */
+async function label(
+  db: Db,
+  item: typeof promoterFeedItems.$inferSelect,
+  input: ReviewInput,
+  kind: FeedItemLabel,
+  extra: { eventId?: string | null; linkBasis?: string | null } = {}
+): Promise<void> {
+  await recordFeedItemLabel(db, {
+    feedItemId: item.id,
+    feedId: item.feedId,
+    label: kind,
+    reason: itemReason(item),
+    included: item.included,
+    linkBasis: extra.linkBasis ?? null,
+    eventId: extra.eventId ?? null,
+    source: "review",
+    actor: input.actorUserId,
+    note: input.note ?? null,
+    at: input.now,
+  });
+}
+
 async function markItem(
   db: Db,
   itemId: string,
   input: ReviewInput,
-  set: { reviewState: ReviewState; eventId: string | null }
+  set: {
+    reviewState: ReviewState;
+    eventId: string | null;
+    linkBasis?: string | null;
+    unlinkedEventId?: string | null;
+  }
 ): Promise<void> {
   await db
     .update(promoterFeedItems)
@@ -242,6 +288,37 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
   if (!loaded) return fail("not_found", "No feed item with that id.");
   const { item } = loaded;
 
+  // ---------------------------------------------------------------- unlink
+  if (input.action === "unlink") {
+    if (!item.eventId || item.reviewState !== "linked")
+      return fail("bad_request", "unlink needs a linked item; this one is not linked.");
+    if (!input.note?.trim())
+      return fail(
+        "bad_request",
+        'unlink needs a note: why the match is wrong (e.g. "different year").'
+      );
+    // Back to review if the filter keeps it; otherwise it is simply a drop.
+    const reviewState: ReviewState = item.included ? "awaiting_review" : "dropped";
+    await markItem(db, item.id, input, {
+      reviewState,
+      eventId: null,
+      linkBasis: null,
+      unlinkedEventId: item.eventId,
+    });
+    await label(db, item, input, "wrong_match", {
+      eventId: item.eventId,
+      linkBasis: item.linkBasis,
+    });
+    await audit(db, input, item.id, {
+      feed_id: item.feedId,
+      external_id: item.externalId,
+      unlinked_event_id: item.eventId,
+      link_basis: item.linkBasis,
+      previous_state: item.reviewState,
+    });
+    return { ok: true, action: "unlink", feed_item_id: item.id, review_state: reviewState };
+  }
+
   if (item.reviewState === "linked" && item.eventId) {
     const e = await eventSummary(db, item.eventId);
     return fail(
@@ -260,6 +337,7 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
     if (item.reviewState === "rejected")
       return fail("already_reviewed", "This item is already rejected. Nothing changed.");
     await markItem(db, item.id, input, { reviewState: "rejected", eventId: null });
+    await label(db, item, input, "rejected");
     await audit(db, input, item.id, {
       feed_id: item.feedId,
       external_id: item.externalId,
@@ -284,7 +362,13 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
         "event_not_found",
         `That event was merged into ${e.mergedInto}; link the keeper instead.`
       );
-    await markItem(db, item.id, input, { reviewState: "linked", eventId: e.id });
+    await markItem(db, item.id, input, {
+      reviewState: "linked",
+      eventId: e.id,
+      linkBasis: "review_link",
+    });
+    // The matcher missed it: the item was already one of our listings.
+    await label(db, item, input, "missed_match", { eventId: e.id, linkBasis: "review_link" });
     await audit(db, input, item.id, {
       feed_id: item.feedId,
       external_id: item.externalId,
@@ -458,7 +542,13 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
       : fail("invalid_item", "The item failed validation.", { errors: p.errors });
   if (p.status === "already_imported" && p.event) {
     // A previous approve created the event but did not finish linking: finish it.
-    await markItem(db, item.id, input, { reviewState: "linked", eventId: p.event.id });
+    // No label: the approve that created the event is the decision, and a retry
+    // must not count it twice.
+    await markItem(db, item.id, input, {
+      reviewState: "linked",
+      eventId: p.event.id,
+      linkBasis: "review_approve",
+    });
     return {
       ok: true,
       action: input.action,
@@ -527,7 +617,15 @@ export async function reviewFeedItem(db: Db, input: ReviewInput): Promise<Review
     input.actorUserId ?? undefined
   );
 
-  await markItem(db, item.id, input, { reviewState: "linked", eventId: created.event_id });
+  await markItem(db, item.id, input, {
+    reviewState: "linked",
+    eventId: created.event_id,
+    linkBasis: "review_approve",
+  });
+  await label(db, item, input, "approved", {
+    eventId: created.event_id,
+    linkBasis: "review_approve",
+  });
   await audit(db, input, item.id, {
     feed_id: item.feedId,
     external_id: item.externalId,
