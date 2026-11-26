@@ -35,7 +35,12 @@ import {
 import { getEventFieldProvenance } from "../feeds/provenance.js";
 import { recordContactAnswer } from "../feeds/contact-answer.js";
 import { composeFeedDiscrepancyBatch, feedDiscrepancyMetrics } from "../feeds/batch.js";
-import { loadFeedLaneMetrics } from "@takemetothefair/db-schema";
+import {
+  feedRetroSection,
+  loadFeedFaultFamilies,
+  loadFeedLaneMetrics,
+  loadFeedPreventionTicket,
+} from "@takemetothefair/db-schema";
 
 /** OPE-1682 — a promoter row's camps/workshops opt-in, as the feed reader would apply it. */
 const optInView = (x: {
@@ -263,25 +268,30 @@ export function registerOrganizerFeedTools(
 
   server.tool(
     "get_feed_lane_metrics",
-    "OPE-1632 — the organizer-feed funnel, per feed and in total, over window_days (default 30): items read → included / dropped (by rule) → matched to an existing event (incl. matched_outside_filter: excluded items still linked and watched) / new (no match, awaiting review) → reviewed / approved / rejected (from the OPE-1630 review step: reviewed_at plus the latest feed_item.* audit action, since approve and link both leave an item linked) → published (linked event passes the public gate). Also: review backlog (count, oldest and median age, count past target_days, default 3), lead time (median days from first sighting to the event, share under 14 days), coverage (share of upcoming public events whose promoter has a healthy feed, share linked from a feed, mix by ingestion_method, 'new to us' events first seen on a feed with no listing), and change capture (feed-detected changes and cancellations, how many before the event). Every number carries its formula; an undefined one is null with a reason, never 0. Optional promoter_id. Read-only — changes nothing. OPE-1634 — `quality`: reviewer decisions as labels (approve → approved, reject → rejected, link → missed_match, unlink → wrong_match; analyst drop-sample verdicts correct_drop / false_drop): precision_by_rule (approved / (approved + rejected), included items only), false_drops by rule, matcher accuracy (automatic links later unlinked / automatic links; reviewer links as missed matches / items seen), and feed_vs_us (resolved organizer_feed discrepancies: feed right / our listing right / neither). Labels count from OPE-1634 on, not backfilled; an unmeasured rate is null with a reason, never 0. OPE-1635 — `rule_changes`: the newest 10 inclusion-rule / matcher changes from the change log (record_feed_rule_change), each with its PR, backtest summary, and the quality metrics at the change and 7 days on (metrics_after null until then).",
+    "OPE-1632 — the organizer-feed funnel, per feed and in total, over window_days (default 30): items read → included / dropped (by rule) → matched to an existing event (incl. matched_outside_filter: excluded items still linked and watched) / new (no match, awaiting review) → reviewed / approved / rejected (from the OPE-1630 review step: reviewed_at plus the latest feed_item.* audit action, since approve and link both leave an item linked) → published (linked event passes the public gate). Also: review backlog (count, oldest and median age, count past target_days, default 3), lead time (median days from first sighting to the event, share under 14 days), coverage (share of upcoming public events whose promoter has a healthy feed, share linked from a feed, mix by ingestion_method, 'new to us' events first seen on a feed with no listing), and change capture (feed-detected changes and cancellations, how many before the event). Every number carries its formula; an undefined one is null with a reason, never 0. Optional promoter_id. Read-only — changes nothing. OPE-1634 — `quality`: reviewer decisions as labels (approve → approved, reject → rejected, link → missed_match, unlink → wrong_match; analyst drop-sample verdicts correct_drop / false_drop): precision_by_rule (approved / (approved + rejected), included items only), false_drops by rule, matcher accuracy (automatic links later unlinked / automatic links; reviewer links as missed matches / items seen), and feed_vs_us (resolved organizer_feed discrepancies: feed right / our listing right / neither). Labels count from OPE-1634 on, not backfilled; an unmeasured rate is null with a reason, never 0. OPE-1635 — `rule_changes`: the newest 10 inclusion-rule / matcher changes from the change log (record_feed_rule_change), each with its PR, backtest summary, and the quality metrics at the change and 7 days on (metrics_after null until then). OPE-1636 — `fault_families`: the seven feed fault families the CPI drain counts (feed-fetch-failed, feed-format-drift, feed-false-drop, feed-missed-match, feed-wrong-match, feed-duplicate-created, feed-wrong-venue), each with its detector, owner lane, count over the last 30 days and per UTC week over 8 weeks; engine-wide, not narrowed by promoter_id. `top` names the family with the most occurrences, `fileable` once it reaches the auto-file threshold (3). retro: true adds `retro_section`, the CPI monthly retro's markdown \"Feeds\" section (funnel, quality, open flags, rule changes and their effect, fault families, top family and its prevention ticket from the CPI ledger).",
     {
       window_days: z.number().int().min(1).max(365).default(30),
       target_days: z.number().int().min(1).max(60).default(3),
       promoter_id: z.string().min(1).optional(),
+      retro: z.boolean().default(false),
     },
-    async (p) => ({
-      content: [
-        jsonContent(
-          await loadFeedLaneMetrics(db, {
-            now: now(),
-            publicWhere: publicEventWhere(),
-            windowDays: p.window_days,
-            targetDays: p.target_days,
-            promoterId: p.promoter_id,
-          })
-        ),
-      ],
-    })
+    async (p) => {
+      const at = now();
+      const metrics = await loadFeedLaneMetrics(db, {
+        now: at,
+        publicWhere: publicEventWhere(),
+        windowDays: p.window_days,
+        targetDays: p.target_days,
+        promoterId: p.promoter_id,
+      });
+      const faults = await loadFeedFaultFamilies(db, { now: at });
+      const out: Record<string, unknown> = { ...metrics, fault_families: faults };
+      if (p.retro) {
+        const prevention = faults.top ? await loadFeedPreventionTicket(db, faults.top.id) : null;
+        out.retro_section = feedRetroSection(metrics, faults, prevention);
+      }
+      return { content: [jsonContent(out)] };
+    }
   );
 
   server.tool(

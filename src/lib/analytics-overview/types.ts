@@ -401,8 +401,10 @@ export type ActionQueueSla = "red" | "amber" | "green" | "none";
 export type ActionQueueEntry = {
   priority: "P0" | "P1";
   /** OPE-246 — "heartbeat" entries are synthesized from silent first-evidence
-   *  probes and injected into the auto-file rail (fingerprint cpi:heartbeat:<probe>). */
-  source: "kpi" | "recommendation" | "heartbeat";
+   *  probes and injected into the auto-file rail (fingerprint cpi:heartbeat:<probe>).
+   *  OPE-1636 — "feed" entries are the top feed fault family once it clears the
+   *  auto-file threshold (fingerprint cpi:feed:<family>; refKey = the family id). */
+  source: "kpi" | "recommendation" | "heartbeat" | "feed";
   title: string;
   effort: string;
   href: string;

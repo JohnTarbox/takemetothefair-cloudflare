@@ -36,6 +36,7 @@
 
 import type { ActionQueueEntry } from "@/lib/analytics-overview/types";
 import { STALE_THRESHOLD_HOURS } from "@/lib/cpi/stale-reds";
+import { FEED_FAULT_FAMILIES } from "@takemetothefair/db-schema/feed-fault-families";
 
 const MS_PER_HOUR = 3_600_000;
 
@@ -157,8 +158,17 @@ export function isFileable(entry: ActionQueueEntry, now: Date = new Date()): boo
   return hrs !== null && hrs > STALE_THRESHOLD_HOURS.P1;
 }
 
-/** Which agent owns the fix — kpi/data/infra → developer; recommendation → analyst. */
-export function routeAgentCode(entry: Pick<ActionQueueEntry, "source">): AgentCode {
+/**
+ * Which agent owns the fix — kpi/data/infra → developer; recommendation → analyst;
+ * a feed fault family (OPE-1636) → the owner lane its registry entry names.
+ */
+export function routeAgentCode(
+  entry: Pick<ActionQueueEntry, "source"> & Partial<Pick<ActionQueueEntry, "refKey">>
+): AgentCode {
+  if (entry.source === "feed") {
+    const fam = FEED_FAULT_FAMILIES.find((f) => f.id === entry.refKey);
+    return fam?.owner ?? "developer-claude-code";
+  }
   return entry.source === "recommendation" ? "analyst-claude-desktop" : "developer-claude-code";
 }
 

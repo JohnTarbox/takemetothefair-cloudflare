@@ -11,7 +11,8 @@
     "./email-suppression": "./src/email-suppression.ts",
     "./field-history": "./src/field-history.ts",
     "./feed-quality": "./src/feed-quality.ts",
-    "./feed-backtest": "./src/feed-backtest.ts"
+    "./feed-backtest": "./src/feed-backtest.ts",
+    "./feed-fault-families": "./src/feed-fault-families.ts"
   },
   "scripts": {
     "test": "vitest --run --passWithNoTests"
