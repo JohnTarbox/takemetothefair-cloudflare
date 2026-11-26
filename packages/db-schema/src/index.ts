@@ -7127,6 +7127,54 @@ export const feedRuleChanges = sqliteTable("feed_rule_changes", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
 
+/**
+ * OPE-1636 (drizzle/0441) — recurring feed discovery. One run row per month;
+ * the MCP hourly cron probes a slice of eligible promoters each fire and closes
+ * the run when none is left. An agent files the analyst task (no Linear token in
+ * the Worker) and stamps `opeId` via record_feed_discovery_filing.
+ */
+export const feedDiscoveryRuns = sqliteTable("feed_discovery_runs", {
+  /** YYYY-MM (UTC). */
+  month: text("month").primaryKey(),
+  startedAt: integer("started_at", { mode: "timestamp" }).notNull(),
+  completedAt: integer("completed_at", { mode: "timestamp" }),
+  eligible: integer("eligible").notNull().default(0),
+  probed: integer("probed").notNull().default(0),
+  found: integer("found").notNull().default(0),
+  opeId: text("ope_id"),
+  filedAt: integer("filed_at", { mode: "timestamp" }),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
+export const FEED_DISCOVERY_OUTCOMES = ["found", "none", "blocked", "error", "no_domain"] as const;
+export type FeedDiscoveryOutcome = (typeof FEED_DISCOVERY_OUTCOMES)[number];
+
+/** OPE-1636 (drizzle/0441) — one probe of one promoter's own sites, per month. */
+export const feedDiscoveryProbes = sqliteTable(
+  "feed_discovery_probes",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    month: text("month").notNull(),
+    probedAt: integer("probed_at", { mode: "timestamp" }).notNull(),
+    outcome: text("outcome", { enum: FEED_DISCOVERY_OUTCOMES }).notNull(),
+    /** JSON string[] — the domains probed (from the promoter's domain list). */
+    domains: text("domains").notNull().default("[]"),
+    /** JSON FeedDiscoveryCandidate[]. */
+    candidates: text("candidates").notNull().default("[]"),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    detail: text("detail"),
+  },
+  (t) => [
+    uniqueIndex("uq_feed_discovery_probes_month").on(t.promoterId, t.month),
+    index("idx_feed_discovery_probes_month").on(t.month, t.outcome),
+  ]
+);
+
 /** A validated contact's answer, holding a field above the feed. */
 export const eventFieldPins = sqliteTable(
   "event_field_pins",

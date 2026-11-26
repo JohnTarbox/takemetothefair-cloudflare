@@ -117,6 +117,12 @@ export const PROMOTER_CHILD_TABLES_HANDLED = [
 /** Promoter-referencing columns deliberately NOT repointed here, with the reason. */
 export const PROMOTER_CHILD_TABLES_ALLOWLISTED: Record<string, string> = {
   "events.promoter_id": "reassigned by both merge callers before repointPromoterChildren runs",
+  // OPE-1636 — monthly feed discovery probe history. Repointing would collide on
+  // the (promoter_id, month) unique index; the rows are a cache of what one
+  // month's probe saw, cascade-deleted with the merged-away promoter, and the
+  // keeper (if it still has no feed) is probed again next month.
+  "feed_discovery_probes.promoter_id":
+    "probe history only: cascade-deleted with the loser; the keeper is re-probed next month",
 };
 
 function isEmpty(v: unknown): boolean {
