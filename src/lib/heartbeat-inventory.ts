@@ -157,7 +157,10 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   "cron:runScheduledPhotoCoverageScan": {
     probes: ["image-coverage-scan", "photo-coverage-snapshot"],
   },
-  "cron:runScheduledPromoterEnrichment": { probes: ["promoter-enrichment"] },
+  // OPE-1712 — + the cron's auto-apply path (dry-run off since 2026-11-26).
+  "cron:runScheduledPromoterEnrichment": {
+    probes: ["promoter-enrichment", "promoter-cron-auto-merge"],
+  },
   // OPE-1164 — weekly (Monday-gated) vendor-category new-value watch.
   // OPE-1205 — daily sync-staleness sweep; one admin_actions row per run.
   "cron:runScheduledPendingContactAttach": { probes: ["pending-contact-attach"] },

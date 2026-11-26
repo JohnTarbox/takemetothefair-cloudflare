@@ -23,6 +23,22 @@ export interface PromoterSelectorEnv {
   PROMOTER_ENRICHMENT?: Queue<PromoterEnrichmentMessage>;
   /** Operator switch — "false" flips off the dry-run default (enables auto-apply). */
   ENRICHMENT_DRY_RUN?: string;
+  /** OPE-1712 — the promoter cron's own switch; overrides ENRICHMENT_DRY_RUN when set. */
+  PROMOTER_ENRICHMENT_DRY_RUN?: string;
+}
+
+/**
+ * OPE-1712 — is the nightly promoter cron dry-run? PROMOTER_ENRICHMENT_DRY_RUN
+ * when set, else the shared ENRICHMENT_DRY_RUN. Only the exact string "false"
+ * turns dry-run off, matching every other enrichment selector.
+ *
+ * The split exists because ENRICHMENT_DRY_RUN also holds the vendor and
+ * performer crons. The cron then runs processPromoterEnrichmentJob with
+ * dryRun=false — the SAME function and gates a live enrich_promoter call uses —
+ * so no gate is duplicated here.
+ */
+export function promoterCronDryRun(env: PromoterSelectorEnv): boolean {
+  return (env.PROMOTER_ENRICHMENT_DRY_RUN ?? env.ENRICHMENT_DRY_RUN) !== "false";
 }
 
 export interface PromoterSelectionResult {
@@ -43,7 +59,7 @@ export async function runScheduledPromoterEnrichment(
   nowMs: number
 ): Promise<PromoterSelectionResult> {
   const db = getDb(env.DB);
-  const dryRun = env.ENRICHMENT_DRY_RUN !== "false";
+  const dryRun = promoterCronDryRun(env);
   const staleCutoff = Math.floor((nowMs - REATTEMPT_DAYS * 86_400_000) / 1000);
 
   const rows = await db

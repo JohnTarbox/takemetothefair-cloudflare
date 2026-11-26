@@ -273,6 +273,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "claim-corroboration-sweep": 48,
       "promoter-enrichment": 7 * 24,
       "promoter-contact-page-hop": 14 * 24, // OPE-1689
+      "promoter-cron-auto-merge": 10 * 24, // OPE-1712
       // OPE-1503 — measured post-tuning: longest gap between new rows 102h.
       "discrepancy-detection": 240,
       // OPE-1083 — armed on a measurement: longest gap between passes 166h.

@@ -90,6 +90,15 @@ CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
 # `promoter-outreach-attempts` heartbeat probe in the same deploy (drizzle/0306).
 PROMOTER_OUTREACH_ENABLED = "true"
 ENRICHMENT_DRY_RUN = "true"
+# OPE-1712 — the nightly PROMOTER enrichment cron's own switch, split from
+# ENRICHMENT_DRY_RUN (which still holds the vendor + performer crons in
+# dry-run). "false" = the cron auto-applies exactly what a live
+# enrich_promoter(dry_run=false) call applies, through the same
+# processPromoterEnrichmentJob gates (OPE-1706 sanity flags, OPE-1707 jsonld
+# social gate, human veto; logos and scraped social-link always stage). Before
+# this the cron had auto-merged 0 candidates ever. Unset falls back to
+# ENRICHMENT_DRY_RUN. Set "true" here (not the dashboard) to stop it.
+PROMOTER_ENRICHMENT_DRY_RUN = "false"
 # OPE-163 — customer-facing reply send gate. reply_to_inbound_email (and the
 # /admin/inbound-emails compose UI) refuse to send unless this is "true".
 #

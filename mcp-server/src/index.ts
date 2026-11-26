@@ -212,6 +212,9 @@ type Env = WorkerEnv &
     // I1 — "false" enables Phase-2 auto-merge; anything else (incl. unset) keeps
     // the Phase-1 dry-run-only behavior.
     ENRICHMENT_DRY_RUN?: string;
+    // OPE-1712 — the promoter cron's own dry-run switch ("false" = auto-apply);
+    // unset falls back to ENRICHMENT_DRY_RUN. See promoter-select.ts.
+    PROMOTER_ENRICHMENT_DRY_RUN?: string;
     // Cloudflare Email Service outbound binding (public beta). The EMAIL_JOBS
     // consumer uses this to send transactional/auto-reply mail. Bound via
     // `[[send_email]]` in wrangler.toml — no API key needed.
@@ -2054,7 +2057,8 @@ export default {
     if (controller.cron === "0 8 * * *") {
       // OPE-36 — nightly promoter-enrichment sweep (staggered 1h after vendors).
       // Selects ≤50 NEEDS_ENRICHMENT promoters, enqueues one job each; the queue
-      // consumer does the fetch + extract + stage. Candidate-only by default.
+      // consumer does the fetch + extract + stage. OPE-1712: auto-applies under
+      // PROMOTER_ENRICHMENT_DRY_RUN="false" (the live enrich_promoter gates).
       const jobRunId = `promoter-cron-${new Date(controller.scheduledTime)
         .toISOString()
         .slice(0, 10)}-${crypto.randomUUID().slice(0, 8)}`;

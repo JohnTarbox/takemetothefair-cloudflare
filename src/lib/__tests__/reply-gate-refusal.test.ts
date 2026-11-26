@@ -119,7 +119,10 @@ describe("dark capability reporting (OPE-368 item 4)", () => {
   it("says nothing when every capability is lit", () => {
     const env: Record<string, string> = {};
     for (const f of CAPABILITY_FLAGS)
-      env[f.name] = f.name === "ENRICHMENT_DRY_RUN" ? "false" : "true";
+      env[f.name] =
+        f.name === "ENRICHMENT_DRY_RUN" || f.name === "PROMOTER_ENRICHMENT_DRY_RUN"
+          ? "false"
+          : "true";
     expect(darkCapabilityLines(resolveCapabilityFlags(env))).toHaveLength(0);
   });
 
