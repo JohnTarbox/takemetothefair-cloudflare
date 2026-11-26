@@ -218,6 +218,7 @@ import { registerOrganizerFeedTools } from "./admin-organizer-feeds.js";
 import { registerPromoterImportTool } from "./admin-promoter-import.js";
 import { registerFeedReviewTools } from "./admin-feed-review.js";
 import { registerFeedQualityTools } from "./admin-feed-quality.js";
+import { registerFeedDiscoveryTools } from "./admin-feed-discovery.js";
 import { registerFeedBacktestTools } from "./admin-feed-backtest.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
@@ -529,6 +530,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerFeedReviewTools(server, auth, env);
   // OPE-1634 — weekly feed drop sample + analyst labels.
   registerFeedQualityTools(server, db, auth);
+  // OPE-1636 — recurring feed discovery: probe, monthly runs, filing.
+  registerFeedDiscoveryTools(server, db, auth);
   registerFeedBacktestTools(server, db, auth);
 
   // Read-only recommendations feed — same data as /admin/analytics ▸

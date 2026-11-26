@@ -66,6 +66,8 @@ import {
   promoterEventFeeds,
   promoterApiEventRefs,
   feedDropSamples,
+  feedDiscoveryRuns,
+  feedDiscoveryProbes,
   feedItemLabels,
   promoterFeedItems,
   promoterFeedItemSnapshots,
@@ -2274,6 +2276,61 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     expectedWindowHours: 3,
     lastEvidenceAt: async (db) =>
       (await oldestOwedRuleChangeFollowup(db, new Date())) ?? new Date(),
+  },
+  {
+    // OPE-1636 — the monthly feed discovery run. While this month's run is open
+    // the MCP hourly cron probes a slice each fire, so the newest probe should
+    // be under 6h old. A closed run reads healthy. No run yet this month: the
+    // clock starts at the 1st 00:00Z (one hourly fire opens it); no run EVER:
+    // null, so the anchor is enabled_at and a fresh ship cannot read red.
+    name: "feed-discovery-probing",
+    ownerOpe: "OPE-1636",
+    label: "Monthly feed discovery probing promoter sites",
+    priority: "P1",
+    expectedWindowHours: 6,
+    lastEvidenceAt: async (db) => {
+      const now = new Date();
+      const month = now.toISOString().slice(0, 7);
+      const [run] = await db
+        .select({
+          startedAt: feedDiscoveryRuns.startedAt,
+          completedAt: feedDiscoveryRuns.completedAt,
+        })
+        .from(feedDiscoveryRuns)
+        .where(eq(feedDiscoveryRuns.month, month))
+        .limit(1);
+      if (!run) {
+        const [any] = await db
+          .select({ m: feedDiscoveryRuns.month })
+          .from(feedDiscoveryRuns)
+          .limit(1);
+        return any ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)) : null;
+      }
+      if (run.completedAt) return now;
+      const [p] = await db
+        .select({ t: sql<number | null>`max(${feedDiscoveryProbes.probedAt})` })
+        .from(feedDiscoveryProbes)
+        .where(eq(feedDiscoveryProbes.month, month));
+      return p?.t != null ? new Date(Number(p.t) * 1000) : run.startedAt;
+    },
+  },
+  {
+    // OPE-1636 — the Worker cannot file Linear issues (OPE-76's rail): an agent
+    // files each completed run via list_feed_discovery_runs and stamps it with
+    // record_feed_discovery_filing. The clock starts at the OLDEST completed,
+    // unfiled run; none outstanding reads healthy.
+    name: "feed-discovery-filed",
+    ownerOpe: "OPE-1636",
+    label: "Monthly feed discovery filed as a task for the analyst",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${feedDiscoveryRuns.completedAt})` })
+        .from(feedDiscoveryRuns)
+        .where(and(isNull(feedDiscoveryRuns.opeId), isNotNull(feedDiscoveryRuns.completedAt)));
+      return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
+    },
   },
   // ── OPE-309 (assurance audit A6 / A7) ──────────────────────────────
   //

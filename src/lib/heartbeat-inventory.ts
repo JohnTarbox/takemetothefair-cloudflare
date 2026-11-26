@@ -118,6 +118,8 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   "cron:runScheduledErrorLogBufferReplay": { probes: ["error-log-buffer-replay"] },
   "cron:runDeployLagWatch": { probes: ["deploy-lag-watch"] },
   "cron:runHostSilenceWatch": { probes: ["host-silence-watch"] },
+  // OPE-1636 — monthly feed discovery: probing while a run is open, and the run filed for the analyst.
+  "cron:runFeedDiscoverySlice": { probes: ["feed-discovery-probing", "feed-discovery-filed"] },
   "cron:runInboundExceptionNotice": U,
   "cron:runIndexNowSubmissionRetention": { probes: ["indexnow-submission-retention"] },
   "cron:main-app:/api/admin/venues/geocode-venues": { probes: ["venue-geocode-sweep"] },

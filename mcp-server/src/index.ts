@@ -85,6 +85,7 @@ import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledPendingContactAttach } from "./inbound/pending-promoter-contact-attach.js";
 import { runScheduledFeedPoll, runScheduledPingedFeedPass } from "./feeds/schedule.js";
 import { ensureWeeklyDropSample } from "@takemetothefair/db-schema/feed-quality";
+import { runFeedDiscoverySlice } from "./feeds/discovery-run.js";
 import { fillDueRuleChangeFollowups } from "@takemetothefair/db-schema/feed-backtest";
 import { WEBSUB_CALLBACK_PATH, handleWebSubCallback } from "./feeds/websub.js";
 import { runScheduledPromoterOnboarding } from "./inbound/promoter-onboarding.js";
@@ -1914,6 +1915,10 @@ export default {
           // OPE-1634 — this week's feed drop sample for the analyst; one row per
           // week (unique week_start), so 167 of 168 hourly fires are one SELECT.
           ["feed-drop-sample", () => ensureWeeklyDropSample(getDb(env.DB), new Date())],
+          // OPE-1636 — monthly feed discovery: probe a slice of promoters with a
+          // website and no feed for a usable one (their own domains only, polite,
+          // 403 = stop). Closes the month's run when none is left.
+          ["feed-discovery", () => runFeedDiscoverySlice(getDb(env.DB), new Date())],
           // OPE-1635 — the feed rule change log's "after" metrics, 7 days on.
           // Idempotent; nothing owed is one SELECT.
           [
