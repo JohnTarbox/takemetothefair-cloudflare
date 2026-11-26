@@ -84,6 +84,7 @@ import { runScheduledCiTriggerWatchdog } from "./ci-trigger-watchdog.js";
 import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledPendingContactAttach } from "./inbound/pending-promoter-contact-attach.js";
 import { runScheduledFeedPoll, runScheduledPingedFeedPass } from "./feeds/schedule.js";
+import { ensureWeeklyDropSample } from "@takemetothefair/db-schema/feed-quality";
 import { WEBSUB_CALLBACK_PATH, handleWebSubCallback } from "./feeds/websub.js";
 import { runScheduledPromoterOnboarding } from "./inbound/promoter-onboarding.js";
 import { runScheduledRepliedLedgerCheck } from "./inbound/replied-without-ledger.js";
@@ -1909,6 +1910,9 @@ export default {
           ["replied-ledger-check", () => runScheduledRepliedLedgerCheck(env)],
           // OPE-1617 — organizer feed polling; reads nothing unless FEED_POLLING_ENABLED = "true".
           ["organizer-feed-poll", () => runScheduledFeedPoll(env)],
+          // OPE-1634 — this week's feed drop sample for the analyst; one row per
+          // week (unique week_start), so 167 of 168 hourly fires are one SELECT.
+          ["feed-drop-sample", () => ensureWeeklyDropSample(getDb(env.DB), new Date())],
           // OPE-1637 — Battleship host silence (75 min). Mails once on silent, once on clear.
           ["host-silence-watch", () => runHostSilenceWatch(env)],
           // OPE-1655 — production behind main for > 2h (both Workers' live SHA vs

@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
  * the MCP Worker's X-Internal-Key; `review_feed_item`). Audit-logged; sends no
  * email.
  *
- * JSON: { action: approve|approve_as_occurrence|link|reject, event_id?, series_id?, venue_id?,
+ * JSON: { action: approve|approve_as_occurrence|link|reject|unlink (OPE-1634), event_id?, series_id?, venue_id?,
  *         not_duplicate_of?, note?, actorUserId? }
  */
 import { NextResponse } from "next/server";

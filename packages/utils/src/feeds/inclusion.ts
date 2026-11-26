@@ -204,3 +204,64 @@ export function decideInclusion(
     reason: rules.defaultInclude ? "default include" : "default exclude",
   };
 }
+
+/**
+ * OPE-1634 — the RULE a verdict's reason names, as a stable key for counting:
+ * per-rule precision (items a rule let through that a reviewer approved or
+ * rejected) and the weekly dropped-item sample (stratified by rule). The reason
+ * text stays the human-readable form; this strips what varies per item (the
+ * second, signal pattern of a description drop). Unknown text → `other:<text>`,
+ * never a silent bucket merge.
+ */
+export function inclusionRuleKey(reason: string | null | undefined): string | null {
+  if (!reason) return null;
+  let m: RegExpMatchArray | null;
+  if ((m = reason.match(/^title matches closure \/(.*)\/$/))) return `closure:${m[1]}`;
+  if ((m = reason.match(/^camp\/workshop opt-in: title matches \/(.*)\/$/)))
+    return `camp_opt_in:title`;
+  if (reason.startsWith("camp/workshop opt-in: category ")) return "camp_opt_in:category";
+  if ((m = reason.match(/^title matches \/(.*)\/$/))) return `include_title:${m[1]}`;
+  if ((m = reason.match(/^program title matches \/(.*)\/$/))) return `program_title:${m[1]}`;
+  if ((m = reason.match(/^program description matches \/(.*?)\/ and \/.*\/$/)))
+    return `program_description:${m[1]}`;
+  if ((m = reason.match(/^organizer (.+) is excluded$/))) return `organizer:${m[1]}`;
+  if (reason === "multi-day event") return "multi_day";
+  if (reason === "default include") return "default_include";
+  if (reason === "default exclude") return "default_exclude";
+  return `other:${reason}`;
+}
+
+/**
+ * OPE-1634 — the text that made a rule fire, for a reviewer who has to judge
+ * the drop: ~`radius` characters either side of the first match of the reason's
+ * pattern in the title, then the description. An organizer drop returns the
+ * address; a default verdict has no snippet (null). Pure; never throws (a
+ * pattern that does not compile returns null).
+ */
+export function matchedSnippet(
+  ev: Pick<FeedEvent, "title" | "description" | "organizerEmails">,
+  reason: string | null | undefined,
+  radius = 60
+): string | null {
+  if (!reason) return null;
+  const org = reason.match(/^organizer (.+) is excluded$/);
+  if (org) return org[1];
+  const pat = reason.match(/\/(.+?)\//);
+  if (!pat) return null;
+  let re: RegExp;
+  try {
+    re = new RegExp(pat[1], "i");
+  } catch {
+    return null;
+  }
+  for (const text of [ev.title, ev.description]) {
+    if (!text) continue;
+    const m = re.exec(text);
+    if (!m || m.index == null) continue;
+    const from = Math.max(0, m.index - radius);
+    const to = Math.min(text.length, m.index + m[0].length + radius);
+    const clip = text.slice(from, to).replace(/\s+/g, " ").trim();
+    return `${from > 0 ? "…" : ""}${clip}${to < text.length ? "…" : ""}`;
+  }
+  return null;
+}

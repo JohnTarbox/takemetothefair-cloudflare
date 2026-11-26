@@ -286,6 +286,11 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "card-booth-pairing": 30 * 24,
       // OPE-1709 — served-ness: a Snap upload unrecorded for 24h (processing takes seconds).
       "photo-classify-step": 24,
+      // OPE-1634 — a feed review action unlabelled for 24h; a missed weekly sample
+      // (8 days); a non-empty sample no agent filed for 72h.
+      "feed-review-labels": 24,
+      "feed-drop-sample-built": 8 * 24,
+      "feed-drop-sample-filed": 72,
       "series-write-path": 336,
       "venue-decision-writer": 336,
       "venue-geocode-sweep": 48,
