@@ -24,6 +24,17 @@
  * without its platform ("@shopname" beside an icon the model cannot name) is
  * dropped: mapping it to a network would be a guess.
  *
+ * ── Misfiled fields (OPE-1709 rework) ─────────────────────────────────────
+ * A card that prints its contact lines as an icon list (globe / camera /
+ * envelope) is read correctly but FILED under `social`: on the first live card,
+ * 5 of 6 prod-prompt replays put the right email and website in the `social`
+ * array and left `email` / `website` absent, so the parser dropped a correct
+ * read. When `email` / `website` is absent, exactly ONE distinct email (or one
+ * plain non-social domain) in `social` is salvaged into it. Two different ones
+ * is ambiguity — nothing is salvaged. A salvaged field is marked `salvaged`,
+ * which forces it to STAGE (never auto-write) with a `card_field_salvaged` flag,
+ * because the model did not commit to it in its own field.
+ *
  * ── The image ─────────────────────────────────────────────────────────────
  * Never a hero, logo or gallery photo. The card path has no image write at all,
  * and card proposals use their own audit action (`vendor.card_proposed`) so the
@@ -98,6 +109,8 @@ export const CARD_RESPONSE_FORMAT = {
 export interface CardField<T = string> {
   value: T;
   confidence: number;
+  /** OPE-1709 rework — recovered from the `social` array, not read into its own field. Always staged. */
+  salvaged?: true;
 }
 
 /** A card as read. A field is absent when it was not printed, not legible, or failed its shape check. */
@@ -222,6 +235,31 @@ export function parseCardReply(raw: unknown): CardReading {
       if (p && !links[p[0]]) links[p[0]] = p[1];
     }
     if (Object.keys(links).length) out.social = { value: links, confidence: conf(soc.confidence) };
+
+    // OPE-1709 rework — salvage a misfiled email / website (see the header).
+    const entries = soc.value.map((e) => str(e)).filter((e): e is string => e !== null);
+    const one = (vals: string[]): string | null => {
+      const distinct = [...new Set(vals)];
+      return distinct.length === 1 ? distinct[0] : null;
+    };
+    if (!out.email) {
+      const email = one(entries.filter((e) => EMAIL_RE.test(e)).map((e) => e.toLowerCase()));
+      if (email) out.email = { value: email, confidence: conf(soc.confidence), salvaged: true };
+    }
+    if (!out.website) {
+      const sites = entries
+        .filter((e) => !e.includes("@") && parseSocialEntry(e) === null)
+        .map((e) => cleanWebsite(e))
+        .filter((e): e is string => e !== null);
+      const key = (w: string) =>
+        w
+          .toLowerCase()
+          .replace(/^https?:\/\//, "")
+          .replace(/^www\./, "")
+          .replace(/\/+$/, "");
+      const site = one(sites.map(key)) ? sites[0] : null;
+      if (site) out.website = { value: site, confidence: conf(soc.confidence), salvaged: true };
+    }
   }
 
   for (const k of Object.keys(out) as Array<keyof CardReading>) {
@@ -301,6 +339,8 @@ export interface CardFieldPlan {
   confidence: number;
   current: string | null;
   action: CardFieldAction;
+  /** OPE-1709 rework — recovered from `social`; never written, always staged and flagged. */
+  salvaged?: true;
 }
 
 function blank(v: string | null | undefined): boolean {
@@ -340,13 +380,21 @@ export function planCardFields(
     } else if (
       opts.autoWrite &&
       !CARD_CONTACT_COLUMNS.has(column) &&
+      !f.salvaged &&
       f.confidence >= CARD_FIELD_CONFIDENCE
     ) {
       action = "write";
     } else {
       action = "stage";
     }
-    plans.push({ column, value: f.value, confidence: f.confidence, current, action });
+    plans.push({
+      column,
+      value: f.value,
+      confidence: f.confidence,
+      current,
+      action,
+      ...(f.salvaged ? { salvaged: true as const } : {}),
+    });
   };
 
   add("website", card.website, vendor.website);
@@ -438,6 +486,9 @@ const COLUMN_TO_PROP: Record<CardColumn, keyof VendorCardSnapshot> = {
   contact_name: "contactName",
 };
 
+/** Every column the card lane can write or stage — the runtime list behind `CardColumn`. */
+export const CARD_COLUMNS = Object.keys(COLUMN_TO_PROP) as CardColumn[];
+
 export interface CardApplyResult {
   written: CardColumn[];
   staged: CardColumn[];
@@ -478,7 +529,11 @@ export async function applyCardPlan(
   }
 
   for (const p of plans.filter((x) => x.action === "stage" || x.action === "conflict")) {
-    const flags = ["business_card", ...(p.action === "conflict" ? ["card_conflict"] : [])];
+    const flags = [
+      "business_card",
+      ...(p.action === "conflict" ? ["card_conflict"] : []),
+      ...(p.salvaged ? ["card_field_salvaged"] : []),
+    ];
     const r = await db
       .insert(vendorEnrichmentCandidates)
       .values({
@@ -509,11 +564,14 @@ export function cardFromPayload(raw: unknown): CardReading {
   const out: Record<string, unknown> = {};
   if (raw && typeof raw === "object") {
     for (const [k, f] of Object.entries(raw as Record<string, unknown>)) {
-      const field = f as { value?: unknown; confidence?: unknown } | null;
+      const field = f as { value?: unknown; confidence?: unknown; salvaged?: unknown } | null;
       if (field && field.value !== undefined && field.value !== null) {
         out[k] = {
           value: field.value,
           confidence: typeof field.confidence === "number" ? field.confidence : 0,
+          // OPE-1709 rework — survives the proposal round trip, or approving a
+          // card proposal would auto-write a website the model never committed to.
+          ...(field.salvaged === true ? { salvaged: true } : {}),
         };
       }
     }
