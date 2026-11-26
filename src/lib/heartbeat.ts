@@ -1934,6 +1934,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, promoterEnrichmentCandidates, promoterEnrichmentCandidates.createdAt),
   },
   {
+    // OPE-1712 — the nightly promoter cron now AUTO-APPLIES (it had merged 0
+    // candidates ever while dry-run). Evidence = a cron candidate the live
+    // gates let through, stamped auto_merged (reviewed_at set by applyFills).
+    // Prod 11-06 → 11-26: an unflagged high-confidence cron candidate appeared
+    // on 11 of 21 days, longest gap ~4 days; 240h is ~2.5× that. Silence means
+    // the flag flipped back, the cron stopped, or every gate is now refusing.
+    name: "promoter-cron-auto-merge",
+    ownerOpe: "OPE-1712",
+    label: "Promoter enrichment cron auto-applies high-confidence fills",
+    priority: "P1",
+    expectedWindowHours: 10 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        promoterEnrichmentCandidates,
+        promoterEnrichmentCandidates.reviewedAt,
+        sql`${promoterEnrichmentCandidates.decision} = 'auto_merged'
+            AND ${promoterEnrichmentCandidates.jobRunId} LIKE 'promoter-cron-%'`
+      ),
+  },
+  {
     // OPE-1689 — the promoter run's one same-site Contact-page hop STAGED a
     // value. Only that hop writes a candidate whose source_url is not the
     // promoter's own website (the homepage pass stamps website verbatim), so

@@ -213,6 +213,16 @@ export const CAPABILITY_FLAGS: CapabilityFlag[] = [
       "written. Reads as healthy while nothing is applied.",
     offIsDeliberate: true,
   },
+  {
+    name: "PROMOTER_ENRICHMENT_DRY_RUN",
+    worker: "mcp",
+    // OPE-1712 — inverted like ENRICHMENT_DRY_RUN: "true" (or unset, falling
+    // back to that flag) means the nightly promoter cron only stages.
+    darkMeans:
+      "INVERTED FLAG — 'true' means the nightly promoter-enrichment cron stages every " +
+      "fill for review and applies none, even ones a live enrich_promoter run applies.",
+    offIsDeliberate: false,
+  },
 ];
 
 /**
