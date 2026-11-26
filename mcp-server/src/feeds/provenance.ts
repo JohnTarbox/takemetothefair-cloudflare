@@ -29,6 +29,11 @@ import {
   type CitationProvenanceKind,
 } from "../schema.js";
 import { citationSupersedeScope } from "@takemetothefair/db-schema";
+import {
+  fieldHistoryBeforeSelect,
+  systemActor,
+  updateWithFieldHistory,
+} from "@takemetothefair/db-schema/field-history";
 import { createSlug, normalizeEventDate } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { FeedEvent } from "./tec.js";
@@ -268,14 +273,25 @@ export async function applyFieldValue(
   if (field === "start_date" || field === "end_date") {
     const d = normalizeEventDate(value);
     if (!d) return { applied: false, reason: `"${value}" is not a date` };
-    const rows = await db
-      .update(events)
-      .set(field === "start_date" ? { startDate: d } : { endDate: d })
+    const patch = field === "start_date" ? { startDate: d } : { endDate: d };
+    // OPE-1653 — read the date being replaced, so a contact's answer that moves
+    // an event leaves a record of where it was.
+    const [before] = await db
+      .select(fieldHistoryBeforeSelect(events, patch))
+      .from(events)
       .where(eq(events.id, eventId))
-      .returning({ id: events.id });
-    return rows.length
-      ? { applied: true, reason: "events row updated" }
-      : { applied: false, reason: "event not found" };
+      .limit(1);
+    if (!before) return { applied: false, reason: "event not found" };
+    await updateWithFieldHistory(db, {
+      table: events,
+      entityType: "event",
+      entityId: eventId,
+      before,
+      patch,
+      actor: systemActor("feed-contact-answer"),
+      source: "mcp:feeds/provenance.applyFieldValue",
+    });
+    return { applied: true, reason: "events row updated" };
   }
   const current = await readEventFieldValues(db, eventId);
   const date = field === "start_time" ? current?.start_date : current?.end_date;

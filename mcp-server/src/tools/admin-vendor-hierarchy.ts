@@ -26,6 +26,7 @@
  * Worker.
  */
 
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, eq, inArray } from "drizzle-orm";
@@ -231,7 +232,15 @@ export function registerVendorHierarchyTools(server: McpServer, db: Db, auth: Au
         };
       }
 
-      await db.update(vendors).set(updates).where(eq(vendors.id, params.vendor_id));
+      // OPE-1653 — a re-parent is a field edit; record the old parent ids.
+      await updateWithFieldHistory(db, {
+        table: vendors,
+        entityType: "vendor",
+        entityId: params.vendor_id,
+        patch: updates,
+        actor: auth.userId,
+        source: "mcp:set_vendor_relationship",
+      });
 
       try {
         await db.insert(adminActions).values({
@@ -453,13 +462,17 @@ export function registerVendorHierarchyTools(server: McpServer, db: Db, auth: Au
       // Apply parent-side update (if any).
       let parentApplied: Record<string, unknown> | null = null;
       if (params.default_child_display !== undefined) {
-        await db
-          .update(vendors)
-          .set({
+        await updateWithFieldHistory(db, {
+          table: vendors,
+          entityType: "vendor",
+          entityId: params.parent_vendor_id,
+          patch: {
             defaultChildDisplay: params.default_child_display,
             updatedAt: new Date(),
-          })
-          .where(eq(vendors.id, params.parent_vendor_id));
+          },
+          actor: auth.userId,
+          source: "mcp:set_vendor_display_policy (parent)",
+        });
         parentApplied = {
           previous: parentRow.defaultChildDisplay,
           applied: params.default_child_display,
@@ -480,7 +493,14 @@ export function registerVendorHierarchyTools(server: McpServer, db: Db, auth: Au
           childUpdate.displayMode = c.display_mode;
         }
         if (Object.keys(childUpdate).length === 1) continue; // updatedAt only
-        await db.update(vendors).set(childUpdate).where(eq(vendors.id, c.vendor_id));
+        await updateWithFieldHistory(db, {
+          table: vendors,
+          entityType: "vendor",
+          entityId: c.vendor_id,
+          patch: childUpdate,
+          actor: auth.userId,
+          source: "mcp:set_vendor_display_policy (child)",
+        });
         childResults.push({
           vendor_id: c.vendor_id,
           previous: {

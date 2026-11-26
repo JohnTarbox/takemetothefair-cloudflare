@@ -20,6 +20,7 @@
  *
  * Admin only.
  */
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
@@ -490,15 +491,22 @@ export function registerPromoterEnrichmentReviewTools(
           },
           promoter.enrichmentStatus
         );
-        await db
-          .update(promoters)
-          .set({
+        // OPE-1653 — a revert replaces the auto-merged value; record both ends.
+        await updateWithFieldHistory(db, {
+          table: promoters,
+          entityType: "promoter",
+          entityId: promoter.id,
+          before: promoter,
+          patch: {
             [col]: restored,
             enrichmentStatus: enrichment.status,
             enrichmentCoverage: enrichment.coverageJson,
             updatedAt: now,
-          })
-          .where(eq(promoters.id, promoter.id));
+          },
+          actor: auth.userId,
+          source: "mcp:review_promoter_enrichment_candidate (revert)",
+          ignore: ["enrichmentStatus", "enrichmentCoverage", "lastEnrichedAt"],
+        });
         await db
           .update(promoterEnrichmentCandidates)
           .set({ decision: "reverted", reviewedAt: now, reviewedBy: auth.userId })
@@ -640,16 +648,23 @@ export function registerPromoterEnrichmentReviewTools(
       };
       const enrichment = computePromoterEnrichment(enrichmentInput, promoter.enrichmentStatus);
 
-      await db
-        .update(promoters)
-        .set({
+      // OPE-1653 — the approved fill, in the field history.
+      await updateWithFieldHistory(db, {
+        table: promoters,
+        entityType: "promoter",
+        entityId: promoter.id,
+        before: promoter,
+        patch: {
           [col]: cand.proposedValue,
           enrichmentStatus: enrichment.status,
           enrichmentCoverage: enrichment.coverageJson,
           lastEnrichedAt: now,
           updatedAt: now,
-        })
-        .where(eq(promoters.id, promoter.id));
+        },
+        actor: auth.userId,
+        source: "mcp:review_promoter_enrichment_candidate (approve)",
+        ignore: ["enrichmentStatus", "enrichmentCoverage", "lastEnrichedAt"],
+      });
 
       await logEnrichment(db, {
         targetType: "promoter",

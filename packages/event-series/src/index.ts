@@ -32,6 +32,11 @@
  * towns are two series; conflating them silently folds two towns' events into
  * one hub, which is worse than leaving one unparented.
  */
+import {
+  buildFieldHistoryRows,
+  recordFieldHistory,
+  systemActor,
+} from "@takemetothefair/db-schema/field-history";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@takemetothefair/db-schema";
@@ -201,10 +206,27 @@ export async function attachEventToSeries(
   const res = await resolveOrCreateSeries(db, input);
   if (!res.seriesId) return res;
   try {
-    await db
+    const attached = await db
       .update(events)
       .set({ seriesId: res.seriesId })
-      .where(and(eq(events.id, eventId), isNull(events.seriesId)));
+      .where(and(eq(events.id, eventId), isNull(events.seriesId)))
+      .returning({ id: events.id });
+    // OPE-1653 — the guard only matched an unattached row, so null is what the
+    // series replaced. Recorded only when the attach actually landed.
+    if (attached.length > 0) {
+      await recordFieldHistory(
+        db,
+        buildFieldHistoryRows({
+          table: events,
+          entityType: "event",
+          entityId: eventId,
+          before: { seriesId: null },
+          patch: { seriesId: res.seriesId },
+          actor: systemActor("series-attach"),
+          source: "lib:event-series.attachEventToSeries",
+        })
+      );
+    }
   } catch {
     return { seriesId: null, outcome: "skipped", reason: "attach failed" };
   }

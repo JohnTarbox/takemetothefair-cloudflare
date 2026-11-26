@@ -21,7 +21,7 @@
  *
  * Riding in the same batch as the UPDATE keeps the edit and its record atomic.
  */
-import { getTableColumns, is, SQL } from "drizzle-orm";
+import { eq, getTableColumns, is, SQL } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import type { SQLiteColumn, SQLiteTable } from "drizzle-orm/sqlite-core";
 import * as schema from "./index";
@@ -171,6 +171,57 @@ export function fieldHistoryInserts(db: Db, rows: FieldHistoryRow[]) {
 /** Insert `rows` now (no-op for none). For write sites that do not batch. */
 export async function recordFieldHistory(db: Db, rows: FieldHistoryRow[]): Promise<void> {
   for (const stmt of fieldHistoryInserts(db, rows)) await stmt;
+}
+
+export interface UpdateWithFieldHistoryInput extends Omit<BuildFieldHistoryInput, "before"> {
+  /**
+   * The row as it was before the write. Omit it and the columns the patch
+   * writes are read first (`fieldHistoryBeforeSelect`), so a site holding no
+   * row, or only a partial projection, still records what it replaced.
+   */
+  before?: Record<string, unknown> | null;
+}
+
+/**
+ * OPE-1653 — `UPDATE <table> SET patch WHERE id = entityId` plus its history rows,
+ * in ONE batch. For the unattended writers (rescrape/sync, feed ingestion,
+ * enrichment apply, venue sweeps) whose edits used to replace a value with no
+ * record of it.
+ *
+ * - No matching row → no history (the UPDATE matches nothing either).
+ * - Nothing changed → the UPDATE still runs (it may carry bookkeeping such as
+ *   `lastSyncedAt`), with no history rows beside it.
+ *
+ * Returns the history rows written, so a caller can report or test them.
+ */
+export async function updateWithFieldHistory(
+  db: Db,
+  input: UpdateWithFieldHistoryInput
+): Promise<FieldHistoryRow[]> {
+  const idCol = (getTableColumns(input.table) as unknown as Record<string, SQLiteColumn>).id;
+  if (!idCol) throw new Error("updateWithFieldHistory: table has no `id` column");
+  let before = input.before;
+  if (before === undefined) {
+    const found = await db
+      .select(fieldHistoryBeforeSelect(input.table, input.patch))
+      .from(input.table)
+      .where(eq(idCol, input.entityId))
+      .limit(1);
+    before = (found[0] as Record<string, unknown> | undefined) ?? null;
+  }
+  const rows = before ? buildFieldHistoryRows({ ...input, before }) : [];
+  const update = db
+    .update(input.table)
+    .set(input.patch as never)
+    .where(eq(idCol, input.entityId));
+  if (rows.length === 0) {
+    await update;
+  } else {
+    await db.batch([update, ...fieldHistoryInserts(db, rows)] as unknown as Parameters<
+      Db["batch"]
+    >[0]);
+  }
+  return rows;
 }
 
 /**

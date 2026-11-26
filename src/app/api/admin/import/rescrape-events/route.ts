@@ -7,6 +7,7 @@ import { logError } from "@/lib/logger";
 import { getDetailsScraper } from "@/lib/scrapers/registry";
 import { sanitizeScrapedDescription } from "@/lib/scrapers/utils";
 import { inArray, eq } from "drizzle-orm";
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
@@ -164,7 +165,18 @@ export async function POST(request: Request) {
         if (fieldsUpdated.length > 0) {
           updates.lastSyncedAt = new Date();
           updates.updatedAt = new Date();
-          await db.update(events).set(updates).where(eq(events.id, event.id));
+          // OPE-1653 — the projection above selects every field setField can
+          // write, so it is a complete before-row for this patch.
+          await updateWithFieldHistory(db, {
+            table: events,
+            entityType: "event",
+            entityId: event.id,
+            before: event,
+            patch: updates,
+            actor: systemActor("rescrape-events"),
+            source: "api:POST /api/admin/import/rescrape-events",
+            ignore: ["lastSyncedAt"],
+          });
           await recomputeEventCompleteness(db, event.id);
           await logEnrichment(db, {
             targetType: "event",

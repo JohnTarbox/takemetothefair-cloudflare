@@ -6,6 +6,7 @@
  * and the K27 rollover all funnel through here. Pure field-inheritance stays in
  * create-occurrence-core.ts; this module owns the lookup + idempotency + insert.
  */
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { raiseEventReviewFlag } from "@/lib/db/schema";
 import { and, eq, isNull, ne } from "drizzle-orm";
 import type { Database } from "@/lib/db";
@@ -144,15 +145,21 @@ async function attachDateAsEventDay(
   // the hours flag, so a series occurrence built date-by-date stayed unflagged
   // however many hourless days it accumulated.
   await raiseHoursReviewFlag(db, occurrenceId);
-  await db
-    .update(events)
-    .set({
+  // OPE-1653 — attaching a day can widen the public end date; keep the old one.
+  await updateWithFieldHistory(db, {
+    table: events,
+    entityType: "event",
+    entityId: occurrenceId,
+    patch: {
       discontinuousDates: true,
       // Widen the visible range only when the new date is later than the current end.
       endDate: currentEndDate && currentEndDate >= date ? currentEndDate : date,
       updatedAt: now,
-    })
-    .where(eq(events.id, occurrenceId));
+    },
+    actor: actorUserId ?? systemActor("create-occurrence"),
+    source: "lib:series/create-occurrence",
+    at: now,
+  });
   await db.insert(adminActions).values({
     action: "event.occurrence_day_attached",
     actorUserId,

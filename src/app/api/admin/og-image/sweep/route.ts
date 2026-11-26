@@ -39,6 +39,7 @@ export const dynamic = "force-dynamic";
  * Cloudflare's 30s response budget, MAX_LIMIT=10 keeps us safe.
  */
 
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { NextResponse } from "next/server";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
@@ -326,7 +327,15 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
 
     const cdnUrl = `${CDN_BASE}/${key}`;
     try {
-      await db.update(events).set({ imageUrl: cdnUrl }).where(eq(events.id, ev.id));
+      // OPE-1653 — the sweep's hero write, in the field history.
+      await updateWithFieldHistory(db, {
+        table: events,
+        entityType: "event",
+        entityId: ev.id,
+        patch: { imageUrl: cdnUrl },
+        actor: userId ?? systemActor("og-image-sweep"),
+        source: "api:POST /api/admin/og-image/sweep",
+      });
       await recomputeEventCompleteness(db, ev.id);
     } catch (e) {
       await logError(db, {

@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { events, eventSchemaOrg } from "@/lib/db/schema";
@@ -172,7 +173,7 @@ export const POST = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request
  */
 export const PATCH = withAuth<{ id: string }>(
   { role: "ADMIN" },
-  async ({ request, db, params }) => {
+  async ({ request, db, params, session }) => {
     const { id } = params;
 
     try {
@@ -237,7 +238,15 @@ export const PATCH = withAuth<{ id: string }>(
       }
 
       // Update the event
-      await db.update(events).set(updateData).where(eq(events.id, id));
+      // OPE-1653 — applying schema.org values overwrites the stored ones.
+      await updateWithFieldHistory(db, {
+        table: events,
+        entityType: "event",
+        entityId: id,
+        patch: updateData,
+        actor: session.user.id,
+        source: "api:PATCH /api/admin/events/[id]/schema-org",
+      });
 
       // Get updated event
       const [updatedEvent] = await db.select().from(events).where(eq(events.id, id)).limit(1);

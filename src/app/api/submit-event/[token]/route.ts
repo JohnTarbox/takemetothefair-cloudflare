@@ -17,9 +17,9 @@ export const dynamic = "force-dynamic";
  * still in users' inboxes.
  */
 
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { consumeCorrectionToken, lookupCorrectionToken } from "@/lib/correction-tokens";
@@ -112,7 +112,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
 
   updateSet.updatedAt = new Date();
-  await db.update(events).set(updateSet).where(eq(events.id, lookup.eventId));
+  // OPE-1653 — a submitter's correction overwrites up to seven public fields
+  // through a link with no session; the history row is the only record of them.
+  await updateWithFieldHistory(db, {
+    table: events,
+    entityType: "event",
+    entityId: lookup.eventId,
+    patch: updateSet as Record<string, unknown>,
+    actor: systemActor("correction-token"),
+    source: "api:POST /api/submit-event/[token]",
+  });
 
   return NextResponse.json({
     success: true,

@@ -16,8 +16,9 @@ export const dynamic = "force-dynamic";
  *
  * Auth: admin session OR X-Internal-Key.
  */
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { NextResponse } from "next/server";
-import { eq, isNull, sql } from "drizzle-orm";
+import { isNull, sql } from "drizzle-orm";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { events } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
@@ -35,7 +36,7 @@ interface Outcome {
   changed: boolean;
 }
 
-export const POST = withAuthorized(async ({ request, db }) => {
+export const POST = withAuthorized(async ({ request, db, userId }) => {
   const url = new URL(request.url);
   const apply = url.searchParams.get("apply") === "true";
   const limitParam = parseInt(url.searchParams.get("limit") ?? `${DEFAULT_LIMIT}`, 10);
@@ -72,16 +73,22 @@ export const POST = withAuthorized(async ({ request, db }) => {
         changed: true,
       });
       if (apply) {
-        await db
-          .update(events)
-          .set({
+        // OPE-1653 — the helper reads both columns first (the candidate
+        // projection carries neither), so the history shows what was there.
+        await updateWithFieldHistory(db, {
+          table: events,
+          entityType: "event",
+          entityId: row.id,
+          patch: {
             sourceDomain: classification.sourceDomain,
             ingestionMethod: classification.ingestionMethod,
             // Bump updatedAt so the sitemap MAX(updated_at) picks up the
             // metadata change — keeps the index in sync.
             updatedAt: new Date(),
-          })
-          .where(eq(events.id, row.id));
+          },
+          actor: userId ?? systemActor("source-domain-backfill"),
+          source: "api:POST /api/admin/backfill/source-domain",
+        });
         written += 1;
       }
     }

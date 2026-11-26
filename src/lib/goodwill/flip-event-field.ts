@@ -47,6 +47,7 @@
  *     the citation helper). Same shape, intentional.
  */
 
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { citationSupersedeScope, events, eventDataCitations } from "@/lib/db/schema";
@@ -185,10 +186,16 @@ export async function flipEventField(
 
   // 3. Sync denormalized events column.
   if (args.fieldClass === "date") {
-    await db
-      .update(events)
-      .set({ startDate: parsedValue as Date, updatedAt: now })
-      .where(eq(events.id, args.eventId));
+    // OPE-1653 — a reliability-weighted flip replaces a public value unattended.
+    await updateWithFieldHistory(db, {
+      table: events,
+      entityType: "event",
+      entityId: args.eventId,
+      patch: { startDate: parsedValue as Date, updatedAt: now },
+      actor: systemActor("goodwill-flip"),
+      source: "lib:goodwill/flip-event-field",
+      at: now,
+    });
     return {
       citationId,
       supersededCitationId: supersededId,
@@ -196,10 +203,15 @@ export async function flipEventField(
     };
   }
   // name
-  await db
-    .update(events)
-    .set({ name: parsedValue as string, updatedAt: now })
-    .where(eq(events.id, args.eventId));
+  await updateWithFieldHistory(db, {
+    table: events,
+    entityType: "event",
+    entityId: args.eventId,
+    patch: { name: parsedValue as string, updatedAt: now },
+    actor: systemActor("goodwill-flip"),
+    source: "lib:goodwill/flip-event-field",
+    at: now,
+  });
   return {
     citationId,
     supersededCitationId: supersededId,
