@@ -6,7 +6,8 @@ import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
 import { findUndatedDuplicate } from "@/lib/duplicates/find-undated-duplicate";
 import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { events, promoters, eventSchemaOrg, venues } from "@/lib/db/schema";
+import { events, promoters, eventSchemaOrg, venues, eventDataCitations } from "@/lib/db/schema";
+import { buildSubmissionVendorCitations } from "@/lib/events/submission-vendor-citations";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
 import {
@@ -27,7 +28,11 @@ import { hasCalendarDayPassed } from "@takemetothefair/datetime";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 import { auth } from "@/lib/auth";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
-import { UNCATEGORIZED_EVENT_CATEGORY, partitionEventCategories } from "@takemetothefair/constants";
+import {
+  SITE_URL,
+  UNCATEGORIZED_EVENT_CATEGORY,
+  partitionEventCategories,
+} from "@takemetothefair/constants";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { classifySource, assertIngestionMethod } from "@/lib/source-classification";
@@ -48,6 +53,7 @@ import {
 import { maybeRouteToOccurrence } from "@/lib/discovery/route-to-occurrence";
 import { submitEventSchema } from "./schema";
 import { sendSubmissionReceivedAck } from "@/lib/email/submission-received";
+import { issueCorrectionToken } from "@/lib/correction-tokens";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -285,6 +291,16 @@ export async function POST(request: NextRequest) {
         : data.source === "email"
           ? ["community-suggestion", "email-submission"]
           : ["community-suggestion"];
+    // OPE-1558 — mark the no-login form's rows so "how many self-listed events
+    // got published" is a query on a stored tag. Community submissions only: an
+    // internal or vendor caller has no business claiming this form.
+    if (
+      data.intakeForm === "list-your-event" &&
+      !isInternal &&
+      (data.source ?? "community") === "community"
+    ) {
+      tagList.push("list-your-event");
+    }
 
     // Gate URLs against the domain classification table — community/vendor
     // submissions can include arbitrary URLs, so we filter aggregator domains
@@ -759,6 +775,15 @@ export async function POST(request: NextRequest) {
 
     // Create the event
     const newEventId = crypto.randomUUID();
+    // OPE-1680 — resolved once, so the stored row and its citations read the
+    // same values.
+    const storedVendorFeeMinCents = dollarsToCents(data.vendorFeeMin);
+    const storedVendorFeeMaxCents = dollarsToCents(data.vendorFeeMax);
+    const storedApplicationDeadline = normalizeEventDate(data.applicationDeadline ?? null);
+    const eventIngestionMethod = assertIngestionMethod(
+      classifySource(sourceName, data.sourceUrl).ingestionMethod,
+      "suggest-event/submit"
+    );
     await db.insert(events).values({
       id: newEventId,
       name: effectiveName,
@@ -819,25 +844,22 @@ export async function POST(request: NextRequest) {
       // only enforcement point. (The `?? "community_suggestion"` fallback that
       // used to sit here was unreachable: classifySource never returns
       // null/undefined — it defaults to admin_manual by contract.)
-      ingestionMethod: assertIngestionMethod(
-        classifySource(sourceName, data.sourceUrl).ingestionMethod,
-        "suggest-event/submit"
-      ),
+      ingestionMethod: eventIngestionMethod,
       sourceUrl: data.sourceUrl || null,
       sourceId: data.sourceUrl ? createSlug(data.sourceUrl) : newEventId,
       syncEnabled: false,
       lastSyncedAt: new Date(),
       suggesterEmail: data.suggesterEmail || null,
       submittedByUserId: data.submittedByUserId || null,
-      vendorFeeMinCents: dollarsToCents(data.vendorFeeMin),
-      vendorFeeMaxCents: dollarsToCents(data.vendorFeeMax),
+      vendorFeeMinCents: storedVendorFeeMinCents,
+      vendorFeeMaxCents: storedVendorFeeMaxCents,
       vendorFeeNotes: data.vendorFeeNotes ?? null,
       indoorOutdoor: data.indoorOutdoor ?? null,
       estimatedAttendance: data.estimatedAttendance ?? null,
       eventScale: data.eventScale ?? null,
       applicationUrl: finalApplicationUrl,
       // OPE-198 — vendor-application deadline (date-only) + apply instructions.
-      applicationDeadline: normalizeEventDate(data.applicationDeadline ?? null),
+      applicationDeadline: storedApplicationDeadline,
       applicationInstructions: data.applicationInstructions ?? null,
       walkInsAllowed: data.walkInsAllowed ?? null,
       // Cohort 2 (2026-06-01) — populated when the inbound-email workflow
@@ -849,6 +871,38 @@ export async function POST(request: NextRequest) {
       // lane (the headless worker can't web-confirm), not an upcoming event.
       // Operator triage queue at /admin/events?flagged=1.
     });
+    // OPE-1680 — a stored vendor fee / deadline carries its citation: the
+    // submitter supplied it (`user_submitted`). Written after the event row so a
+    // citation never exists without its value. A failure is logged at error
+    // level rather than costing the submission; the `vendor-field-citations`
+    // probe goes red on any value left uncited.
+    const vendorCitationRows = buildSubmissionVendorCitations({
+      eventId: newEventId,
+      sourceUrl: data.sourceUrl,
+      sourceName,
+      ingestionMethod: eventIngestionMethod,
+      createdBy: data.submittedByUserId,
+      vendorFeeMin: { submitted: data.vendorFeeMin, storedCents: storedVendorFeeMinCents },
+      vendorFeeMax: { submitted: data.vendorFeeMax, storedCents: storedVendorFeeMaxCents },
+      applicationDeadline: {
+        submitted: data.applicationDeadline,
+        stored: storedApplicationDeadline,
+      },
+      now: new Date(),
+    });
+    if (vendorCitationRows.length > 0) {
+      try {
+        await db.insert(eventDataCitations).values(vendorCitationRows);
+      } catch (err) {
+        await logError(db, {
+          source: "api/suggest-event/submit:vendor-citations",
+          message: "vendor fee/deadline citation insert failed",
+          error: err,
+          context: { eventId: newEventId, fields: vendorCitationRows.map((r) => r.fieldName) },
+        }).catch(() => {});
+      }
+    }
+
     // OPE-767 — each reason recorded, so each can be discharged on its own.
     // (Was one boolean OR of all five; nothing could tell them apart later.)
     // OPE-378 — an invented name reads perfectly, so it needs a human.
@@ -1016,6 +1070,20 @@ export async function POST(request: NextRequest) {
             : null,
           whereText:
             [data.venueName, data.venueCity, resolvedStateCode].filter(Boolean).join(", ") || null,
+          // OPE-1558 decision 1a — the no-login form's receipt carries a private
+          // correction link (the existing /submit-event/<token> form), so an
+          // organizer with no account can still fix their listing. Keyed on the
+          // stored tag, so it reaches exactly the rows marked as this form's.
+          // inboundEmailId is null: this token came from a web form (0389).
+          mintCorrectionUrl: tagList.includes("list-your-event")
+            ? async () => {
+                const token = await issueCorrectionToken(db, {
+                  eventId: newEventId,
+                  inboundEmailId: null,
+                });
+                return `${SITE_URL}/submit-event/${token}`;
+              }
+            : undefined,
         });
     if (
       ackOutcome !== "sent" &&
@@ -1041,6 +1109,11 @@ export async function POST(request: NextRequest) {
       // content against the EXISTING event (report-only), rather than leaving it
       // only on a PENDING twin an operator will reject.
       possibleDuplicateOf: possibleDuplicateOf ?? null,
+      // OPE-1558 — whether a receipt email was actually queued, so a form can
+      // say "check your inbox" only when there is something to check. False for
+      // the rate-limited second submission in an hour, a suppressed address, or
+      // the ack flag being off — all real outcomes the page must not paper over.
+      receiptSent: ackOutcome === "sent",
     });
   } catch (error) {
     await logError(db, {

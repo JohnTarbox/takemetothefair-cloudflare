@@ -138,6 +138,31 @@ export const STACKLESS_THIRD_PARTY_SHAPES: ReadonlyArray<{
 ];
 
 /**
+ * OPE-1553 — a crypto-wallet extension (MetaMask-class) probing the page for an
+ * injected provider: `TypeError: undefined is not an object (evaluating
+ * 'window.ethereum.selectedAddress = undefined')`. 65 occurrences on 36 routes
+ * from 2026-10-02, every one `source=client` with a single top-level
+ * `global code@<page>:1:<col>` frame. Our code never touches `window.ethereum`.
+ *
+ * ⚠️ Matched on the RAW message, in the browser's QUOTED TypeError form, and
+ * deliberately NOT via the plain substring `window.ethereum` the ticket proposed.
+ * In the same window a SERVER row matched that substring: a `stale_red_signals`
+ * D1 write failure whose message echoes the fault's own signature in its SQL
+ * params (`…#typeerror: undefined is not an object (evaluating
+ * window.ethereum.selectedaddress)…`). A bare substring would have suppressed a
+ * genuine backend fault, because a noise class that becomes a ledger key leaks
+ * into every error ABOUT the ledger. The quote does not survive
+ * `normalizeErrorClass`, so this check must not use the normalized message.
+ *
+ * Third-party class, so the OPE-173 auth carve-out applies (0 of the 65 hits
+ * were on an auth route; keeping it costs nothing).
+ */
+export function isWalletProviderProbe(message: string | null | undefined): boolean {
+  if (!message) return false;
+  return /\(evaluating ['"`]window\.ethereum\./i.test(message);
+}
+
+/**
  * Route prefixes where NOTHING is auto-suppressed (OPE-173).
  *
  * Conversion and auth paths: a suppressed fault here costs a signup or a claim,
@@ -296,6 +321,13 @@ export function classifyNoise(input: {
   );
   if (shape) {
     const matched = `stackless:${shape.all.join(" … ")}`;
+    if (isNoiseExemptRoute(route)) return { noise: false, reason: null, matched };
+    return { noise: true, reason: "third-party", matched };
+  }
+
+  // OPE-1553 — wallet-extension provider probe (raw, quoted form only).
+  if (isWalletProviderProbe(message)) {
+    const matched = "wallet-probe:window.ethereum";
     if (isNoiseExemptRoute(route)) return { noise: false, reason: null, matched };
     return { noise: true, reason: "third-party", matched };
   }

@@ -21,6 +21,11 @@
  * DRY RUN BY DEFAULT. ⚠️ OPE-1327 ships this tool; it must not be called with
  * dry_run:false on any prod series until OPE-1328 (John's STOP-gate).
  */
+import {
+  buildFieldHistoryRows,
+  fieldHistoryInserts,
+  systemActor,
+} from "@takemetothefair/db-schema/field-history";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { and, eq } from "drizzle-orm";
@@ -182,6 +187,22 @@ export function registerSeriesEditionModeTool(server: McpServer, db: Db, auth: A
             .update(events)
             .set({ editionKey: a.to, updatedAt: now })
             .where(and(eq(events.id, a.eventId), eq(events.seriesId, series.id)))
+        ),
+        // OPE-1653 — each member's old edition key, in the same atomic batch.
+        ...plan.assignments.flatMap((a) =>
+          fieldHistoryInserts(
+            db,
+            buildFieldHistoryRows({
+              table: events,
+              entityType: "event",
+              entityId: a.eventId,
+              before: { editionKey: a.from },
+              patch: { editionKey: a.to },
+              actor: auth.userId ?? systemActor("set_series_edition_mode"),
+              source: "mcp:set_series_edition_mode",
+              at: now,
+            })
+          )
         ),
         db.insert(adminActions).values({
           id: crypto.randomUUID(),

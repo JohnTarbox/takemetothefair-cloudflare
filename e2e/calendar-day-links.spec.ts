@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 /**
  * OPE-1488 — one click from a date to that day's Day view, and the date survives
@@ -7,10 +7,18 @@ import { test, expect, type Page } from "@playwright/test";
  * Data-independent on purpose: CI's E2E server runs on a migrated but EMPTY local
  * D1, and every path here is about navigation, not about events. All locators are
  * scoped to the calendar root (OPE-669: a page-wide `.first()` once hit the wrong
- * element). Dates are explicit URL params, so nothing depends on "today".
+ * element). Dates are explicit URL params, so nothing depends on "today" — except the
+ * non-current-month case, which computes its month relative to now (OPE-1566).
  */
 
-const cal = (page: Page) => page.getByTestId("cm-root");
+// OPE-1669 — scoped to #main-content, not page-wide. React streams each Suspense
+// boundary as a hidden `<div hidden id="S:n">` AFTER `</main>` and reveals it later
+// ($RC → a throttled $RV). If the boundary gets an update before it hydrates, React
+// renders it on the client while that hidden segment is still in <body>, so for a
+// moment the page holds TWO `cm-root`s and strict mode (which counts hidden nodes)
+// throws. Seen 4× on CI's cold `next start`. The scope excludes only the streamed
+// segment: a real double render inside <main> still fails strict mode.
+const cal = (page: Page) => page.locator("#main-content").getByTestId("cm-root");
 const activeTab = (page: Page) =>
   page.getByRole("tablist", { name: "Calendar view" }).locator('[aria-selected="true"]');
 
@@ -86,16 +94,25 @@ test.describe("Calendar → Day view (OPE-1488)", () => {
     await expect(page).toHaveURL(/date=2026-10-21/);
   });
 
-  test("Month moved to November, then the Day tab → Day view in November, not today", async ({
+  // OPE-1566 — this used a hard-coded `cal=2026-11` as "a month other than the
+  // current one", and went red the day November became the current month: the app
+  // (correctly, `focusForMonth`) then lands on TODAY. The month is now computed two
+  // months ahead, which can never be the current America/New_York month — the +2
+  // also absorbs the runner's UTC clock vs the server's Eastern one.
+  test("Month moved to a non-current month, then the Day tab → Day view on its 1st, not today", async ({
     page,
   }) => {
-    await open(page, "cal_view=month&cal=2026-11");
+    const ahead = new Date();
+    ahead.setUTCDate(1);
+    ahead.setUTCMonth(ahead.getUTCMonth() + 2);
+    const month = ahead.toISOString().slice(0, 7);
+    await open(page, `cal_view=month&cal=${month}`);
     await page
       .getByRole("tablist", { name: "Calendar view" })
       .getByRole("tab", { name: "Day", exact: true })
       .click();
     await expect(page).toHaveURL(/cal_view=day/);
-    await expect(page).toHaveURL(/date=2026-11-01/);
+    await expect(page).toHaveURL(new RegExp(`date=${month}-01`));
   });
 
   test("A direct Day link with date= opens on that day", async ({ page }) => {

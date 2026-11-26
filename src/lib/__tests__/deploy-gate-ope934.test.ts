@@ -36,6 +36,7 @@ describe("OPE-934 — automatic deploys (workflow_run)", () => {
       decision: "deploy",
       sha: MAIN,
       reason: expect.any(String),
+      loud: false,
     });
   });
 

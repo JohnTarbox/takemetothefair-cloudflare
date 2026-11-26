@@ -45,6 +45,7 @@ import {
   emailSendLedger,
   inboundEmails,
   operatorOutboundDrafts,
+  pendingPromoterContacts,
   promoterContacts,
   promoterOutreachAttempts,
   promoters,
@@ -53,6 +54,8 @@ import {
 import {
   contactSenderAuth,
   decidePromoterContactDomain,
+  matchableDomainsFor,
+  orgsForDomain,
   normalizeEmailAddress,
   parseMessageIds,
   planPromoterContactWrite,
@@ -112,43 +115,29 @@ export interface CaptureSummary {
   /**
    * DMARC passed on an ownable domain that is no promoter's website and the
    * resolver matched no promoter — the 2026-10-14 "an organizer we don't list
-   * yet is dropped" gap. Counted here; keeping such senders is deferred.
+   * yet is dropped" gap. Such a sender is now kept as a pending contact when
+   * the full OPE-1610 rule holds; see `pendingContact`.
    */
   alignedUnknownDomain: boolean;
+  /** OPE-1610 — true when a pending contact was recorded for this sender. */
+  pendingContact: boolean;
   skipped: string | null;
 }
 
-/** The promoter whose website's org domain IS the sender's (own domains only). */
-async function promotersFromDomain(
+/**
+ * The promoter that owns the sender's org domain (OPE-1614: its domain LIST,
+ * website host included). A domain on more than one promoter's list, or an
+ * operator-listed umbrella domain, is shared → `ambiguous`, no owner.
+ */
+export async function promotersFromDomain(
   db: Db,
   senderOrg: string | null
 ): Promise<{ ids: string[]; ambiguous: boolean; reason: string }> {
   if (!senderOrg) return { ids: [], ambiguous: false, reason: "no parseable sender domain" };
   if (isNonOwnableDomain(senderOrg))
     return { ids: [], ambiguous: false, reason: `${senderOrg} is a shared or free-mail domain` };
-  // instr, not LIKE: the pattern is built from the SENDER's domain and D1
-  // throws on a LIKE pattern over 50 chars. Only a prefilter — equality of
-  // the organizational domains below is the match.
-  const rows = await db
-    .select({ id: promoters.id, website: promoters.website })
-    .from(promoters)
-    .where(sql`instr(lower(${promoters.website}), ${senderOrg}) > 0`)
-    .limit(200);
-  const ids = rows
-    // senderOrg is already known ownable, so an equal site domain is too.
-    .filter((r) => organizationalDomain(r.website) === senderOrg)
-    .map((r) => r.id);
-  if (ids.length > 1)
-    return {
-      ids: [],
-      ambiguous: true,
-      reason: `${senderOrg} is the website domain of ${ids.length} promoters (ambiguous)`,
-    };
-  return {
-    ids,
-    ambiguous: false,
-    reason: ids.length ? "" : `${senderOrg} is no promoter's website`,
-  };
+  const owners = await orgsForDomain(db, "promoter", senderOrg);
+  return { ids: owners.ids, ambiguous: owners.shared, reason: owners.reason };
 }
 
 /** `inbound_emails.matched_entities` → its promoter matches, tolerating junk. */
@@ -167,6 +156,102 @@ function resolverPromoterMatches(json: string | null): Array<{ entityId: string;
       out.push({ entityId: m.entityId, basis: String(m.basis ?? "unknown") });
   }
   return out;
+}
+
+/**
+ * The record a sender resolved to when there is no promoter: the first
+ * non-promoter match, skipping brand-name hits, which say nothing about the
+ * sender. NULL when nothing usable matched (no record on file at all).
+ */
+function resolverOtherEntity(json: string | null): { type: string; id: string } | null {
+  if (!json) return null;
+  let arr: unknown;
+  try {
+    arr = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(arr)) return null;
+  for (const m of arr as Array<Record<string, unknown> | null>) {
+    if (
+      m &&
+      typeof m.entityType === "string" &&
+      typeof m.entityId === "string" &&
+      m.entityType !== "promoter" &&
+      m.basis !== "brand-name"
+    )
+      return { type: m.entityType, id: m.entityId };
+  }
+  return null;
+}
+
+/**
+ * OPE-1610 — keep a DMARC-aligned sender whose org has no promoter row yet.
+ *
+ * `decidePromoterContactDomain` has no promoter website to compare against
+ * here, so it is given the sender's own org domain. Every other condition it
+ * applies still holds (DMARC pass, aligned to From, ownable, not forwarded), so
+ * an unaligned pass or a forward records nothing. Status and first-validated
+ * date survive a later message.
+ */
+async function recordPendingContact(
+  db: Db,
+  input: {
+    row: {
+      fromDisplayName: string | null;
+      receivedAt: Date | null;
+      dmarcResult: string | null;
+      senderAuth: string | null;
+      authResultsRaw: string | null;
+      originalSenderAuth: string | null;
+      matchedEntities: string | null;
+    };
+    from: string;
+    senderOrg: string;
+    inboundEmailId: string;
+    now: Date;
+    /** The domain is on several promoters' lists: an operator picks the org. */
+    shared?: boolean;
+  }
+): Promise<boolean> {
+  const { row, from, senderOrg, inboundEmailId, now } = input;
+  const verdict = decidePromoterContactDomain(
+    {
+      fromAddress: from,
+      dmarcResult: row.dmarcResult,
+      authResultsRaw: row.authResultsRaw,
+      originalSenderAuth: row.originalSenderAuth,
+    },
+    `https://${senderOrg}`
+  );
+  if (!verdict.qualifies) return false;
+  const entity = resolverOtherEntity(row.matchedEntities);
+  const heardAt = row.receivedAt ?? now;
+  const fields = {
+    name: row.fromDisplayName?.trim().slice(0, 200) || null,
+    matchedEntityType: entity?.type ?? null,
+    matchedEntityId: entity?.id ?? null,
+    inboundEmailId,
+    validationEvidence: input.shared
+      ? `inbound ${inboundEmailId}: DMARC pass aligned to ${senderOrg}; shared domain, an operator picks the org`
+      : `inbound ${inboundEmailId}: DMARC pass aligned to ${senderOrg}; no promoter row yet`,
+    senderAuth: contactSenderAuth(row.senderAuth),
+    authDomain: verdict.authDomain,
+    lastHeardAt: heardAt,
+    updatedAt: now,
+  };
+  await db
+    .insert(pendingPromoterContacts)
+    .values({
+      id: crypto.randomUUID(),
+      email: from,
+      orgDomain: senderOrg,
+      firstValidatedAt: heardAt,
+      createdAt: now,
+      ...fields,
+    })
+    .onConflictDoUpdate({ target: pendingPromoterContacts.email, set: fields });
+  return true;
 }
 
 /** Thread → the promoter each promoter-addressed send of ours went to. */
@@ -276,6 +361,7 @@ export async function capturePromoterContacts(
     resolverPromoters: 0,
     notCaptured: [],
     alignedUnknownDomain: false,
+    pendingContact: false,
     skipped: null,
   };
   const done = async () => {
@@ -365,23 +451,32 @@ export async function capturePromoterContacts(
   }
 
   if (promoterIds.length === 0) {
+    const dmarcPass = (row.dmarcResult ?? "").toLowerCase() === "pass";
     summary.alignedUnknownDomain =
-      (row.dmarcResult ?? "").toLowerCase() === "pass" &&
+      dmarcPass &&
       !!senderOrg &&
       !isNonOwnableDomain(senderOrg) &&
       !byDomain.ambiguous &&
       summary.resolverPromoters === 0;
+    // OPE-1614: a SHARED domain is kept pending too, so an operator can pick
+    // the org; the hourly attach never attaches it (no single owner).
+    if ((summary.alignedUnknownDomain || (dmarcPass && byDomain.ambiguous)) && senderOrg) {
+      summary.pendingContact = await recordPendingContact(db, {
+        row,
+        from,
+        senderOrg,
+        inboundEmailId,
+        now,
+        shared: byDomain.ambiguous,
+      });
+    }
     return done();
   }
 
-  const sites = new Map(
-    (
-      await db
-        .select({ id: promoters.id, website: promoters.website })
-        .from(promoters)
-        .where(inArray(promoters.id, promoterIds))
-    ).map((p) => [p.id, p.website])
-  );
+  // OPE-1614: each promoter's matchable domain list (website host included,
+  // shared domains left out), not its website alone.
+  const sites = new Map<string, string[]>();
+  for (const id of promoterIds) sites.set(id, await matchableDomainsFor(db, "promoter", id));
   const name = row.fromDisplayName?.trim().slice(0, 200) || null;
 
   for (const promoterId of promoterIds) {

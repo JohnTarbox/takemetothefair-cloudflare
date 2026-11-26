@@ -1,9 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { z } from "zod";
 import { and, desc, eq, gt, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { adminActions, citationSupersedeScope, events, eventDataCitations } from "../schema.js";
 import { decodeHtmlEntities, dollarsToCents, jsonContent } from "../helpers.js";
-import { normalizeEventDate } from "@takemetothefair/utils";
+import {
+  isVendorEligibility,
+  normalizeEventDate,
+  VENDOR_ELIGIBILITY_ORG_MAX,
+} from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import {
@@ -114,6 +119,22 @@ const DENORM_FIELD_MAP: Record<string, DenormSpec> = {
     parse: (raw) => {
       const t = raw.trim();
       return t.length > 0 ? t.slice(0, 500) : undefined;
+    },
+  },
+  // OPE-1564 — who may be a vendor, cited like the fees. A value outside the
+  // enum parses to undefined, so create_event_citation never writes it.
+  vendor_eligibility: {
+    column: "vendorEligibility",
+    parse: (raw) => {
+      const u = raw.trim().toUpperCase();
+      return isVendorEligibility(u) ? u : undefined;
+    },
+  },
+  vendor_eligibility_org: {
+    column: "vendorEligibilityOrg",
+    parse: (raw) => {
+      const t = raw.trim();
+      return t.length > 0 ? t.slice(0, VENDOR_ELIGIBILITY_ORG_MAX) : undefined;
     },
   },
   indoor_outdoor: {
@@ -249,10 +270,17 @@ export async function applyDenormColumn(
     return { column: String(denorm.column), previousValue, newValue, skipReason: "unchanged" };
   }
 
-  await db
-    .update(events)
-    .set({ [denorm.column]: parsed, updatedAt: new Date() })
-    .where(eq(events.id, eventId));
+  // OPE-1653 — a citation that moves the denormalised column records what it
+  // replaced; `before` above is the value at this instant.
+  await updateWithFieldHistory(db, {
+    table: events,
+    entityType: "event",
+    entityId: eventId,
+    before: { [denorm.column]: before[0].v },
+    patch: { [denorm.column]: parsed, updatedAt: new Date() },
+    actor: systemActor("citation-denorm"),
+    source: "mcp:admin-citations.applyDenorm",
+  });
 
   return { column: String(denorm.column), previousValue, newValue, skipReason: null };
 }
@@ -312,7 +340,7 @@ const LIVE_DEFECT_SCHEMA = z
   })
   .optional()
   .describe(
-    "OPE-1065: pass this when your verification finds a LIVE field wrong (contradicted, unsupported or stale). It files a countable work item (event_discrepancies, detected_by='citation_flag') in the same call. Do NOT only write it in `notes` — nothing reads notes. Source-trap warnings about a CORRECT row ('this aggregator is stale, do not use it') are not live defects; keep those in notes."
+    "OPE-1065: pass this when your verification finds a LIVE field wrong (contradicted, unsupported or stale). It files a countable work item (event_discrepancies, detected_by='citation_flag') in the same call. Do NOT only write it in `notes` — nothing reads notes. Source-trap warnings about a CORRECT row ('this aggregator is stale, do not use it') are not live defects; keep those in notes. OPE-1622: an `unsupported` $0 admission on a free-by-nature event with no paid-ticket signal is NOT filed — it returns outcome 'community_default' (John's 2026-11-10 ruling) and `community_default_check` says why it did or did not apply."
   );
 
 type LiveDefectInput = z.infer<typeof LIVE_DEFECT_SCHEMA>;
@@ -1408,7 +1436,16 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             // OPE-1065 — rolled up so a 100-row call cannot bury a failed
             // emission inside one row's `live_defects`.
             live_defects_filed: created.reduce(
-              (n, r) => n + r.live_defects.filter((d) => d.outcome !== "failed").length,
+              (n, r) =>
+                n +
+                r.live_defects.filter(
+                  (d) => d.outcome !== "failed" && d.outcome !== "community_default"
+                ).length,
+              0
+            ),
+            // OPE-1622 — kept as the community default: not filed, not failed.
+            live_defects_community_default: created.reduce(
+              (n, r) => n + r.live_defects.filter((d) => d.outcome === "community_default").length,
               0
             ),
             live_defects_failed: created.reduce(

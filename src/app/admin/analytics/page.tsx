@@ -1,4 +1,5 @@
 import { requireAdmin } from "@/lib/require-admin";
+import { Fragment } from "react";
 import Link from "next/link";
 import { normalizeHealthMessageKey } from "@/lib/site-health-group-key";
 import {
@@ -29,12 +30,12 @@ import {
   CheckCircle2,
   ClipboardList,
   DollarSign,
-  Facebook,
   FileText,
   MessageSquare,
   Search,
   Sparkles,
   TrendingUp,
+  ExternalLink,
 } from "lucide-react";
 import { count, desc, eq, gte, sql } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,8 +76,9 @@ import {
   type SiteSearchQueriesResult,
   type SitemapStatus,
 } from "@/lib/search-console";
-import { computeMilestoneLayout, MILESTONE_CHART_DIMS } from "@/lib/charts/milestone-layout";
+import { MilestoneEChart } from "@/components/admin/charts/admin-charts";
 import { toMilestonePoints, type GscMilestonePoint } from "@/lib/charts/milestone-points";
+import { rollingWindowTotals, type WindowTotal } from "@/lib/analytics/derive-gsc-milestones";
 import { formatDateOnly, formatTimestampForServer } from "@/lib/datetime";
 import {
   isWindowKey,
@@ -90,6 +92,8 @@ import {
   type WindowKey,
 } from "@/lib/analytics-overview";
 import { gscWindowRange, windowDays } from "@/lib/analytics-overview/shared";
+import { chartDaysForWindow, chartPointsSince } from "@/lib/analytics-overview/window-series";
+import { INDEXNOW_SUBMISSION_RETENTION_DAYS } from "@takemetothefair/constants";
 import type { SiteHealthVerdict, InstrumentReading } from "@/lib/site-health-unified/verdict";
 import { ENGAGEMENT_WINDOW_DAYS } from "@/lib/site-health-unified/engagement";
 import {
@@ -104,6 +108,12 @@ import { CATALOG_BASIS_NOTE } from "@/lib/analytics-overview/catalog-basis";
 import { resolveTabAlias } from "@/lib/analytics-overview/tab-aliases";
 import { notFound, redirect } from "next/navigation";
 import {
+  parseRulePage,
+  ruleRowWindow,
+  RULE_PAGE_SIZE,
+  sortRuleRowsByLabel,
+} from "@/lib/recommendations/rule-row-window";
+import {
   AEO_BUCKET_LABELS,
   aeoBadgeColor,
   Ga4ApiError,
@@ -116,6 +126,7 @@ import {
   type Ga4Env,
 } from "@/lib/ga4";
 import { safeHref } from "@takemetothefair/utils";
+import { FacebookIcon } from "@/components/icons/brand-icons";
 import { computeContactScorecard, type ContactScorecard } from "@takemetothefair/db-schema";
 
 export const dynamic = "force-dynamic";
@@ -143,6 +154,9 @@ type PageProps = {
     // IndexNow tab filters — only consumed by IndexNowTab. Other tabs ignore.
     indexnow_limit?: string;
     indexnow_source?: string;
+    // OPE-1574 — Recommendations tab: focus one rule and page its rows.
+    rule?: string;
+    rpage?: string;
   }>;
 };
 
@@ -183,18 +197,21 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
           <div className="flex items-center gap-3">
             <WindowSelector currentWindow={window} />
             <Link
+              prefetch={false}
               href="/admin/diagnostics"
               className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
             >
               Diagnostics <ArrowRight className="w-3.5 h-3.5" />
             </Link>
             <Link
+              prefetch={false}
               href="/admin/analytics/ga4"
               className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
             >
               GA4 dashboard <ArrowRight className="w-3.5 h-3.5" />
             </Link>
             <Link
+              prefetch={false}
               href="/admin/analytics/automation"
               className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
             >
@@ -207,7 +224,12 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
       <TabBar currentTab={tab} />
 
       {tab === "overview" && <OverviewTab window={window} />}
-      {tab === "recommendations" && <RecommendationsTab />}
+      {tab === "recommendations" && (
+        <RecommendationsTab
+          focusRuleId={typeof params.rule === "string" ? params.rule : undefined}
+          focusPage={parseRulePage(typeof params.rpage === "string" ? params.rpage : undefined)}
+        />
+      )}
       {tab === "google" && <GoogleTab window={window} />}
       {tab === "bing" && <BingTab />}
       {tab === "site-health" && <SiteHealthTab />}
@@ -241,6 +263,10 @@ async function OverviewTab({ window }: { window: WindowKey }) {
     getFacebookTrafficSafe(env),
     loadContactScorecardSafe(db),
   ]);
+  const chartDays = chartDaysForWindow(windowDays(window));
+  // indexnow_submissions keeps 30 days, so a 90-day chart could never fill.
+  const publishingDays = Math.min(chartDays, INDEXNOW_SUBMISSION_RETENTION_DAYS);
+  const searchPoints = chartPointsSince(snapshot.kpiStrip90d.searchVisibility, chartDays);
 
   return (
     <>
@@ -278,11 +304,13 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <HeartbeatProbesCardView snapshot={snapshot} />
       </div>
 
-      {/* §10.3 KPI quartet — site CTR, conversion rate, brand split, sitemap quality.
+      {/* §10.3 KPI quartet — site CTR, conversion rate, brand split, sitemap quality —
+          plus OPE-1658's value-only official-site click rate beside conversion.
           State coloring (GREEN/YELLOW/RED) added in §6.3 — see kpiCardState helper. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <SiteCtrCardView snapshot={snapshot} />
         <ConversionRateCardView snapshot={snapshot} />
+        <OfficialSiteClickRateCardView snapshot={snapshot} />
         <BrandVsNonBrandCardView snapshot={snapshot} />
         <SitemapQualityCardView snapshot={snapshot} />
       </div>
@@ -309,66 +337,39 @@ async function OverviewTab({ window }: { window: WindowKey }) {
 
       <BlogCoverageCardView snapshot={snapshot} />
 
+      {/* OPE-1602 item 7 — one row of charts that follows the window selector,
+          replacing a fixed 30-day row and a fixed 90-day row. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <SparklineCard
-          title="Search visibility (last 30 days)"
-          tileId="overview.search-visibility-30d"
-          subtitle={`Daily Google search clicks · source: GSC${throughCaption(
-            snapshot.searchVisibilitySparkline
-          )}`}
-          points={snapshot.searchVisibilitySparkline}
+          title={`Search visibility (last ${chartDays} days)`}
+          tileId="overview.search-visibility-trend"
+          subtitle={`Daily Google search clicks · source: GSC${throughCaption(searchPoints)}`}
+          points={searchPoints}
           colorClass="stroke-violet-600"
           fillClass="fill-violet-100"
         />
         <SparklineCard
-          title="Conversions (last 30 days)"
-          tileId="overview.conversions-30d"
+          title={`Conversions (last ${chartDays} days)`}
+          tileId="overview.conversions-trend"
           subtitle="Daily outbound ticket + application clicks · source: D1 analytics_events"
-          points={snapshot.conversionsSparkline}
+          points={chartPointsSince(snapshot.kpiStrip90d.conversions, chartDays)}
           colorClass="stroke-blue-600"
           fillClass="fill-blue-100"
         />
         <SparklineCard
-          title="Publishing activity (last 30 days)"
-          tileId="overview.publishing-30d"
+          title={`Publishing activity (last ${publishingDays} days)`}
+          tileId="overview.publishing-trend"
           pausedReason={
             snapshot.indexnow.pause.state === "paused"
               ? "IndexNow paused (kill-switch set) — nothing is sent"
               : undefined
           }
           subtitle="Successful IndexNow submissions per day · source: D1 indexnow_submissions"
-          points={snapshot.publishingSparkline}
+          points={chartPointsSince(snapshot.publishingSparkline, publishingDays)}
           feed="indexnow_submissions"
           colorClass="stroke-emerald-600"
           fillClass="fill-emerald-100"
         />
-      </div>
-
-      {/* §10.3 90-day KPI strip. If 30d total equals 90d total, the older
-          60 days of the source table are empty (data is younger than 90d),
-          not a window-handling bug — query is parameterized on days=90. */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        <SparklineCard
-          title="Search visibility (last 90 days)"
-          tileId="overview.search-visibility-90d"
-          subtitle={`Daily Google search clicks · source: GSC${throughCaption(
-            snapshot.kpiStrip90d.searchVisibility
-          )}`}
-          points={snapshot.kpiStrip90d.searchVisibility}
-          colorClass="stroke-violet-600"
-          fillClass="fill-violet-100"
-        />
-        <SparklineCard
-          title="Conversions (last 90 days)"
-          tileId="overview.conversions-90d"
-          subtitle="Daily outbound ticket + application clicks · source: D1 analytics_events"
-          points={snapshot.kpiStrip90d.conversions}
-          colorClass="stroke-blue-600"
-          fillClass="fill-blue-100"
-        />
-        {/* OPE-1161 B10 — no 90-day publishing chart: indexnow_submissions keeps
-            30 days (INDEXNOW_SUBMISSION_RETENTION_DAYS), so it could never show
-            more than a third of its own window. */}
       </div>
 
       {/* Analyst cross-cutting fix (2026-05-29): split activity feed into
@@ -433,6 +434,7 @@ function WindowSelector({
         const active = w === currentWindow;
         return (
           <Link
+            prefetch={false}
             key={w}
             href={
               tab === "overview"
@@ -593,7 +595,12 @@ function CardLink({
   return (
     <div className={`relative block hover:opacity-90 transition-opacity ${className ?? ""}`.trim()}>
       {children}
-      <Link href={href} aria-label={label} className="absolute inset-0 rounded-lg" />
+      <Link
+        prefetch={false}
+        href={href}
+        aria-label={label}
+        className="absolute inset-0 rounded-lg"
+      />
     </div>
   );
 }
@@ -675,6 +682,10 @@ function CatalogGrowthCard({ snapshot }: { snapshot: OverviewSnapshot }) {
           <span className="text-xs text-muted-foreground">
             {fmt(card.totals.events)} events · {fmt(card.totals.venues)} venues ·{" "}
             {fmt(card.totals.vendors)} vendors
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {fmt(card.totals.promoters)} promoters · {fmt(card.totals.users)} real users ·{" "}
+            {fmt(card.totals.eventVendorLinks)} event-vendor links
           </span>
           {/* OPE-1347 #2 — say which population each count is. */}
           <span className="text-[11px] text-muted-foreground">{CATALOG_BASIS_NOTE}</span>
@@ -831,6 +842,9 @@ function kpiCardState(
     const ageLabel = typeof ageSec === "number" ? formatStaleAge(ageSec) : "unknown duration";
     return { state, actionPrompt: `Data feed stale ${ageLabel} — investigate source` };
   }
+  // OPE-1658 — a measured value held INDETERMINATE while its target is re-ruled.
+  const held = KPI_THRESHOLDS[name].awaitingRebaseline;
+  if (state === "INDETERMINATE" && held) return { state, actionPrompt: held };
   return { state };
 }
 
@@ -916,6 +930,35 @@ function ConversionRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           <span title={`Window ends ${c.windowEndDate} (48h GA4 finalization lag)`}>
             window ends {c.windowEndDate}
           </span>
+        </div>
+      }
+    />
+  );
+}
+
+/**
+ * OPE-1658 — click-through to the organizer's own page via the "Official Event
+ * Website" fallback button (no ticket URL). Its own number, value only: no
+ * GREEN/RED until there is a baseline, so it carries no KPI badge.
+ */
+function OfficialSiteClickRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.conversionRate;
+  return (
+    <KpiCard
+      tileId="overview.official-site-click-rate"
+      measurement={c.officialSiteRateMeasured}
+      title={`Official-site click rate (${c.windowDays}d)`}
+      value={measurementText(c.officialSiteRateMeasured, (v) => fmtPct(v, 2))}
+      icon={<ExternalLink className="w-5 h-5 text-sky-600" />}
+      iconColor="bg-sky-100"
+      footer={
+        <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+          <span>
+            {c.officialSiteClicks != null ? fmt(c.officialSiteClicks) : "—"} &ldquo;Official Event
+            Website&rdquo; clicks (organic search) / {c.sessions != null ? fmt(c.sessions) : "—"}{" "}
+            organic sessions
+          </span>
+          <span>no target yet — value only (OPE-1658)</span>
         </div>
       }
     />
@@ -1070,7 +1113,7 @@ function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummar
         tileId="overview.facebook-traffic"
         title="Facebook traffic (last 28d)"
         value="—"
-        icon={<Facebook className="w-5 h-5 text-muted-foreground" />}
+        icon={<FacebookIcon className="w-5 h-5 text-muted-foreground" />}
         iconColor="bg-muted"
         href="/admin/analytics/ga4"
         footer={<span className="text-xs text-muted-foreground">GA4 unavailable</span>}
@@ -1090,7 +1133,7 @@ function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummar
       measurement={sessionsM}
       title="Facebook traffic (last 28d)"
       value={measurementText(sessionsM, fmt)}
-      icon={<Facebook className="w-5 h-5 text-royal" />}
+      icon={<FacebookIcon className="w-5 h-5 text-royal" />}
       iconColor="bg-info-soft"
       href="/admin/analytics/ga4"
       footer={
@@ -1362,7 +1405,11 @@ function ActionQueueRow({ entry }: { entry: ActionQueueEntry }) {
               {sla.label}
             </span>
           )}
-          <Link href={entry.href} className="font-medium text-foreground hover:underline truncate">
+          <Link
+            prefetch={false}
+            href={entry.href}
+            className="font-medium text-foreground hover:underline truncate"
+          >
             {entry.title}
           </Link>
         </div>
@@ -1993,7 +2040,13 @@ function Sparkline({
 // "May ramp vs April end" stat needs the April point).
 const MILESTONE_CHART_DEFAULT_START = "2026-05-01";
 
-function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
+function GscMilestoneChartCard({
+  points,
+  rolling = [],
+}: {
+  points: GscMilestonePoint[];
+  rolling?: WindowTotal[];
+}) {
   if (points.length === 0) {
     return (
       <Card className="mb-6">
@@ -2033,6 +2086,11 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
   // with only pre-May milestones) so the chart never renders blank.
   const inRange = sorted.filter((p) => p.date >= MILESTONE_CHART_DEFAULT_START);
   const chartPoints = inRange.length > 0 ? inRange : sorted;
+  // The 28-day total, clipped to the same window the milestones are plotted on.
+  const chartRolling = rolling.filter((r) => r.date >= chartPoints[0].date);
+  const rollingThrough = chartRolling.length
+    ? formatDateOnly(chartRolling[chartRolling.length - 1].date)
+    : "";
 
   return (
     <Card className="mb-6">
@@ -2042,7 +2100,11 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
           <TileInfo id="google.milestones" title="Search clicks milestones" />
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
-          28-day click window · log scale · from May 2026
+          {chartRolling.length > 0
+            ? `Line: clicks in the trailing 28 days · dots: milestones · log scale · from May 2026${
+                rollingThrough ? ` · through ${rollingThrough}` : ""
+              }`
+            : "28-day click window · log scale · from May 2026"}
         </p>
         {/* OPE-456 — the two sources answer different questions and must not be
             conflated. Google skipped several badges outright (it jumped
@@ -2106,148 +2168,37 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
             <p className="text-xs text-muted-foreground">vs. April end</p>
           </div>
         </div>
-        <MilestoneChart points={chartPoints} />
+        <MilestoneChart points={chartPoints} rolling={chartRolling} />
       </CardContent>
     </Card>
   );
 }
 
-function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
-  // OPE-602 — layout maths extracted to `@/lib/charts/milestone-layout` so the
-  // label-collision and edge-clipping rules are testable. They are arithmetic,
-  // and none of it could be tested while it lived inside this markup.
-  const d = MILESTONE_CHART_DIMS;
-  const layout = computeMilestoneLayout(points, fmt, d);
-  const { coords, ticks, linePath, areaPath, dateLabelIndices, labelStride } = layout;
-  if (coords.length === 0) return null;
-  const baselineY = d.height - d.padBottom;
-
+// OPE-1565 — was hand-rolled SVG with stride/anchor collision arithmetic
+// (`@/lib/charts/milestone-layout`, OPE-602) that broke again as the series
+// grew to 42 points, and viewBox-scaled text (~5px on a phone). Now the shared
+// admin ECharts host; label collisions are the library's job.
+function MilestoneChart({
+  points,
+  rolling,
+}: {
+  points: GscMilestonePoint[];
+  rolling: WindowTotal[];
+}) {
   return (
-    <svg
-      viewBox={`0 0 ${d.width} ${d.height}`}
-      // OPE-602 ROOT CAUSE. This was `preserveAspectRatio="none"` with a pinned
-      // `h-56`, which let the axes scale independently: every glyph and dot was
-      // stretched, and the amount CHANGED WITH THE WINDOW (1.41x too wide at
-      // 1151px, 0.41x at 380px). `r={4}` painted an 11.5 x 8.1px ellipse.
-      //
-      // `meet` alone would letterbox, so the box is given the viewBox's own
-      // aspect ratio and the SVG fills it exactly — undistorted at every width,
-      // with height scaling instead of glyphs.
-      preserveAspectRatio="xMidYMid meet"
-      style={{ aspectRatio: `${d.width} / ${d.height}` }}
-      className="w-full h-auto"
-      aria-label="Search clicks milestone growth chart"
-      role="img"
-    >
-      {/* OPE-602 defect 4 — log-scale gridlines and ticks. The subtitle
-          promised "log scale" while the plot had a single baseline rule and no
-          ticks, so nothing let a reader take a value off the curve: the line
-          was decorative and the printed labels were the only data. */}
-      {ticks.map((t) => (
-        <g key={`tick-${t.value}`}>
-          <line
-            x1={d.padLeft}
-            y1={t.y}
-            x2={d.width - d.padRight}
-            y2={t.y}
-            className="stroke-gray-100"
-            strokeWidth={1}
-          />
-          <text
-            x={d.padLeft}
-            y={t.y - 2}
-            textAnchor="start"
-            className="fill-gray-400"
-            style={{ fontSize: "9px" }}
-          >
-            {fmt(t.value)}
-          </text>
-        </g>
-      ))}
-      {/* baseline at the bottom of the plot area */}
-      <line
-        x1={d.padLeft}
-        y1={baselineY}
-        x2={d.width - d.padRight}
-        y2={baselineY}
-        className="stroke-gray-200"
-        strokeWidth={1}
-      />
-      <path d={areaPath} className="fill-blue-100" opacity={0.5} />
-      <path d={linePath} className="stroke-blue-600 fill-none" strokeWidth={2} />
-      {coords.map((c, i) => (
-        <g key={`${c.date}-${i}`}>
-          {/* dot — OPE-456: a HOLLOW dot is a crossing we derived from our own
-              daily totals; a solid dot is a badge Google actually awarded.
-              Shape rather than colour so the distinction survives a greyscale
-              print and does not depend on the legend being read. */}
-          <circle
-            cx={c.x}
-            cy={c.y}
-            r={4}
-            className={c.derived ? "fill-white stroke-blue-600" : "fill-blue-600"}
-            strokeWidth={c.derived ? 2 : 0}
-          />
-          {/* OPE-602 defect 6 — per-point detail. There were zero <title>
-              elements and one aria-label on the whole svg, so hovering a dot
-              gave nothing and a screen reader got "growth chart" and no data. */}
-          <title>
-            {`${fmt(c.threshold)} clicks — ${formatDateOnly(c.date) || c.date}${
-              c.derived ? " (derived from our own daily totals)" : ""
-            }`}
-          </title>
-          {/* value label — drawn every `labelStride` points (defect 1) and
-              anchored away from the edge (defect 2). */}
-          {c.showLabel && (
-            <text
-              x={c.x}
-              y={c.y - 10}
-              textAnchor={c.labelAnchor}
-              className="fill-gray-900 text-xs font-semibold"
-              style={{ fontSize: "11px" }}
-            >
-              {fmt(c.threshold)}
-            </text>
-          )}
-        </g>
-      ))}
-      {dateLabelIndices.map((idx) => {
-        const c = coords[idx];
-        const anchor: "start" | "middle" | "end" =
-          idx === 0 ? "start" : idx === coords.length - 1 ? "end" : "middle";
-        return (
-          <text
-            key={`date-${idx}`}
-            x={c.x}
-            y={baselineY + 16}
-            textAnchor={anchor}
-            className="fill-gray-600"
-            style={{ fontSize: "11px" }}
-          >
-            {formatDateOnly(c.date) || c.date}
-          </text>
-        );
-      })}
-      {/* OPE-602 defect 3, stated rather than silently fixed: points are
-          INDEX-spaced, so the middle date label sits at the middle MILESTONE,
-          not the middle date, and the curve's right-hand flattening is partly
-          a spacing artifact. Date-spacing them honestly is blocked on OPE-456
-          — `reached_date` defaults to the forwarding email's date and
-          keep-earliest idempotency makes it uncorrectable — so a date-spaced
-          axis would be no more truthful than this one, only more convincing.
-          The caption below the chart now says so. */}
-      {labelStride > 1 && (
-        <text
-          x={d.width - d.padRight}
-          y={d.padTop - 16}
-          textAnchor="end"
-          className="fill-gray-400"
-          style={{ fontSize: "9px" }}
-        >
-          {`every ${labelStride}${labelStride === 2 ? "nd" : labelStride === 3 ? "rd" : "th"} milestone labelled`}
-        </text>
-      )}
-    </svg>
+    <MilestoneEChart
+      points={points.map((p) => ({
+        threshold: p.threshold,
+        date: p.date,
+        dateLabel: formatDateOnly(p.date) || p.date,
+        derived: p.derived,
+      }))}
+      rolling={rolling.map((r) => ({
+        date: r.date,
+        total: r.total,
+        dateLabel: formatDateOnly(r.date) || r.date,
+      }))}
+    />
   );
 }
 
@@ -2368,7 +2319,14 @@ function ScanFreshnessBadge({ lastScannedAt }: { lastScannedAt: Date | null }) {
 const RECS_WOW_UNAVAILABLE_REASON =
   "Week-over-week not measured: last week's active count can't be rebuilt (last-seen times and snoozes aren't kept as history), and comparing it with a different count showed changes that never happened.";
 
-async function RecommendationsTab() {
+async function RecommendationsTab({
+  focusRuleId,
+  focusPage,
+}: {
+  /** OPE-1574 — `?rule=<ruleId>`: show this rule's rows paged, not previewed. */
+  focusRuleId?: string;
+  focusPage: number;
+}) {
   const { getActiveItems, getScanState, getCycleState } =
     await import("@/lib/recommendations/engine");
   const { RecommendationActions } = await import("@/components/admin/recommendation-actions");
@@ -2777,6 +2735,7 @@ async function RecommendationsTab() {
                               const href = safeHref(o.targetUrl, { allowRelative: true });
                               return href ? (
                                 <Link
+                                  prefetch={false}
                                   href={href}
                                   target="_blank"
                                   rel="noreferrer"
@@ -2865,9 +2824,19 @@ async function RecommendationsTab() {
               {groups.map((group) => {
                 const meta = severityMeta[group.severity];
                 const count = group.items.length;
-                const defaultOpen = count === 1;
+                const focused = focusRuleId === group.ruleId;
+                const defaultOpen = count === 1 || focused;
+                // OPE-1574 — render a window of rows, never all of them. A
+                // collapsed <details> is still serialized into the HTML, so
+                // rendering every item made this tab 39 MB. Counts above and
+                // in the chip still come from the full group.items.
+                const win = ruleRowWindow({ total: count, focused, page: focusPage });
+                const ruleHref = (page: number) =>
+                  `/admin/analytics?tab=recommendations&rule=${encodeURIComponent(group.ruleId)}${
+                    page > 1 ? `&rpage=${page}` : ""
+                  }#rule-${group.ruleId}`;
                 return (
-                  <Card key={group.ruleId} className={meta.cardBorder}>
+                  <Card key={group.ruleId} id={`rule-${group.ruleId}`} className={meta.cardBorder}>
                     <details open={defaultOpen} className="group">
                       <summary className="cursor-pointer p-5 list-none [&::-webkit-details-marker]:hidden">
                         <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -2922,13 +2891,11 @@ async function RecommendationsTab() {
                         </div>
                       </summary>
                       <div className="border-t border-border divide-y divide-gray-100">
-                        {[...group.items]
-                          .sort((a, b) =>
-                            targetLabel(a).localeCompare(targetLabel(b), undefined, {
-                              sensitivity: "base",
-                              numeric: true,
-                            })
-                          )
+                        {/* OPE-1574 — one shared collator, label computed once
+                            per row: the per-call localeCompare(options) sort
+                            of the 24K-row vendor rule cost seconds of CPU. */}
+                        {sortRuleRowsByLabel(group.items, targetLabel)
+                          .slice(win.start, win.end)
                           .map((item) => {
                             const link = targetLink(item);
                             const meta2 = targetMeta(item);
@@ -2940,7 +2907,11 @@ async function RecommendationsTab() {
                                 <div className="min-w-0 flex-1">
                                   <p className="text-sm text-foreground">
                                     {link ? (
-                                      <Link href={link} className="text-royal hover:underline">
+                                      <Link
+                                        prefetch={false}
+                                        href={link}
+                                        className="text-royal hover:underline"
+                                      >
                                         {targetLabel(item)}
                                       </Link>
                                     ) : (
@@ -2955,6 +2926,46 @@ async function RecommendationsTab() {
                               </div>
                             );
                           })}
+                        {win.truncated && (
+                          <div className="px-5 py-3 text-xs text-muted-foreground flex items-center gap-3 flex-wrap">
+                            <span className="tabular-nums">
+                              Showing {fmt(win.start + 1)}–{fmt(win.end)} of {fmt(count)}
+                            </span>
+                            {!focused ? (
+                              <Link
+                                prefetch={false}
+                                href={ruleHref(1)}
+                                className="text-royal hover:underline"
+                              >
+                                View all {fmt(count)}
+                              </Link>
+                            ) : (
+                              <>
+                                {win.page > 1 && (
+                                  <Link
+                                    prefetch={false}
+                                    href={ruleHref(win.page - 1)}
+                                    className="text-royal hover:underline"
+                                  >
+                                    ← Previous {RULE_PAGE_SIZE}
+                                  </Link>
+                                )}
+                                <span>
+                                  page {win.page} of {win.pageCount}
+                                </span>
+                                {win.page < win.pageCount && (
+                                  <Link
+                                    prefetch={false}
+                                    href={ruleHref(win.page + 1)}
+                                    className="text-royal hover:underline"
+                                  >
+                                    Next {RULE_PAGE_SIZE} →
+                                  </Link>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </details>
                   </Card>
@@ -3030,9 +3041,116 @@ function parseIndexNowLimit(raw: string | undefined): IndexNowLimit {
   return INDEXNOW_LIMITS.includes(n as IndexNowLimit) ? (n as IndexNowLimit) : 25;
 }
 
+/**
+ * OPE-1602 item 6 — the one place IndexNow's operational state is shown. It was
+ * split across this tab, a Bing-tab tile and card, and a Diagnostics card.
+ */
+function IndexNowOperationsCard({
+  indexnow,
+  quota,
+}: {
+  indexnow: IndexNowOps;
+  quota: BingIndexNowQuota | null;
+}) {
+  // Kill-switch (paused) wins over cooldown, matching the breaker's precedence.
+  // With no KV read the chip says Unknown, where this would have said Active.
+  const inState: { label: string; className: string } = !indexnow.kvAvailable
+    ? indexNowChip(indexnow)
+    : indexnow.paused
+      ? {
+          label: `PAUSED${indexnow.pauseNote ? ` — ${indexnow.pauseNote}` : ""}`,
+          className: "text-amber-600",
+        }
+      : indexnow.breaker.reason === "cooldown"
+        ? {
+            label: `Cooldown until ${
+              indexnow.breaker.until
+                ? formatTimestampForServer(new Date(indexnow.breaker.until))
+                : "unknown"
+            }`,
+            className: "text-amber-600",
+          }
+        : { label: "Active", className: "text-emerald-600" };
+  const attempted7d = indexnow.sent7d + indexnow.failed7d;
+  const successRate7d =
+    indexnow.countsAvailable && attempted7d > 0
+      ? `${((indexnow.sent7d / attempted7d) * 100).toFixed(1)}%`
+      : "—";
+
+  return (
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between gap-2">
+          <span>
+            IndexNow operations{" "}
+            <TileInfo id="bing.indexnow-operations" title="IndexNow operations" />
+          </span>
+          <IndexNowKillSwitchToggle />
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-sm text-muted-foreground">Ping pipeline</p>
+            <p className={`text-lg font-semibold mt-1 ${inState.className}`}>{inState.label}</p>
+            {!indexnow.kvAvailable && (
+              <p className="text-xs text-muted-foreground mt-1 italic">
+                Breaker state unavailable (no KV binding).
+              </p>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-6 text-sm">
+            <div>
+              <p className="text-xs text-muted-foreground">Sent 24h / 7d</p>
+              <p className="font-semibold tabular-nums mt-1">
+                {measurementText(indexNowCount(indexnow.sent24h, indexnow.countsAvailable), fmt)} /{" "}
+                {measurementText(indexNowCount(indexnow.sent7d, indexnow.countsAvailable), fmt)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Failed 24h / 7d</p>
+              <p className="font-semibold tabular-nums mt-1">
+                {measurementText(indexNowCount(indexnow.failed24h, indexnow.countsAvailable), fmt)}{" "}
+                / {measurementText(indexNowCount(indexnow.failed7d, indexnow.countsAvailable), fmt)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Success rate 7d</p>
+              <p className="font-semibold tabular-nums mt-1">{successRate7d}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Skipped 24h</p>
+              <p className="font-semibold tabular-nums mt-1">
+                {measurementText(indexNowCount(indexnow.skipped24h, indexnow.countsAvailable), fmt)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">BWT submit quota</p>
+              <p className="font-semibold tabular-nums mt-1">
+                {quota
+                  ? `${fmt(quota.dailyRemaining)} / ${fmt(quota.dailyQuota)}`
+                  : "— · quota API unavailable"}
+              </p>
+            </div>
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground mt-3">
+          Source: D1 indexnow_submissions + REL4/REL6 breaker in RATE_LIMIT_KV. BWT submit quota is
+          the separate Bing Webmaster URL-submission API. &ldquo;Skipped&rdquo; counts
+          dedup-suppressed, no-key, and breaker-paused submissions.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source?: string }) {
   const db = getCloudflareDb();
   const limit = parseIndexNowLimit(rawLimit);
+  const [indexnowOps, quota] = await Promise.all([
+    loadIndexNowOps(),
+    getIndexNowQuota(getCloudflareEnv()).catch(() => null),
+  ]);
   // Source filter: free-form (event.approve, vendor.create, etc.), but we
   // restrict to a sane set for the dropdown so admins don't have to guess.
   const trimmedSource = source?.trim() || null;
@@ -3083,145 +3201,151 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <CardTitle>
-            Recent IndexNow submissions
-            {trimmedSource ? ` · source=${trimmedSource}` : ""} (last {limit})
-            <TileInfo id="indexnow.recent-submissions" title="Recent IndexNow submissions" />
-          </CardTitle>
-          <div className="flex items-center gap-2 text-sm">
-            {/* Source dropdown — server-rendered <select> wrapped as a controlled
+    <>
+      <IndexNowOperationsCard indexnow={indexnowOps} quota={quota} />
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <CardTitle>
+              Recent IndexNow submissions
+              {trimmedSource ? ` · source=${trimmedSource}` : ""} (last {limit})
+              <TileInfo id="indexnow.recent-submissions" title="Recent IndexNow submissions" />
+            </CardTitle>
+            <div className="flex items-center gap-2 text-sm">
+              {/* Source dropdown — server-rendered <select> wrapped as a controlled
                 navigation. We render distinct options from recent submissions. */}
-            <form method="get" action="/admin/analytics" className="flex items-center gap-2">
-              <input type="hidden" name="tab" value="indexnow" />
-              {limit !== 25 && <input type="hidden" name="indexnow_limit" value={String(limit)} />}
-              <select
-                name="indexnow_source"
-                defaultValue={trimmedSource ?? ""}
-                className="rounded-md border border-border px-2 py-1 text-sm"
-              >
-                <option value="">All sources</option>
-                {distinctSources.map((row) => (
-                  <option key={row.source} value={row.source}>
-                    {row.source}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="submit"
-                className="rounded-md border border-border px-2 py-1 text-sm hover:bg-muted"
-              >
-                Apply
-              </button>
-            </form>
-            <div className="inline-flex items-center bg-muted rounded-lg p-1 text-xs">
-              {INDEXNOW_LIMITS.map((n) => (
-                <Link
-                  key={n}
-                  href={filterUrl({ limit: n })}
-                  className={
-                    "px-2 py-0.5 rounded " +
-                    (n === limit
-                      ? "bg-card shadow text-foreground"
-                      : "text-muted-foreground hover:text-foreground")
-                  }
+              <form method="get" action="/admin/analytics" className="flex items-center gap-2">
+                <input type="hidden" name="tab" value="indexnow" />
+                {limit !== 25 && (
+                  <input type="hidden" name="indexnow_limit" value={String(limit)} />
+                )}
+                <select
+                  name="indexnow_source"
+                  defaultValue={trimmedSource ?? ""}
+                  className="rounded-md border border-border px-2 py-1 text-sm"
                 >
-                  {n}
-                </Link>
-              ))}
+                  <option value="">All sources</option>
+                  {distinctSources.map((row) => (
+                    <option key={row.source} value={row.source}>
+                      {row.source}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="submit"
+                  className="rounded-md border border-border px-2 py-1 text-sm hover:bg-muted"
+                >
+                  Apply
+                </button>
+              </form>
+              <div className="inline-flex items-center bg-muted rounded-lg p-1 text-xs">
+                {INDEXNOW_LIMITS.map((n) => (
+                  <Link
+                    prefetch={false}
+                    key={n}
+                    href={filterUrl({ limit: n })}
+                    className={
+                      "px-2 py-0.5 rounded " +
+                      (n === limit
+                        ? "bg-card shadow text-foreground"
+                        : "text-muted-foreground hover:text-foreground")
+                    }
+                  >
+                    {n}
+                  </Link>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      </CardHeader>
-      <CardContent className="p-0">
-        <table className="w-full text-sm">
-          <thead className="bg-muted text-muted-foreground">
-            <tr>
-              <th className="text-left px-6 py-2 font-medium">Time</th>
-              <th className="text-left px-6 py-2 font-medium">Source</th>
-              <th className="text-right px-6 py-2 font-medium">URLs</th>
-              <th className="text-left px-6 py-2 font-medium">Status</th>
-              <th className="text-right px-6 py-2 font-medium">HTTP</th>
-              <th className="text-left px-6 py-2 font-medium">Detail</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {recent.length === 0 ? (
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-muted text-muted-foreground">
               <tr>
-                <td colSpan={6} className="px-6 py-6 text-muted-foreground">
-                  No IndexNow submissions recorded yet. Trigger one by editing a published blog post
-                  or transitioning an event to APPROVED.
-                </td>
+                <th className="text-left px-6 py-2 font-medium">Time</th>
+                <th className="text-left px-6 py-2 font-medium">Source</th>
+                <th className="text-right px-6 py-2 font-medium">URLs</th>
+                <th className="text-left px-6 py-2 font-medium">Status</th>
+                <th className="text-right px-6 py-2 font-medium">HTTP</th>
+                <th className="text-left px-6 py-2 font-medium">Detail</th>
               </tr>
-            ) : (
-              recent.map((row) => {
-                let urlsArr: string[] = [];
-                try {
-                  urlsArr = JSON.parse(row.urls) as string[];
-                } catch {
-                  // leave empty
-                }
-                return (
-                  <tr key={row.id} className="align-top">
-                    <td className="px-6 py-2 whitespace-nowrap text-foreground tabular-nums">
-                      {formatTimestampForServer(row.timestamp)}
-                    </td>
-                    <td className="px-6 py-2 font-mono text-xs text-foreground">{row.source}</td>
-                    <td className="px-6 py-2 text-right tabular-nums">{fmt(row.urlCount)}</td>
-                    <td className="px-6 py-2">{statusBadge(row.status)}</td>
-                    <td className="px-6 py-2 text-right tabular-nums text-foreground">
-                      {row.httpStatus ?? "—"}
-                    </td>
-                    <td className="px-6 py-2 text-xs text-foreground break-all max-w-md">
-                      {row.errorMessage ? (
-                        <span className="text-red-700">{row.errorMessage}</span>
-                      ) : urlsArr.length === 0 ? (
-                        "—"
-                      ) : urlsArr.length === 1 ? (
-                        <a
-                          href={safeHref(urlsArr[0])}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-mono text-navy hover:underline"
-                        >
-                          {urlsArr[0]}
-                        </a>
-                      ) : (
-                        <details className="cursor-pointer">
-                          <summary className="select-none">
-                            <span className="font-mono">{urlsArr[0]}</span>
-                            <span className="text-muted-foreground">
-                              {" "}
-                              +{urlsArr.length - 1} more (click to expand)
-                            </span>
-                          </summary>
-                          <ul className="mt-2 space-y-1 pl-4 border-l-2 border-border">
-                            {urlsArr.map((url, i) => (
-                              <li key={i} className="font-mono break-all">
-                                <a
-                                  href={safeHref(url)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-navy hover:underline"
-                                >
-                                  {url}
-                                </a>
-                              </li>
-                            ))}
-                          </ul>
-                        </details>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </CardContent>
-    </Card>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {recent.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-6 text-muted-foreground">
+                    No IndexNow submissions recorded yet. Trigger one by editing a published blog
+                    post or transitioning an event to APPROVED.
+                  </td>
+                </tr>
+              ) : (
+                recent.map((row) => {
+                  let urlsArr: string[] = [];
+                  try {
+                    urlsArr = JSON.parse(row.urls) as string[];
+                  } catch {
+                    // leave empty
+                  }
+                  return (
+                    <tr key={row.id} className="align-top">
+                      <td className="px-6 py-2 whitespace-nowrap text-foreground tabular-nums">
+                        {formatTimestampForServer(row.timestamp)}
+                      </td>
+                      <td className="px-6 py-2 font-mono text-xs text-foreground">{row.source}</td>
+                      <td className="px-6 py-2 text-right tabular-nums">{fmt(row.urlCount)}</td>
+                      <td className="px-6 py-2">{statusBadge(row.status)}</td>
+                      <td className="px-6 py-2 text-right tabular-nums text-foreground">
+                        {row.httpStatus ?? "—"}
+                      </td>
+                      <td className="px-6 py-2 text-xs text-foreground break-all max-w-md">
+                        {row.errorMessage ? (
+                          <span className="text-red-700">{row.errorMessage}</span>
+                        ) : urlsArr.length === 0 ? (
+                          "—"
+                        ) : urlsArr.length === 1 ? (
+                          <a
+                            href={safeHref(urlsArr[0])}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono text-navy hover:underline"
+                          >
+                            {urlsArr[0]}
+                          </a>
+                        ) : (
+                          <details className="cursor-pointer">
+                            <summary className="select-none">
+                              <span className="font-mono">{urlsArr[0]}</span>
+                              <span className="text-muted-foreground">
+                                {" "}
+                                +{urlsArr.length - 1} more (click to expand)
+                              </span>
+                            </summary>
+                            <ul className="mt-2 space-y-1 pl-4 border-l-2 border-border">
+                              {urlsArr.map((url, i) => (
+                                <li key={i} className="font-mono break-all">
+                                  <a
+                                    href={safeHref(url)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-navy hover:underline"
+                                  >
+                                    {url}
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
@@ -3357,24 +3481,33 @@ function TabBar({ currentTab }: { currentTab: TabKey }) {
         const href =
           tab.key === "overview" ? "/admin/analytics" : `/admin/analytics?tab=${tab.key}`;
         return (
-          <Link
-            key={tab.key}
-            href={href}
-            role="tab"
-            aria-selected={isActive}
-            className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-              isActive
-                ? "bg-secondary text-secondary-foreground"
-                : "bg-muted text-foreground hover:bg-muted"
-            }`}
-          >
-            {tab.label}
-          </Link>
+          <Fragment key={tab.key}>
+            <Link
+              prefetch={false}
+              href={href}
+              role="tab"
+              aria-selected={isActive}
+              className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                isActive
+                  ? "bg-secondary text-secondary-foreground"
+                  : "bg-muted text-foreground hover:bg-muted"
+              }`}
+            >
+              {tab.label}
+            </Link>
+            {/* OPE-1602 item 6 — its own route, but it belongs beside Google. */}
+            {tab.key === "google" && (
+              <Link
+                prefetch={false}
+                href="/admin/stuck-urls"
+                className="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium transition-colors bg-muted text-foreground hover:bg-muted"
+              >
+                Stuck URLs
+              </Link>
+            )}
+          </Fragment>
         );
       })}
-      {/* REL4 kill-switch — sits to the right of the IndexNow tab (the last tab)
-          and only on the IndexNow view, where it's contextually relevant. */}
-      {currentTab === "indexnow" && <IndexNowKillSwitchToggle />}
     </div>
   );
 }
@@ -3475,17 +3608,56 @@ async function loadGscMilestones(): Promise<GscMilestonePoint[]> {
   return toMilestonePoints(rows);
 }
 
+/**
+ * The trailing 28-day click total per day, from our own GSC dailies — the line
+ * the milestone dots sit on. A milestone records only a new high, so without
+ * this line a seasonal decline (31.2K on 2026-09-20 → 16.7K on 10-30) read as
+ * "no data since Sep 19".
+ *
+ * Reads from 27 days before the chart's start so its first window is complete.
+ * Refuses (returns []) if the table ever holds two GSC properties, for the same
+ * reason the milestone derivation does: summing them would double every total.
+ * Degrades to no line on any error — the milestone chart must still render.
+ */
+async function loadGscRollingClicks(): Promise<WindowTotal[]> {
+  try {
+    const { gscDailyTotals } = await import("@/lib/db/schema");
+    const { gte: gteOp, asc } = await import("drizzle-orm");
+    const from = new Date(
+      Date.parse(`${MILESTONE_CHART_DEFAULT_START}T00:00:00Z`) - 27 * 86_400_000
+    )
+      .toISOString()
+      .slice(0, 10);
+    const rows = await getCloudflareDb()
+      .select({
+        siteUrl: gscDailyTotals.siteUrl,
+        date: gscDailyTotals.date,
+        clicks: gscDailyTotals.clicks,
+      })
+      .from(gscDailyTotals)
+      .where(gteOp(gscDailyTotals.date, from))
+      .orderBy(asc(gscDailyTotals.date));
+    if (new Set(rows.map((r) => r.siteUrl)).size > 1) return [];
+    return rollingWindowTotals(rows, 28);
+  } catch {
+    return [];
+  }
+}
+
 async function GoogleTab({ window }: { window: WindowKey }) {
   // Milestone card reads from our own D1 (gsc_milestone_emails), not the
   // Search Console API — so it must render whether or not SC_SITE_URL is
   // configured. Load + render it ABOVE the GSC API gate. The GSC-API
   // sections below early-return GscErrorPanel when SC is unconfigured.
-  const milestones = await loadGscMilestones();
+  const [milestones, rollingClicks] = await Promise.all([
+    loadGscMilestones(),
+    loadGscRollingClicks(),
+  ]);
   const result = await loadGscData(window);
   if (!result.ok) {
     return (
       <>
-        <GscMilestoneChartCard points={milestones} />
+        <GscMilestoneChartCard points={milestones} rolling={rollingClicks} />
         <GscErrorPanel kind={result.kind} message={result.message} />
       </>
     );
@@ -3575,7 +3747,7 @@ async function GoogleTab({ window }: { window: WindowKey }) {
         </Card>
       </div>
 
-      <GscMilestoneChartCard points={milestones} />
+      <GscMilestoneChartCard points={milestones} rolling={rollingClicks} />
 
       <Card className="mb-6">
         <CardHeader>
@@ -3742,6 +3914,7 @@ interface IndexNowOps {
   failed24h: number;
   skipped24h: number;
   sent7d: number;
+  failed7d: number;
   kvAvailable: boolean;
   /** OPE-1131 — false when the D1 read failed, so the zeros above are not counts. */
   countsAvailable: boolean;
@@ -3755,6 +3928,7 @@ const EMPTY_INDEXNOW_OPS: IndexNowOps = {
   failed24h: 0,
   skipped24h: 0,
   sent7d: 0,
+  failed7d: 0,
   kvAvailable: false,
   countsAvailable: false,
 };
@@ -3783,6 +3957,7 @@ async function loadIndexNowOps(): Promise<IndexNowOps> {
     let failed24h = 0;
     let skipped24h = 0;
     let sent7d = 0;
+    let failed7d = 0;
     let countsAvailable = true;
     try {
       const db = getCloudflareDb();
@@ -3803,6 +3978,7 @@ async function loadIndexNowOps(): Promise<IndexNowOps> {
           sent7d += c7;
         } else if (r.status === "failure") {
           failed24h += c24;
+          failed7d += c7;
         } else {
           // no_key / no_eligible_urls / skipped / suppressed_dedup / breaker_paused / …
           skipped24h += c24;
@@ -3822,6 +3998,7 @@ async function loadIndexNowOps(): Promise<IndexNowOps> {
       failed24h,
       skipped24h,
       sent7d,
+      failed7d,
       kvAvailable: kv !== null && pause.readOk,
       countsAvailable,
     };
@@ -3835,7 +4012,6 @@ interface BingTabData {
   pages: BingPageRow[];
   crawl: BingCrawlStatsRow[];
   scan: BingSiteScanIssue[];
-  quota: BingIndexNowQuota | null;
   indexnow: IndexNowOps;
   // OPE-72 — wired into the allSettled batch below. Traffic drives the KPI-header
   // WoW deltas + sparklines; sitemaps drive the submission table + duplicate-host
@@ -3857,7 +4033,6 @@ async function loadBingData(): Promise<BingLoad> {
       getPageStats(env),
       getCrawlStats(env),
       getSiteScanIssues(env),
-      getIndexNowQuota(env),
       getTrafficStats(env),
       getSitemaps(env),
     ]);
@@ -3870,7 +4045,7 @@ async function loadBingData(): Promise<BingLoad> {
         return { ok: false, kind: "config", message: err.message };
       }
     }
-    const [queries, pages, crawl, scan, quota, traffic, sitemaps] = settled.map((r) =>
+    const [queries, pages, crawl, scan, traffic, sitemaps] = settled.map((r) =>
       r.status === "fulfilled" ? r.value : null
     );
     const reportOrder: Array<BingReport | null> = [
@@ -3878,7 +4053,6 @@ async function loadBingData(): Promise<BingLoad> {
       "pages",
       "crawl",
       "scan",
-      null, // quota already renders its own "—"
       "traffic",
       "sitemaps",
     ];
@@ -3895,7 +4069,6 @@ async function loadBingData(): Promise<BingLoad> {
         pages: (pages as BingPageRow[] | null) ?? [],
         crawl: (crawl as BingCrawlStatsRow[] | null) ?? [],
         scan: (scan as BingSiteScanIssue[] | null) ?? [],
-        quota: (quota as BingIndexNowQuota | null) ?? null,
         indexnow,
         traffic: (traffic as BingTrafficStatsRow[] | null) ?? [],
         sitemaps: (sitemaps as BingSitemap[] | null) ?? [],
@@ -3998,7 +4171,7 @@ async function BingTab() {
       days: sql<number>`COUNT(*)`,
     })
     .from(bingDailyMetrics);
-  const { queries, pages, crawl, scan, quota, indexnow, traffic, sitemaps, failed } = result.data;
+  const { queries, pages, crawl, scan, indexnow, traffic, sitemaps, failed } = result.data;
   // OPE-1131 — headline figures that can say "not measured" (bing-tiles.ts).
   const clicks7dM = bingWeekTotal(
     traffic,
@@ -4061,25 +4234,6 @@ async function BingTab() {
       (SITE_HEALTH_SEVERITY_RANK[a.severity.toUpperCase()] ?? 9) -
       (SITE_HEALTH_SEVERITY_RANK[b.severity.toUpperCase()] ?? 9)
   );
-
-  // OPE-71 FIX 2 — IndexNow ping health at a glance. Kill-switch (paused) wins
-  // over cooldown, matching the breaker's own precedence.
-  const inState: { label: string; className: string } = indexnow.paused
-    ? {
-        label: `PAUSED${indexnow.pauseNote ? ` — ${indexnow.pauseNote}` : ""}`,
-        className: "text-amber-600",
-      }
-    : indexnow.breaker.reason === "cooldown"
-      ? {
-          label: `Cooldown until ${
-            indexnow.breaker.until
-              ? formatTimestampForServer(new Date(indexnow.breaker.until))
-              : "unknown"
-          }`,
-          className: "text-amber-600",
-        }
-      : { label: "Active", className: "text-emerald-600" };
-  const inChip = indexNowChip(indexnow);
 
   // ── Block 5 — actionable issues synthesized from the loaded data ──
   const actionItems: string[] = [];
@@ -4202,7 +4356,7 @@ async function BingTab() {
           </CardContent>
         </Card>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         <Card>
           <CardContent className="p-6">
             <p className="text-sm text-muted-foreground">
@@ -4239,24 +4393,6 @@ async function BingTab() {
                     ? "Clean — no errors in last 7 crawl days"
                     : "Sum over last 7 crawl days"}
             </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">
-              IndexNow health <TileInfo id="bing.indexnow-health" title="IndexNow health" />
-            </p>
-            <p className={`text-2xl font-bold mt-1 ${inChip.className}`}>{inChip.label}</p>
-            <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-              {indexnow.countsAvailable
-                ? `${fmt(indexnow.sent24h)} sent · ${fmt(indexnow.failed24h)} failed · ${fmt(
-                    indexnow.skipped24h
-                  )} skipped (24h)`
-                : "— · indexnow_submissions read failed"}
-            </p>
-            {indexnow.paused && indexnow.pauseNote && (
-              <p className="text-xs text-amber-600 mt-1">{indexnow.pauseNote}</p>
-            )}
           </CardContent>
         </Card>
       </div>
@@ -4585,73 +4721,6 @@ async function BingTab() {
               )}
             </tbody>
           </table>
-        </CardContent>
-      </Card>
-
-      {/* OPE-71 FIX 2 — IndexNow ping-pipeline operations (breaker + kill-switch
-          + 24h/7d volume). Moved here under Block 4 for OPE-72. */}
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between gap-2">
-            <span>
-              IndexNow operations{" "}
-              <TileInfo id="bing.indexnow-operations" title="IndexNow operations" />
-            </span>
-            <IndexNowKillSwitchToggle />
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="text-sm text-muted-foreground">Ping pipeline</p>
-              <p className={`text-lg font-semibold mt-1 ${inState.className}`}>{inState.label}</p>
-              {!indexnow.kvAvailable && (
-                <p className="text-xs text-muted-foreground mt-1 italic">
-                  Breaker state unavailable (no KV binding).
-                </p>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-6 text-sm">
-              <div>
-                <p className="text-xs text-muted-foreground">Sent 24h / 7d</p>
-                <p className="font-semibold tabular-nums mt-1">
-                  {measurementText(indexNowCount(indexnow.sent24h, indexnow.countsAvailable), fmt)}{" "}
-                  / {measurementText(indexNowCount(indexnow.sent7d, indexnow.countsAvailable), fmt)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Failed 24h</p>
-                <p className="font-semibold tabular-nums mt-1">
-                  {measurementText(
-                    indexNowCount(indexnow.failed24h, indexnow.countsAvailable),
-                    fmt
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Skipped 24h</p>
-                <p className="font-semibold tabular-nums mt-1">
-                  {measurementText(
-                    indexNowCount(indexnow.skipped24h, indexnow.countsAvailable),
-                    fmt
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">BWT submit quota</p>
-                <p className="font-semibold tabular-nums mt-1">
-                  {quota
-                    ? `${fmt(quota.dailyRemaining)} / ${fmt(quota.dailyQuota)}`
-                    : "— · quota API unavailable"}
-                </p>
-              </div>
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground mt-3">
-            Source: D1 indexnow_submissions + REL4/REL6 breaker in RATE_LIMIT_KV. BWT submit quota
-            is the separate Bing Webmaster URL-submission API. &ldquo;Skipped&rdquo; counts
-            dedup-suppressed, no-key, and breaker-paused submissions.
-          </p>
         </CardContent>
       </Card>
 
@@ -5002,7 +5071,11 @@ function VerdictBanner({ verdict }: { verdict: SiteHealthVerdict }) {
                 <li key={p.key} className="text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">{p.label}:</span> {p.detail}
                   {p.href && (
-                    <Link href={p.href} className="ml-1.5 text-royal hover:text-navy">
+                    <Link
+                      prefetch={false}
+                      href={p.href}
+                      className="ml-1.5 text-royal hover:text-navy"
+                    >
                       view
                     </Link>
                   )}
@@ -5048,6 +5121,7 @@ function InstrumentTile({ reading }: { reading: InstrumentReading }) {
         <p className="mt-1 text-xs text-muted-foreground">{reading.detail}</p>
         {reading.href && (
           <Link
+            prefetch={false}
             href={reading.href}
             className="mt-2 inline-flex items-center gap-1 text-xs text-royal hover:text-navy"
           >
@@ -5324,6 +5398,7 @@ async function SiteHealthTab() {
                     <td className="px-6 py-3 text-foreground break-all max-w-xs">
                       {row.sampleEventSlug ? (
                         <Link
+                          prefetch={false}
                           href={`/events/${row.sampleEventSlug}`}
                           target="_blank"
                           rel="noopener noreferrer"

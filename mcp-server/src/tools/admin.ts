@@ -119,6 +119,8 @@ import {
   normalizeEventDate,
   reclassifySourceOnEdit,
   assertIngestionMethod,
+  INGESTION_METHODS,
+  type IngestionMethod,
   nextGateFlags,
   freePlaceholderEmail,
   validateVenueLifecycle,
@@ -152,14 +154,25 @@ import {
   hasPerformersWhere,
   performerRosterStatusWhere,
 } from "./performer-selection.js";
-import { attachEventToSeries } from "@takemetothefair/event-series";
+import {
+  attachEventToSeries,
+  propagatePromoterToSeries,
+  type SeriesPromoterPropagation,
+} from "@takemetothefair/event-series";
+import { registerCreateSeriesTool } from "./admin-create-series.js";
 import { dollarsToCents } from "../helpers.js";
 import { recordMutation } from "../audit/record-mutation.js";
+import {
+  buildFieldHistoryRows,
+  fieldHistoryInserts,
+} from "@takemetothefair/db-schema/field-history";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
 import {
   petFriendlyWriteError,
   type PetFriendly,
+  VENDOR_ELIGIBILITY_ORG_MAX,
+  VENDOR_ELIGIBILITY_VALUES,
   withoutGooglePlacesPhoto,
 } from "@takemetothefair/utils";
 import {
@@ -193,10 +206,18 @@ import { registerPerformerHealthTool } from "./admin-performer-health.js";
 import { registerRequestIndexingTool } from "./admin-request-indexing.js";
 import { registerAdminClaimApprovalTool } from "./admin-claim-approval.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
+import { registerFieldHistoryTools } from "./admin-field-history.js";
 import { registerSeriesBackfillTools } from "./admin-series-backfill.js";
 import { registerCreateOccurrenceTool } from "./admin-create-occurrence.js";
 import { registerSeriesEditionModeTool } from "./admin-series-edition-mode.js";
+import { registerEventApplicationTools } from "./admin-event-applications.js";
+import { registerUpdateSeriesTool } from "./admin-update-series.js";
 import { registerPromoterContactTools } from "./admin-promoter-contacts.js";
+import { registerOrgDomainTools } from "./admin-org-domains.js";
+import { registerOrganizerFeedTools } from "./admin-organizer-feeds.js";
+import { registerPromoterImportTool } from "./admin-promoter-import.js";
+import { registerFeedReviewTools } from "./admin-feed-review.js";
+import { registerFeedQualityTools } from "./admin-feed-quality.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
 import { registerRequestImageUploadSlotTool } from "./request-image-upload-slot.js";
@@ -248,6 +269,7 @@ import {
   SOURCE_TYPE_VALUES as CITATION_SOURCE_TYPE_VALUES,
 } from "./admin-citations.js";
 import { registerEventNameVariantTools } from "./admin-event-name-variants.js";
+import { updateEventVendorCitationError } from "./vendor-field-citation.js";
 
 /**
  * OPE-1110 — fields `update_event` records a citation for when one is passed.
@@ -427,6 +449,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerReplyToInboundEmailTool(server, db, auth, {
     EMAIL_JOBS: env?.EMAIL_JOBS as { send: (msg: unknown) => Promise<void> } | undefined,
     EMAIL_REPLY_ENABLED: env?.EMAIL_REPLY_ENABLED,
+    // OPE-1579 — this env is hand-picked, so a binding missing here is missing
+    // from the tool even though the Worker has it.
+    VENDOR_ASSETS: env?.VENDOR_ASSETS,
   });
   registerGscMilestoneIngestTool(server, auth, env);
   registerPerformerTools(server, db, auth);
@@ -468,6 +493,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // with transition validation, date-swap for RESCHEDULED/POSTPONED,
   // admin_actions audit logging, and IndexNow on visibility crossings.
   registerEventLifecycleTools(server, db, auth, env);
+  // OPE-1651 — per-field edit history reader.
+  registerFieldHistoryTools(server, db, auth);
 
   // EH3 P1 — backfill_event_series (dry-run proposal only; commit gated).
   registerSeriesBackfillTools(server, auth, env);
@@ -475,11 +502,32 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // EH3 P3.1 — create_occurrence (new dated edition under a series).
   registerCreateOccurrenceTool(server, auth, env);
 
+  // OPE-1562 — create_series: give a standalone event its series (dry-run default),
+  // so create_occurrence above can stage a dates-TBD edition under it.
+  registerCreateSeriesTool(server, db, auth); // OPE-1562
+
   // OPE-1327 — set_series_edition_mode (flag + edition keys, atomically; dry-run default).
   registerSeriesEditionModeTool(server, db, auth);
+  // OPE-1541 — update_series (fields + slug with its history row, atomically; dry-run default).
+  registerUpdateSeriesTool(server, db, auth);
+
+  // OPE-1512 — upsert_event_application (the first event_applications writer) +
+  // list_open_vendor_calls (the vendor-digest feed). Admin only, audit-logged.
+  registerEventApplicationTools(server, db, auth);
 
   // OPE-1330 — promoter contacts: list / upsert / set status (admin only, audit-logged).
   registerPromoterContactTools(server, db, auth);
+  // OPE-1614 — an org's domain list: list / add / retire / review / discover / shared.
+  registerOrgDomainTools(server, db, auth);
+
+  // OPE-1613 — organizer feeds, field provenance and pins (admin only; dry-run defaults; sends nothing).
+  registerOrganizerFeedTools(server, db, auth);
+
+  // OPE-1618 — a promoter's emailed season spreadsheet, imported through the portal's own path.
+  registerPromoterImportTool(server, auth, env);
+  registerFeedReviewTools(server, auth, env);
+  // OPE-1634 — weekly feed drop sample + analyst labels.
+  registerFeedQualityTools(server, db, auth);
 
   // Read-only recommendations feed — same data as /admin/analytics ▸
   // Recommendations. Adds get_recommendations, get_recommendation_rule.
@@ -561,7 +609,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   // OPE-240 — read the staged booth-photo proposals. The PHOTO_AUTOWRITE_ENABLED
   // gate is meant to be judged on these, and they were unreadable outside /admin.
-  registerPhotoProposalTools(server, db, auth);
+  registerPhotoProposalTools(server, db, auth, env);
   // OPE-227 — the photo flywheel's hero proposals: list + approve/reject.
   registerHeroProposalTools(server, db, auth, env);
   // OPE-1139 — staged self-announced exhibitors: list + approve/reject.
@@ -875,10 +923,27 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // ── update_event_status ────────────────────────────────────────
   server.tool(
     "update_event_status",
-    "Approve, reject, or change any event's status. Admin only.",
+    "Approve, reject, or change any event's status. Pass `reason` and `evidence_url` to record why, and on what evidence; both are stored with the change and returned by get_event_lifecycle_history. Admin only.",
     {
       event_id: z.string().describe("Event ID"),
       status: z.enum(EVENT_STATUS_ENUM).describe("New event status"),
+      // OPE-1592 — .max() before .transform(), per the free-text rule in CLAUDE.md.
+      reason: z
+        .string()
+        .trim()
+        .min(1)
+        .max(500)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe(
+          "OPE-1592 — why this status is changing, in a sentence (max 500 chars). Stored with the change. Separate from reject_reason, which is a fault family for extractor-created rows."
+        ),
+      evidence_url: z
+        .string()
+        .url()
+        .max(2048)
+        .optional()
+        .describe("OPE-1592 — the page this decision rests on. Stored with the change."),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -1068,6 +1133,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         });
       }
 
+      // OPE-1592 — one object for the audit row and the response, so what the
+      // caller sees echoed is what was stored. Keys are absent when not passed,
+      // which keeps a call without them identical to before.
+      const statusChangeProvenance = {
+        ...(params.reason !== undefined ? { reason: params.reason } : {}),
+        ...(params.evidence_url !== undefined ? { evidence_url: params.evidence_url } : {}),
+      };
+
       // Audit log — material status transitions need to land in admin_actions
       // so the Analytics activity feed and any downstream auditing can see
       // them. Pattern mirrors set_enhanced_profile in this file.
@@ -1083,6 +1156,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           // OPE-450 — so get_event_lifecycle_history can show the keeper a row
           // was rejected against without a second query.
           ...(rejectedAsDuplicateOf ? { rejected_as_duplicate_of: rejectedAsDuplicateOf } : {}),
+          ...statusChangeProvenance,
         }),
         createdAt: new Date(),
       });
@@ -1154,6 +1228,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           jsonContent({
             updated: true,
             event: { id: event.id, name: event.name, previousStatus, newStatus: params.status },
+            ...statusChangeProvenance,
             ...(inboundRepoint && inboundRepoint.repointed.length > 0
               ? {
                   inbound_emails_repointed: {
@@ -1208,8 +1283,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe("Category list, e.g. ['Craft Fair','Market']"),
       tags: z.array(z.string()).optional().describe("Tag list, e.g. ['family-friendly','outdoor']"),
       ticket_url: z.string().optional().describe("URL to buy tickets"),
-      ticket_price_min: z.number().optional().describe("Minimum ticket price"),
-      ticket_price_max: z.number().optional().describe("Maximum ticket price"),
+      ticket_price_min: z
+        .number()
+        .nullable()
+        .optional()
+        .describe(
+          "Minimum ticket price in dollars. Pass null to clear it back to unknown, e.g. to strip an unverified $0 (OPE-1622)."
+        ),
+      ticket_price_max: z
+        .number()
+        .nullable()
+        .optional()
+        .describe("Maximum ticket price in dollars. Pass null to clear it (OPE-1622)."),
       image_url: z.string().optional().describe("Event image URL"),
       // IMG1 §1b Phase 1 (2026-06-08) — per-image focal point. Range
       // [0, 1] matching Cloudflare's gravity=XxY (0,0 = top-left).
@@ -1235,10 +1320,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       featured: z.boolean().optional().describe("Whether the event is featured"),
       commercial_vendors_allowed: z
         .boolean()
+        .nullable()
         .optional()
-        .describe("Whether commercial vendors are allowed"),
-      vendor_fee_min: z.number().optional().describe("Minimum vendor/booth fee"),
-      vendor_fee_max: z.number().optional().describe("Maximum vendor/booth fee"),
+        .describe(
+          "Whether commercial vendors are allowed. Pass null to clear it back to unknown (OPE-1606)."
+        ),
+      vendor_fee_min: z
+        .number()
+        .optional()
+        .describe(
+          "Minimum vendor/booth fee (dollars). Requires `citation` with the source's wording in citation.notes (OPE-1673)."
+        ),
+      vendor_fee_max: z
+        .number()
+        .optional()
+        .describe(
+          "Maximum vendor/booth fee (dollars). Requires `citation` with the source's wording in citation.notes (OPE-1673)."
+        ),
       vendor_fee_notes: z.string().optional().describe("Details about vendor/booth fees"),
       indoor_outdoor: z
         .enum(["INDOOR", "OUTDOOR", "MIXED"])
@@ -1246,6 +1344,24 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe("Indoor/outdoor designation"),
       pet_friendly: PET_FRIENDLY_PARAM,
       pet_friendly_evidence: PET_FRIENDLY_EVIDENCE_PARAM,
+      // OPE-1564 — who may be a VENDOR (not who may attend, not whether
+      // commercial sellers are admitted). Cite it via `citation` like the fees.
+      vendor_eligibility: z
+        .enum(VENDOR_ELIGIBILITY_VALUES)
+        .optional()
+        .describe(
+          "OPE-1564: who may be a vendor. OPEN = no restriction recorded (default; renders nothing). MEMBERS_ONLY = sellers must belong to an org (set vendor_eligibility_org). JURIED = sellers selected by jury. INVITATION_ONLY = invited sellers only. Separate from commercial_vendors_allowed and primary_audience. Pass `citation` with the organizer's page that says it."
+        ),
+      vendor_eligibility_org: z
+        .string()
+        .min(1)
+        .max(VENDOR_ELIGIBILITY_ORG_MAX)
+        .transform(decodeHtmlEntities)
+        .nullable()
+        .optional()
+        .describe(
+          `OPE-1564: the organization a MEMBERS_ONLY vendor must belong to, as it should read in "To be a vendor, you must be a member of <org>." (≤${VENDOR_ELIGIBILITY_ORG_MAX} chars). null clears it.`
+        ),
       parking_notes: PARKING_NOTES_PARAM,
       parking_notes_evidence: VISITOR_NOTE_EVIDENCE_PARAM,
       accessibility_notes: ACCESSIBILITY_NOTES_PARAM,
@@ -1258,7 +1374,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       application_deadline: z
         .string()
         .optional()
-        .describe("Vendor application deadline (ISO 8601)"),
+        .describe(
+          "Vendor application deadline (ISO 8601). Requires `citation` with the source's wording in citation.notes (OPE-1673)."
+        ),
       application_url: z.string().optional().describe("URL for vendor applications"),
       application_instructions: z.string().optional().describe("How to apply as a vendor"),
       walk_ins_allowed: z.boolean().optional().describe("Whether walk-in vendors are accepted"),
@@ -1304,7 +1422,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       source_name: z
         .string()
         .optional()
-        .describe("Name of the source (e.g. 'facebook', 'eventbrite')"),
+        .describe(
+          "Name of the source we cite (e.g. 'facebook', 'eventbrite'). Editing it (or source_url) refreshes source_domain but NEVER changes ingestion_method — how the row was collected is written once, at creation (OPE-1642). To reclassify deliberately, pass ingestion_method."
+        ),
+      ingestion_method: z
+        .enum(INGESTION_METHODS as unknown as [IngestionMethod, ...IngestionMethod[]])
+        .optional()
+        .describe(
+          "Deliberate reclassification of HOW the row was collected (OPE-1642). Never inferred from source_name/source_url on an edit. Reported in previousValues/newValues like any field."
+        ),
       recurrence_rule: z.string().optional().describe("iCal RRULE recurrence string"),
       discontinuous_dates: z
         .boolean()
@@ -1365,7 +1491,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         })
         .optional()
         .describe(
-          "Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, start_date, end_date, venue_id, name, promoter_id). A changed field that gets NO citation row is named in warnings.citation_ignored_for (OPE-1110) — never report such a field as cited. When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
+          "REQUIRED (with the source's wording in notes) whenever vendor_fee_min, vendor_fee_max or application_deadline is set — the call is refused otherwise (OPE-1673). Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, vendor_eligibility, vendor_eligibility_org, start_date, end_date, venue_id, name, promoter_id). A changed field that gets NO citation row is named in warnings.citation_ignored_for (OPE-1110) — never report such a field as cited. When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
         ),
     },
     async (params) => {
@@ -1399,6 +1525,24 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (petRefusal) {
         return {
           content: [jsonContent({ error: "pet_friendly_evidence_required", message: petRefusal })],
+          isError: true,
+        };
+      }
+
+      // OPE-1673 — a vendor fee or application deadline needs its source and
+      // the source's wording in this same call. Refused before any write.
+      const vendorCitationRefusal = updateEventVendorCitationError(
+        params as Record<string, unknown>,
+        params.citation
+      );
+      if (vendorCitationRefusal) {
+        return {
+          content: [
+            jsonContent({
+              error: "vendor_field_citation_required",
+              message: vendorCitationRefusal,
+            }),
+          ],
           isError: true,
         };
       }
@@ -1475,6 +1619,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "vendor_fee_max", column: "vendorFeeMaxCents", transform: dollarsToCents },
         { param: "vendor_fee_notes", column: "vendorFeeNotes" },
         { param: "indoor_outdoor", column: "indoorOutdoor" },
+        // OPE-1564 — cited through the generic `citation` arg (DENORM_FIELD_MAP).
+        { param: "vendor_eligibility", column: "vendorEligibility" },
+        { param: "vendor_eligibility_org", column: "vendorEligibilityOrg" },
         // OPE-1061 — evidence is checked above and cited below.
         { param: "pet_friendly", column: "petFriendly" },
         // OPE-1481 — evidence is checked above and cited below.
@@ -1510,6 +1657,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "source_url", column: "sourceUrl" },
         { param: "source_id", column: "sourceId" },
         { param: "source_name", column: "sourceName" },
+        { param: "ingestion_method", column: "ingestionMethod" },
         { param: "recurrence_rule", column: "recurrenceRule" },
         { param: "discontinuous_dates", column: "discontinuousDates" },
         { param: "sync_enabled", column: "syncEnabled" },
@@ -2008,17 +2156,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           // OPE-491 rework — the domain refreshes; HOW the row was collected is
           // kept unless the edit states a new collection label, or the old
           // value was itself domain-derived (see reclassifySourceOnEdit).
+          // OPE-1642 — write-once: a valid stored method is kept whatever the new
+          // label says; only a blank one is filled. An explicit
+          // `ingestion_method` param (a fieldMap entry) is the reclassify path.
           const reclassified = reclassifySourceOnEdit({
             currentMethod: evRow.ingestionMethod as string | null | undefined,
-            suggesterEmail: evRow.suggesterEmail as string | null | undefined,
             sourceName: mergedSourceName,
             sourceUrl: mergedSourceUrl,
           });
           updates.sourceDomain = reclassified.sourceDomain;
-          updates.ingestionMethod = assertIngestionMethod(
-            reclassified.ingestionMethod,
-            "update_event"
-          );
+          if (params.ingestion_method === undefined && !reclassified.preservedMethod) {
+            updates.ingestionMethod = assertIngestionMethod(
+              reclassified.ingestionMethod,
+              "update_event"
+            );
+          }
         }
 
         const gateResult = evaluateGates({
@@ -2143,6 +2295,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       });
       if (syncDisabledByEdit) updates.syncEnabled = false;
 
+      // OPE-1649 — set when a promoter change was carried (or refused) to the series.
+      let seriesPromoterSync: SeriesPromoterPropagation | null = null;
+
       // Execute event update (skip if only venue fields provided)
       if (requestedFields.length > 0) {
         // SYN1 — outbox row + version bump in the SAME batch as the UPDATE so a
@@ -2161,10 +2316,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             ? (updates.venueId as string | null)
             : event.venueId) as string | null,
         });
+        // OPE-1651 — one history row per changed field, in the same batch as
+        // the UPDATE so the edit and its record land (or fail) together.
+        const historyStmts = fieldHistoryInserts(
+          db,
+          buildFieldHistoryRows({
+            table: events,
+            entityType: "event",
+            entityId: event.id,
+            before: event as unknown as Record<string, unknown>,
+            patch: updates,
+            actor: auth.userId,
+            source: "mcp:update_event",
+          })
+        );
         // OPE-1390 — the slug-history INSERT rides in this batch too.
         const eventWriteStmts = [
           ...(slugRename ? [slugRename.historyInsert] : []),
           ...syndicationStmts,
+          ...historyStmts,
         ];
         if (eventWriteStmts.length > 0) {
           await db.batch([
@@ -2230,6 +2400,38 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             }
           } catch (err) {
             console.error("[series] late attach threw", err);
+          }
+        }
+
+        // OPE-1649 — a promoter reassignment follows the event into its series
+        // (the landing's JSON-LD organizer and the next occurrence both read
+        // `event_series.promoter_id`). Rule + reasons: promoter-propagation.ts.
+        // Best-effort like the late attach above: the event edit already landed.
+        if (
+          typeof updates.promoterId === "string" &&
+          updates.promoterId !== event.promoterId &&
+          event.seriesId
+        ) {
+          try {
+            seriesPromoterSync = await propagatePromoterToSeries(db, {
+              eventId: event.id,
+              seriesId: event.seriesId,
+              eventStartDate:
+                updates.startDate !== undefined
+                  ? (updates.startDate as Date | null)
+                  : (event.startDate ?? null),
+              oldPromoterId: event.promoterId ?? null,
+              newPromoterId: updates.promoterId,
+            });
+          } catch (err) {
+            console.error("[series] promoter propagation threw", err);
+            seriesPromoterSync = {
+              seriesId: event.seriesId,
+              outcome: "skipped",
+              reason: "propagation_failed",
+              from: null,
+              to: null,
+            };
           }
         }
 
@@ -2452,6 +2654,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.name !== undefined && updates.slug) {
         newValues.slug = updates.slug;
       }
+      // OPE-1642 — a column the write DERIVED (not passed) is reported too, so
+      // no change is invisible. This echo is the only record (OPE-505).
+      const derivedFieldsUpdated: string[] = [];
+      const evStored = event as Record<string, unknown>;
+      for (const [field, column] of [
+        ["source_domain", "sourceDomain"],
+        ["ingestion_method", "ingestionMethod"],
+      ] as const) {
+        if (requestedFields.includes(field)) continue;
+        if (updates[column] === undefined) continue;
+        const before = evStored[column] ?? null;
+        if (updates[column] === before) continue;
+        previousValues[field] = before;
+        newValues[field] = updates[column];
+        derivedFieldsUpdated.push(field);
+      }
 
       // Handle inline venue field updates
       let venueUpdateResult: Record<string, unknown> | null = null;
@@ -2520,11 +2738,28 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         // which the comment below already calls the least expected way a
         // published venue changes. It owes a redirect exactly like a direct
         // update_venue does, and is the easiest of the three to forget.
-        if (venueSlugRename) {
+        // OPE-1653 — the venue's own field history, in the same batch.
+        const venueHistory = fieldHistoryInserts(
+          db,
+          buildFieldHistoryRows({
+            table: venues,
+            entityType: "venue",
+            entityId: venue.id,
+            before: venue,
+            patch: venueUpdates,
+            actor: auth.userId,
+            source: "mcp:update_event (venue side effect)",
+          })
+        );
+        const venueExtra = [
+          ...(venueSlugRename ? [venueSlugRename.historyInsert] : []),
+          ...venueHistory,
+        ];
+        if (venueExtra.length > 0) {
           await db.batch([
             db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id)),
-            venueSlugRename.historyInsert,
-          ]);
+            ...venueExtra,
+          ] as unknown as Parameters<typeof db.batch>[0]);
         } else {
           await db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id));
         }
@@ -2585,6 +2820,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (requestedFields.length > 0) {
         result.fieldsUpdated = requestedFields;
+        result.previousValues = previousValues;
+        result.newValues = newValues;
+      }
+      if (derivedFieldsUpdated.length > 0) {
+        result.derivedFieldsUpdated = derivedFieldsUpdated;
         result.previousValues = previousValues;
         result.newValues = newValues;
       }
@@ -2705,6 +2945,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           }
         } catch {
           // Advisory only: a failed read must not turn a successful update into an error.
+        }
+      }
+      if (seriesPromoterSync) {
+        result.series_promoter = seriesPromoterSync;
+        if (seriesPromoterSync.outcome === "skipped") {
+          warnings.series_promoter_not_updated =
+            `The event's promoter changed but its series ${seriesPromoterSync.seriesId} still has ` +
+            `promoter ${seriesPromoterSync.from ?? "(none)"} (${seriesPromoterSync.reason}). The series ` +
+            `landing page and the next occurrence read the series' promoter; if it should follow, ` +
+            `set it with update_series(promoter_id).`;
         }
       }
       if (Object.keys(warnings).length > 0) {
@@ -4181,19 +4431,34 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           zip: (updates.zip as string) ?? venue.zip,
         },
       });
+      // OPE-1651 — per-field history, committed in the same batch as the UPDATE.
+      const venueHistoryStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: venues,
+          entityType: "venue",
+          entityId: venue.id,
+          before: venue as unknown as Record<string, unknown>,
+          patch: updates,
+          actor: auth.userId,
+          source: "mcp:update_venue",
+        })
+      );
       if (venueSyndicationStmts.length > 0) {
         await db.batch([
           db.update(venues).set(updates).where(eq(venues.id, venue.id)),
           ...(slugRename ? [slugRename.historyInsert] : []),
           ...venueSyndicationStmts,
+          ...venueHistoryStmts,
         ] as unknown as Parameters<typeof db.batch>[0]);
         await enqueueSyndicationChange(env, { entityType: "venue", entityId: venue.id });
-      } else if (slugRename) {
+      } else if (slugRename || venueHistoryStmts.length > 0) {
         // OPE-495/OPE-1373 — the venue_slug_history row commits WITH the rename.
         await db.batch([
           db.update(venues).set(updates).where(eq(venues.id, venue.id)),
-          slugRename.historyInsert,
-        ]);
+          ...(slugRename ? [slugRename.historyInsert] : []),
+          ...venueHistoryStmts,
+        ] as unknown as Parameters<typeof db.batch>[0]);
       } else {
         await db.update(venues).set(updates).where(eq(venues.id, venue.id));
       }
@@ -5172,11 +5437,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       // Slug change: the old→new vendor_slug_history row (301s on /vendors/[slug])
       // commits in the same batch as the rename.
-      if (slugRename) {
+      // OPE-1651 — per-field history, committed in the same batch as the UPDATE.
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: vendors,
+          entityType: "vendor",
+          entityId: vendor.id,
+          before: vendor as unknown as Record<string, unknown>,
+          patch: updates,
+          actor: auth.userId,
+          source: "mcp:update_vendor",
+        })
+      );
+      if (slugRename || historyStmts.length > 0) {
         await db.batch([
           db.update(vendors).set(updates).where(eq(vendors.id, vendor.id)),
-          slugRename.historyInsert,
-        ]);
+          ...(slugRename ? [slugRename.historyInsert] : []),
+          ...historyStmts,
+        ] as unknown as Parameters<typeof db.batch>[0]);
       } else {
         await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
       }
@@ -5330,11 +5609,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         ? { from: slugRename.previousSlug, to: slugRename.nextSlug }
         : null;
 
-      if (slugRename) {
+      // OPE-1651 — per-field history, committed in the same batch as the UPDATE.
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: vendors,
+          entityType: "vendor",
+          entityId: vendor.id,
+          before: vendor as unknown as Record<string, unknown>,
+          patch: updates,
+          actor: auth.userId,
+          source: "mcp:set_enhanced_profile",
+        })
+      );
+      if (slugRename || historyStmts.length > 0) {
         await db.batch([
           db.update(vendors).set(updates).where(eq(vendors.id, vendor.id)),
-          slugRename.historyInsert,
-        ]);
+          ...(slugRename ? [slugRename.historyInsert] : []),
+          ...historyStmts,
+        ] as unknown as Parameters<typeof db.batch>[0]);
       } else {
         await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
       }
@@ -5903,8 +6196,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // no longer there.
       const merged = (column: string) =>
         (column in updates ? updates[column] : (promoter as Record<string, unknown>)[column]) as
-          | string
-          | null;
+          string | null;
       const enrichment = computePromoterEnrichment(
         {
           website: merged("website"),
@@ -5935,11 +6227,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // OPE-1373 — the promoter_slug_history row now commits in the SAME batch
       // as the rename (was a fail-soft insert after it), so a rename can no
       // longer land without its redirect.
-      if (slugRename) {
+      // OPE-1651 — per-field history, committed in the same batch as the UPDATE.
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: promoters,
+          entityType: "promoter",
+          entityId: promoter.id,
+          before: promoter as unknown as Record<string, unknown>,
+          patch: updates,
+          actor: auth.userId,
+          source: "mcp:update_promoter",
+        })
+      );
+      if (slugRename || historyStmts.length > 0) {
         await db.batch([
           db.update(promoters).set(updates).where(eq(promoters.id, promoter.id)),
-          slugRename.historyInsert,
-        ]);
+          ...(slugRename ? [slugRename.historyInsert] : []),
+          ...historyStmts,
+        ] as unknown as Parameters<typeof db.batch>[0]);
       } else {
         await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
       }

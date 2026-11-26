@@ -22,7 +22,7 @@ CREATE TABLE events (id TEXT PRIMARY KEY, slug TEXT NOT NULL, name TEXT NOT NULL
 CREATE TABLE event_days (id TEXT PRIMARY KEY, event_id TEXT NOT NULL, date TEXT NOT NULL);
 CREATE TABLE inbound_emails (id TEXT PRIMARY KEY, status TEXT NOT NULL, reply_kind TEXT,
   resulting_event_id TEXT, capture_meta TEXT, error TEXT);
-CREATE TABLE admin_actions (id TEXT PRIMARY KEY, action TEXT NOT NULL, target_id TEXT);
+CREATE TABLE admin_actions (id TEXT PRIMARY KEY, action TEXT NOT NULL, target_id TEXT, payload_json TEXT);
 `;
 
 const sec = (iso: string) => Math.floor(Date.parse(iso) / 1000);
@@ -107,7 +107,7 @@ describe("snap status (OPE-1341)", () => {
     ins.run(a, "replied", "photo-intake-ack", "e-expo", '{"location_source":"device"}', null);
     ins.run(b, "replied", "photo-intake-unresolved", null, '{"location_source":"none"}', null);
     ins.run(c, "processing", null, null, null, null);
-    const act = raw.prepare("INSERT INTO admin_actions VALUES (?,?,?)");
+    const act = raw.prepare("INSERT INTO admin_actions (id, action, target_id) VALUES (?,?,?)");
     act.run("x1", "vendor.photo_proposed", a);
     act.run("x2", "photo.gallery_attached", a);
     act.run("x3", "vendor.photo_proposed", "some-other-email");
@@ -126,12 +126,95 @@ describe("snap status (OPE-1341)", () => {
     expect(byId[c]).toMatchObject({ phase: "processing" });
   });
 
+  it("OPE-1705: a business card says which vendor it matched, or that it is card-only", async () => {
+    const ins = raw.prepare("INSERT INTO inbound_emails VALUES (?,?,?,?,?,?)");
+    const a = "snap-33333333-2222-4333-8444-555555555555";
+    const b = "snap-44444444-2222-4333-8444-555555555555";
+    ins.run(a, "replied", "photo-intake-ack", "e-expo", '{"location_source":"device"}', null);
+    ins.run(b, "replied", "photo-intake-ack", "e-expo", '{"location_source":"device"}', null);
+    const act = raw.prepare(
+      "INSERT INTO admin_actions (id, action, target_id, payload_json) VALUES (?,?,?,?)"
+    );
+    act.run("c1", "vendor.card_applied", a, '{"vendor_name":"Fern Hollow"}');
+    act.run("c2", "vendor.card_proposed", b, '{"stage_kind":"card_unmatched"}');
+
+    const got = Object.fromEntries((await loadSnapStatuses(db, [a, b])).map((g) => [g.id, g]));
+    expect(got[a].label).toBe("People Plus Senior Health Expo — Business card → Fern Hollow");
+    expect(got[b].label).toBe("People Plus Senior Health Expo — 1 card only — for review");
+  });
+
+  it("OPE-1705 slice 2: a paired card names its booth, or says the names differ", async () => {
+    const ins = raw.prepare("INSERT INTO inbound_emails VALUES (?,?,?,?,?,?)");
+    const a = "snap-55555555-2222-4333-8444-555555555555";
+    const b = "snap-66666666-2222-4333-8444-555555555555";
+    const c = "snap-77777777-2222-4333-8444-555555555555";
+    for (const id of [a, b, c])
+      ins.run(id, "replied", "photo-intake-ack", "e-expo", '{"location_source":"device"}', null);
+    const act = raw.prepare(
+      "INSERT INTO admin_actions (id, action, target_id, payload_json) VALUES (?,?,?,?)"
+    );
+    act.run("d1", "vendor.card_proposed", a, '{"stage_kind":"card_unmatched"}');
+    act.run(
+      "d2",
+      "vendor.card_paired",
+      a,
+      '{"pairing":"confirmed","booth_business_name":"Fern Hollow"}'
+    );
+    act.run("d3", "vendor.card_proposed", b, '{"stage_kind":"card_unmatched"}');
+    act.run(
+      "d4",
+      "vendor.card_paired",
+      b,
+      '{"pairing":"order_only","booth_business_name":"Bay State Bath"}'
+    );
+    act.run("d5", "vendor.card_proposed", c, '{"stage_kind":"card_unmatched"}');
+    act.run(
+      "d6",
+      "vendor.card_paired",
+      c,
+      '{"pairing":"unreadable_booth","booth_business_name":null}'
+    );
+
+    const got = Object.fromEntries((await loadSnapStatuses(db, [a, b, c])).map((g) => [g.id, g]));
+    expect(got[a].label).toBe(
+      "People Plus Senior Health Expo — Business card → paired with Fern Hollow"
+    );
+    expect(got[b].label).toBe(
+      "People Plus Senior Health Expo — Business card → after Bay State Bath, names differ — for review"
+    );
+    expect(got[c].label).toBe(
+      "People Plus Senior Health Expo — Business card → named the unreadable booth before it — for review"
+    );
+  });
+
   it("describeSnap: failed and poster rows say so", () => {
     const base = { id: "snap-x", resultingEventId: null, captureMeta: null, error: null };
     expect(describeSnap({ ...base, status: "failed", replyKind: null }, null).phase).toBe("failed");
     expect(
       describeSnap({ ...base, status: "replied", replyKind: "photo-intake-poster" }, null).phase
     ).toBe("poster");
+  });
+
+  it("OPE-1697: an ack whose auto-write was held for ambiguity reads as HELD, naming the guess", () => {
+    const row = {
+      id: "snap-x",
+      resultingEventId: "fl",
+      captureMeta: '{"location_source":"device","event_choice_basis":"auto_nearest_ambiguous"}',
+      error: null,
+      status: "replied",
+      replyKind: "photo-intake-ack",
+    };
+    const s = describeSnap(row, "First Light Church Christmas Craft Fair");
+    expect(s.phase).toBe("held");
+    expect(s.label).toContain("more than one fair is close by");
+    expect(s.label).toContain("First Light Church Christmas Craft Fair");
+    // Control: the same row picked by a person is an ordinary match.
+    expect(
+      describeSnap(
+        { ...row, captureMeta: '{"location_source":"device","event_choice_basis":"picked"}' },
+        "Makers Market"
+      ).phase
+    ).toBe("matched");
   });
 });
 

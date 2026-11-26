@@ -17,10 +17,13 @@
  *    flag is never a false RED).
  *  - auto-file dedup reuses OPE-76's `cpi_signal_filings` ledger — nothing new.
  */
-import { and, eq, gte, inArray, isNotNull, isNull, notInArray, or, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import {
+  entityDuplicateSweepRuns,
   analyticsEvents,
   entityWriteLog,
+  entityFieldHistory,
   adminActions,
   bingLivenessLog,
   eventDataCitations,
@@ -58,9 +61,16 @@ import {
   gembaObservations,
   promoterListArrivals,
   venues,
+  supportObligations,
+  promoterOnboardingRequests,
+  promoterEventFeeds,
+  promoterApiEventRefs,
+  feedDropSamples,
+  feedItemLabels,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
+import { FULL_SWEEP_TYPES } from "@/lib/duplicates/full-sweep-types";
 import {
   ENRICH_NOTHING_STAGED_ACTION,
   ENRICH_PROPOSED_ACTION,
@@ -105,6 +115,30 @@ export function demandConditionalEvidence(
   return demand;
 }
 
+/** OPE-1626 — the feed-reader probe's own window: a deadline offset, not a cadence. */
+export const FEED_READER_WINDOW_HOURS = 1;
+
+/**
+ * OPE-1626 — the feed-reader probe's evidence. Each enabled feed is due a
+ * successful read by `(last_ok_at ?? created_at) + 2 × poll_interval_hours`.
+ * Returns the earliest such deadline minus FEED_READER_WINDOW_HOURS, so the
+ * generic silence check (now − evidence > window) is red exactly when some
+ * feed is past its deadline. No enabled feed → `now` (healthy).
+ */
+export function feedReaderEvidence(
+  feeds: Array<{ lastOkAt: Date | null; createdAt: Date; pollIntervalHours: number }>,
+  now: Date
+): Date {
+  let earliest = Infinity;
+  for (const f of feeds) {
+    const from = (f.lastOkAt ?? f.createdAt).getTime();
+    const deadline = from + 2 * Math.max(1, f.pollIntervalHours) * MS_PER_HOUR;
+    earliest = Math.min(earliest, deadline);
+  }
+  if (!Number.isFinite(earliest)) return now;
+  return new Date(Math.min(now.getTime(), earliest - FEED_READER_WINDOW_HOURS * MS_PER_HOUR));
+}
+
 async function maxTs(
   db: Db,
   table: SQLiteTable,
@@ -125,6 +159,20 @@ async function maxTs(
  * DORMANT via a null `enabled_at` — it can't false-fire until John flips the flag.
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
+  {
+    // OPE-1651 — every wired event/vendor/venue/promoter edit (MCP update_*
+    // tools, admin UI PATCHes, vendor + promoter self-edit, image uploads)
+    // writes one entity_field_history row per changed field. The analyst and
+    // discovery lanes edit events daily, so a week of silence means the
+    // writer is dead on every path at once (the shared helper is the one thing
+    // they have in common). Seeded ENABLED in drizzle/0420.
+    name: "entity-field-history",
+    ownerOpe: "OPE-1651",
+    label: "Entity edits write field-level history",
+    priority: "P1",
+    expectedWindowHours: 7 * 24,
+    lastEvidenceAt: (db) => maxTs(db, entityFieldHistory, entityFieldHistory.changedAt),
+  },
   {
     // OPE-1496 — the `/go/<kind>/<slug>` newsletter click redirect writes one
     // analytics_events row (source='redirect') per hit, human or scanner. Mail
@@ -157,6 +205,31 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
           ]),
           eq(analyticsEvents.source, "redirect")
         )
+      ),
+  },
+  {
+    // OPE-1558 — the no-login /list-your-event form beacons `list_view` on every
+    // mount (funnel-steps.ts `list`). A page that still renders but whose
+    // beacon silently stopped (allowlist drift, a client error before the
+    // effect) would read as "nobody came", which is the one reading this
+    // funnel exists to rule out.
+    //
+    // Seeded DORMANT (drizzle/0388, enabled_at NULL): the page ships noindex
+    // and unlinked — OPE-1559 owns the nav CTA and indexing, gated on John — so
+    // real traffic is ~0 and a live window would false-fire. ARMING CONDITION:
+    // set enabled_at the day OPE-1559's nav/contextual CTA ships — done in
+    // drizzle/0391, which ships in the same PR as the CTA.
+    name: "list-your-event-view",
+    ownerOpe: "OPE-1558",
+    label: "No-login /list-your-event form records its page views",
+    priority: "P1",
+    expectedWindowHours: 7 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        analyticsEvents,
+        analyticsEvents.timestamp,
+        eq(analyticsEvents.eventName, "list_view")
       ),
   },
   {
@@ -193,6 +266,67 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         )
       );
       return demandConditionalEvidence(demand, evidence, new Date());
+    },
+  },
+  {
+    // OPE-1673 — a vendor fee or application deadline is never stored without
+    // its source. suggest_event drops an uncited value; update_event refuses
+    // it; email auto-apply cites what it applies. So after arming, NO event
+    // should hold one of these values with no ACTIVE citation for that field.
+    // Demand = the OLDEST armed-window event that does (no evidence can
+    // discharge it except citing or clearing the value), so the probe goes red
+    // 48h after the first uncited value and stays red until it is repaired.
+    // SCOPE: the MCP research lanes (ingestion_method discovery / web_research
+    // — produced only by suggest_event's source_label), which is where the
+    // uncited values were measured. OPE-1680 widened it as each other writer
+    // began citing (see the method list below). The promoter portal and import
+    // leave ingestion_method NULL, so they are guarded by their own tests, not
+    // by this probe, until OPE-486 names a method for them. OPE-1680: rollover
+    // (`auto_rollover`) IS in scope — it no longer copies last year's fee, so a
+    // rolled edition holding an uncited fee is a regression this probe owns.
+    // Tombstones (merged_into) are excluded.
+    name: "vendor-field-citations",
+    ownerOpe: "OPE-1673",
+    label: "every new vendor fee / deadline has an active citation",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: async (db) => {
+      const uncited = (field: string) =>
+        sql`not exists (select 1 from ${eventDataCitations} c where c.event_id = ${events.id} and c.state = 'active' and c.field_name = ${field})`;
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${events.createdAt})` })
+        .from(events)
+        .where(
+          and(
+            sql`${events.createdAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'vendor-field-citations'), 4102444800)`,
+            isNull(events.mergedInto),
+            // OPE-1680 — + the three methods the suggest-event submit route
+            // produces (vendor portal, email, public form), now that it cites.
+            inArray(events.ingestionMethod, [
+              "discovery",
+              "web_research",
+              "auto_rollover",
+              "email_submission",
+              "vendor_submission",
+              "community_suggestion",
+              // OPE-1680 — + the admin writers, now that they cite: admin
+              // create and URL import land as admin_manual, admin create with
+              // a source URL as direct_scrape / aggregator_import. The scraper
+              // import and series occurrences share these methods but store
+              // no fee or deadline.
+              "admin_manual",
+              "direct_scrape",
+              "aggregator_import",
+            ]),
+            or(
+              and(isNotNull(events.vendorFeeMinCents), uncited("vendor_fee_min")),
+              and(isNotNull(events.vendorFeeMaxCents), uncited("vendor_fee_max")),
+              and(isNotNull(events.applicationDeadline), uncited("application_deadline"))
+            )
+          )
+        );
+      const demand = r?.t != null ? new Date(Number(r.t) * 1000) : null;
+      return demandConditionalEvidence(demand, null, new Date());
     },
   },
   {
@@ -285,6 +419,47 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1580 — a person posted a blank vendor form to an event page. DORMANT
+    // (enabled_at NULL, drizzle/0397) until the first post gives a real rate.
+    name: "event-document-post",
+    ownerOpe: "OPE-1580",
+    label: "post_event_document → event_document.posted",
+    priority: "P1",
+    expectedWindowHours: 2160,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "event_document.posted")
+      ),
+  },
+  {
+    // OPE-1613 — a promoter's own event feed was read and ingested (manual
+    // ingest_promoter_feed or, since OPE-1626, the scheduler; a 304 writes no row).
+    // Armed 2026-11-11 by drizzle/0413 when polling went on. 720h is still a
+    // PLACEHOLDER: re-measure the feed.ingested gap once weeks of reads exist.
+    name: "organizer-feed-ingest",
+    ownerOpe: "OPE-1613",
+    label: "ingest_promoter_feed → feed.ingested",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(db, adminActions, adminActions.createdAt, eq(adminActions.action, "feed.ingested")),
+  },
+  {
+    // OPE-1620 — a promoter's signed API call created, staged or cancel-staged an
+    // event (every write touches promoter_api_event_refs.updated_at). DORMANT
+    // (enabled_at NULL, drizzle/0411) until promoters use the API; 720h is a
+    // PLACEHOLDER — whoever arms it replaces it with the measured cadence.
+    name: "promoter-api-write",
+    ownerOpe: "OPE-1620",
+    label: "/api/v1/promoter/events → promoter_api_event_refs",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) => maxTs(db, promoterApiEventRefs, promoterApiEventRefs.updatedAt),
+  },
+  {
     // OPE-328 — gemba@ observations queued for an agent to post to Linear.
     // DORMANT (enabled_at NULL, drizzle/0348) until the gemba@ Email Routing
     // rule exists; then a month without one row means the lane went dark.
@@ -307,6 +482,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 720,
     lastEvidenceAt: (db) => maxTs(db, promoterListArrivals, promoterListArrivals.createdAt),
+  },
+  {
+    // OPE-1615 — the classifier retry loop RAN. Evidence is its per-attempt
+    // step record (`classify-retry/attempt`), written for every retry whether it
+    // recovered or not. Demand-conditional: it fires only on classifier errors,
+    // ~10% of inbound and never below 5.8% in a month (OPE-1089), against
+    // ~1.7 classified emails a day (OPE-1089: n=209, mean gap 14.1h) — about
+    // one retried email per 6 days. 720h (30 days) puts a false alarm from a
+    // quiet spell near 0.7% (Poisson, e^-5); tighten it from real rows later.
+    name: "classifier-retry",
+    ownerOpe: "OPE-1615",
+    label: "inbound workflow classify-retry/attempt step",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "classify-retry/attempt")
+      ),
   },
   {
     // OPE-1264 — the newsletter classifier RAN. Evidence is its step record,
@@ -640,6 +836,43 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1586 — the daily TENTATIVE → SCHEDULED auto-promotion rule.
+    //
+    // Watches the run STAMP, not promotions: a quiet week legitimately
+    // promotes nothing (every page held, or no ready rows), so a yield probe
+    // would go red on a healthy rule. The rule stamps on every run, including
+    // a run that promoted zero. 48h: daily, one miss tolerated.
+    name: "tentative-autopromote",
+    ownerOpe: "OPE-1586",
+    label: "Daily TENTATIVE → SCHEDULED auto-promotion (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:tentative-autopromote")
+      ),
+  },
+  {
+    // OPE-1596 — the nightly elapsed-PENDING expiry. Watches the run stamp,
+    // not yield: once the backlog is cleared most nights expire zero rows.
+    // The rule stamps on every run. 48h: daily, one miss tolerated.
+    name: "elapsed-pending-expiry",
+    ownerOpe: "OPE-1596",
+    label: "Nightly expiry of elapsed PENDING submissions (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:elapsed-pending-expiry")
+      ),
+  },
+  {
     // OPE-588 — proof the GSC sweep's FILLER tiers still select work.
     //
     // Tiers 1, 2, 2c and REL5 were unreachable for two months and nothing said
@@ -686,8 +919,55 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     label: "Agent-silence watchdog (Cloudflare cron)",
     priority: "P1",
     expectedWindowHours: 48,
+    //
+    // OPE-1637 — keyed on the watchdog's OWN code. This read `kind='watchdog'`,
+    // which every cron stamp shares (`watchdog:occurred-sweep` daily,
+    // `watchdog:host-silence` hourly), so any of them kept this probe green
+    // while the agent-silence watchdog itself was dead.
     lastEvidenceAt: (db) =>
-      maxTs(db, agentHeartbeats, agentHeartbeats.lastSeenAt, eq(agentHeartbeats.kind, "watchdog")),
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:agent-silence")
+      ),
+  },
+  {
+    // OPE-1637 — proof the hourly host-silence watch is itself running. It
+    // stamps `watchdog:host-silence` on every run, including dormant ones (no
+    // host stamp yet), so a dead hourly cron goes red here even before the
+    // wrapper's token exists. 3h = two missed hourly runs plus slack.
+    name: "host-silence-watch",
+    ownerOpe: "OPE-1637",
+    label: "Hourly Battleship host-silence watch (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:host-silence")
+      ),
+  },
+  {
+    // OPE-1655 — proof the hourly deploy-lag watch is itself running. It stamps
+    // `watchdog:deploy-lag` on every run, whatever the verdict (ok, lagging, or
+    // unknown when GitHub would not answer), so a dead hourly cron goes red here
+    // and the alarm that catches a frozen deploy cannot itself die quietly.
+    // 3h = two missed hourly runs plus slack.
+    name: "deploy-lag-watch",
+    ownerOpe: "OPE-1655",
+    label: "Hourly production-behind-main watch (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:deploy-lag")
+      ),
   },
   {
     // OPE-532 — proof the held-submission queue is still being MEASURED.
@@ -998,8 +1278,10 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // A field filled meanwhile is a legitimate non-apply, so a single miss
     // reads red until the next qualifying match applies — that is the intent.
     //
-    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0385): the writer is in the
-    // separately deployed MCP Worker. Arm once that deploy is live.
+    // Armed by OPE-1529 (drizzle/0400) with zero qualifying matches so far, so
+    // the writer's first real match is checked. The writer stamps the applied
+    // row and the demand row with ONE timestamp: the applied row is written
+    // first, and a demand row a second later would read as silent here.
     name: "enrich-auto-apply",
     ownerOpe: "OPE-1506",
     label: "Enrich-on-match auto-apply (trusted/verified senders) → dedup.enrich_applied",
@@ -1033,6 +1315,60 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         ),
         new Date()
       );
+    },
+  },
+  {
+    // OPE-1510 — proof the contact-mail lane still opens its obligations. A
+    // known contact's ack is withheld by the same step that writes this row, so
+    // a lane that stopped running would mean contacts back on generic acks, or
+    // silence, with nothing else to say so.
+    name: "contact-lane",
+    ownerOpe: "OPE-1510",
+    label: "Contact-mail lane → contact obligation opened",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: async (db) =>
+      maxTs(
+        db,
+        supportObligations,
+        supportObligations.openedAt,
+        eq(supportObligations.kind, "contact")
+      ),
+  },
+  {
+    // OPE-1683 — a sent operator draft answers its recipient's contact
+    // obligation. The email-jobs consumer closes it on the confirmed send, so
+    // after arming NO sent `operator:outbound` row should sit next to an OPEN
+    // contact obligation from the same address that opened before the send.
+    // Demand = the oldest such send (only closing the obligation discharges
+    // it); 2h is ample for a close that runs in the same consumer pass.
+    name: "operator-draft-closes-obligation",
+    ownerOpe: "OPE-1683",
+    label: "sent operator draft → contact obligation closed",
+    priority: "P1",
+    expectedWindowHours: 2,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${emailSendLedger.sentAt})` })
+        .from(emailSendLedger)
+        .innerJoin(
+          supportObligations,
+          and(
+            sql`lower(${supportObligations.fromAddress}) = lower(${emailSendLedger.recipient})`,
+            eq(supportObligations.kind, "contact"),
+            eq(supportObligations.status, "open"),
+            sql`${supportObligations.openedAt} <= ${emailSendLedger.sentAt}`
+          )
+        )
+        .where(
+          and(
+            eq(emailSendLedger.source, "operator:outbound"),
+            eq(emailSendLedger.status, "sent"),
+            sql`${emailSendLedger.sentAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'operator-draft-closes-obligation'), 4102444800)`
+          )
+        );
+      const demand = r?.t != null ? new Date(Number(r.t) * 1000) : null;
+      return demandConditionalEvidence(demand, null, new Date());
     },
   },
   {
@@ -1116,13 +1452,31 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, emailDeliveryEvents, emailDeliveryEvents.receivedAt),
   },
   {
+    // OPE-1530 — evidence is EITHER intent the submit pipeline runs on.
+    //
+    // `submit` is only the submit@ ADDRESS-FALLBACK intent (classifier below
+    // threshold or errored — `routeIntents`, mcp-server/src/email-handler.ts);
+    // a confident classifier stores `new_event`, and both dispatch to the same
+    // submit pipeline (workflows/inbound-email.ts). Keyed on `submit` alone,
+    // the probe watched the low-confidence slice of the lane: its last row was
+    // 2026-10-05 15:01Z, and the probe sat red ~22 days while `new_event`
+    // submissions kept arriving (11 in the 30 days to 10-27, last 10-26).
+    //
+    // 21d window, re-measured 2026-10-27 on BOTH intents: 169 inter-arrival
+    // gaps since 2026-05-18, worst 197h (07-01 → 07-10), then 195h and 169h,
+    // p90 78h. 504h ≈ 2.6x the worst real gap — kept, not widened.
     name: "inbound-submit",
     ownerOpe: "OPE-174",
     label: "Inbound event submissions",
     priority: "P1",
     expectedWindowHours: 21 * 24,
     lastEvidenceAt: (db) =>
-      maxTs(db, inboundEmails, inboundEmails.receivedAt, eq(inboundEmails.intent, "submit")),
+      maxTs(
+        db,
+        inboundEmails,
+        inboundEmails.receivedAt,
+        inArray(inboundEmails.intent, ["submit", "new_event"])
+      ),
   },
   {
     // OPE-944 — proof the original-sender forward analysis is still executing.
@@ -1582,6 +1936,51 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, promoterEnrichmentCandidates, promoterEnrichmentCandidates.createdAt),
   },
   {
+    // OPE-1712 — the nightly promoter cron now AUTO-APPLIES (it had merged 0
+    // candidates ever while dry-run). Evidence = a cron candidate the live
+    // gates let through, stamped auto_merged (reviewed_at set by applyFills).
+    // Prod 11-06 → 11-26: an unflagged high-confidence cron candidate appeared
+    // on 11 of 21 days, longest gap ~4 days; 240h is ~2.5× that. Silence means
+    // the flag flipped back, the cron stopped, or every gate is now refusing.
+    name: "promoter-cron-auto-merge",
+    ownerOpe: "OPE-1712",
+    label: "Promoter enrichment cron auto-applies high-confidence fills",
+    priority: "P1",
+    expectedWindowHours: 10 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        promoterEnrichmentCandidates,
+        promoterEnrichmentCandidates.reviewedAt,
+        sql`${promoterEnrichmentCandidates.decision} = 'auto_merged'
+            AND ${promoterEnrichmentCandidates.jobRunId} LIKE 'promoter-cron-%'`
+      ),
+  },
+  {
+    // OPE-1689 — the promoter run's one same-site Contact-page hop STAGED a
+    // value. Only that hop writes a candidate whose source_url is not the
+    // promoter's own website (the homepage pass stamps website verbatim), so
+    // this reads the hop's output, not the enrichment cron's. It fires only
+    // when a promoter's email/phone is empty AND its contact page yields one
+    // (2 of 4 in the 11-18 hand check), so the window is two weeks, not one.
+    name: "promoter-contact-page-hop",
+    ownerOpe: "OPE-1689",
+    label: "Promoter enrichment Contact-page hop → candidate",
+    priority: "P1",
+    expectedWindowHours: 14 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        promoterEnrichmentCandidates,
+        promoterEnrichmentCandidates.createdAt,
+        sql`${promoterEnrichmentCandidates.proposedField} IN ('contact_email','contact_phone')
+            AND ${promoterEnrichmentCandidates.sourceUrl} IS NOT NULL
+            AND ${promoterEnrichmentCandidates.sourceUrl} <> COALESCE(
+              (SELECT trim(p.website) FROM promoters p
+                WHERE p.id = ${promoterEnrichmentCandidates.promoterId}), '')`
+      ),
+  },
+  {
     // OPE-1503 — re-measured after gate tuning (OPE-1032 09-15, OPE-815 09-23)
     // cut inflow from tens of rows a day to a few a week. Prod, 09-24 → 10-21:
     // the longest closed gap between new rows was 102h (10-07 → 10-11), next
@@ -1689,8 +2088,151 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
           "photo.signage_not_presence",
           // OPE-978 — scenery now records its gallery decision too.
           "photo.gallery_attached",
+          // OPE-1705 — a business card records its own decision, never a booth
+          // proposal; a batch of only cards must not read as a stopped stage.
+          "vendor.card_proposed",
+          "vendor.card_applied",
         ])
       ),
+  },
+  {
+    // OPE-1705 — the business-card lane: a card photo is read for its fields
+    // and either applied to a matched vendor (blank-fill + staged contact
+    // candidates) or staged as a card proposal. OPE-246: the new execution path
+    // ships with its probe.
+    //
+    // Seeded DORMANT (drizzle/0434, enabled_at NULL): cards arrive only when John
+    // photographs one, so a window armed before the first real card would page
+    // on a lane nobody has used yet. ARMED by drizzle/0437 (OPE-1709) from the
+    // first live `vendor.card_applied` row, 2026-11-26T03:39:05Z.
+    name: "business-card-lane",
+    ownerOpe: "OPE-1705",
+    label: "Business-card photo → vendor fields / card proposal",
+    priority: "P1",
+    // 30d, the photo-intake siblings' window: seasonal, quiet for weeks.
+    expectedWindowHours: 30 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        inArray(adminActions.action, ["vendor.card_proposed", "vendor.card_applied"])
+      ),
+  },
+  {
+    // OPE-1705 slice 2 — a card paired with the booth shot just before it.
+    name: "card-booth-pairing",
+    ownerOpe: "OPE-1705",
+    label: "Business card paired with its booth photo",
+    priority: "P1",
+    // Same 30d as the card lane: pairings only happen at a fair, in season.
+    expectedWindowHours: 30 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "vendor.card_paired")
+      ),
+  },
+  {
+    // OPE-1709 — every Snap photo's vision pass records a workflow step
+    // (`photo/cards-only` before a fair is chosen or the hold, `photo/classify`
+    // at a resolved fair) naming what each photo was read as. The first real
+    // card took the hold path and left no such trace.
+    //
+    // SERVED-NESS, not a clock (the extract-context-telemetry shape): photo
+    // intake is seasonal, so "no step in N days" would page all winter. It
+    // fires only when a Snap upload arrived AFTER the newest step row and is
+    // older than the window — a photo the vision pass never recorded. Every
+    // Snap row is eligible (OPE-1341) and reaches one of the two passes, so an
+    // unserved one is a real miss. Inputs before enabled_at are ignored.
+    name: "photo-classify-step",
+    ownerOpe: "OPE-1709",
+    label: "Snap photo → vision classification recorded as a workflow step",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const evidence = await maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        inArray(workflowRunSteps.stepName, ["photo/cards-only", "photo/classify"])
+      );
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${inboundEmails.receivedAt})` })
+        .from(inboundEmails)
+        .where(
+          and(
+            eq(inboundEmails.intent, "photo_intake"),
+            eq(inboundEmails.routingSource, "snap-app"),
+            // Newer than the newest evidence ⇒ unserved by construction.
+            sql`${inboundEmails.receivedAt} > ${evidence ? Math.floor(evidence.getTime() / 1000) : 0}`,
+            sql`${inboundEmails.receivedAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'photo-classify-step'), 4102444800)`
+          )
+        );
+      return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
+    },
+  },
+  // ── OPE-1634 — feed quality labels and the weekly drop sample ───────
+  {
+    // Every review_feed_item action writes a feed_item_labels row beside its
+    // admin_actions row (src/lib/feed-review/review.ts). Served-ness: a
+    // feed_item.* action newer than enabled_at with no review label at or after
+    // it is a miss. A quiet review week is healthy (no demand).
+    name: "feed-review-labels",
+    ownerOpe: "OPE-1634",
+    label: "Feed review actions record quality labels",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const demand = await maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        and(
+          sql`${adminActions.action} LIKE 'feed_item.%'`,
+          sql`${adminActions.createdAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'feed-review-labels'), 4102444800)`
+        )
+      );
+      const evidence = await maxTs(
+        db,
+        feedItemLabels,
+        feedItemLabels.createdAt,
+        eq(feedItemLabels.source, "review")
+      );
+      return demandConditionalEvidence(demand, evidence, new Date());
+    },
+  },
+  {
+    // The MCP hourly cron writes one feed_drop_samples row per week, EVEN WHEN
+    // EMPTY (packages/db-schema/src/feed-quality.ts ensureWeeklyDropSample), so
+    // this is genuinely periodic: 8 days of silence = a missed week.
+    name: "feed-drop-sample-built",
+    ownerOpe: "OPE-1634",
+    label: "Weekly feed drop sample built",
+    priority: "P1",
+    expectedWindowHours: 8 * 24,
+    lastEvidenceAt: (db) => maxTs(db, feedDropSamples, feedDropSamples.createdAt),
+  },
+  {
+    // The Worker cannot file Linear issues (no token — OPE-76's rail), so an
+    // agent files each non-empty sample via list_feed_drop_samples and stamps
+    // it with record_feed_drop_sample_filing. A sample unfiled past the window
+    // means no agent is doing that: the silence clock starts at the OLDEST
+    // unfiled non-empty sample; none outstanding reads healthy.
+    name: "feed-drop-sample-filed",
+    ownerOpe: "OPE-1634",
+    label: "Weekly feed drop sample filed as a ticket for the analyst",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${feedDropSamples.createdAt})` })
+        .from(feedDropSamples)
+        .where(and(isNull(feedDropSamples.opeId), sql`${feedDropSamples.itemCount} > 0`));
+      return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
+    },
   },
   // ── OPE-309 (assurance audit A6 / A7) ──────────────────────────────
   //
@@ -2186,6 +2728,14 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // Measured 2026-09-13: ONE row (2026-07, ingested 08-09); the August email
     // (~Sept 4, per the seed) never landed. With this entry that silence
     // becomes visible at 40 days instead of never.
+    //
+    // OPE-1568 re-check of the window, measured from Gmail receipt times of
+    // Google's own sends: 07-07, 08-04, 09-08, 10-06 (2026) → gaps 28/35/28d.
+    // 40d covers the longest observed gap with 5d of slack, so it stays — IF
+    // ingest is prompt. Evidence is `updated_at` (ingest time), so any delivery
+    // lag (the email has to reach the inbound worker, or an agent has to paste
+    // it via `ingest_gsc_milestone_email`) eats that slack. Widening the window
+    // would only hide the delivery gap this probe exists to expose.
     name: "gsc-monthly-oracle",
     ownerOpe: "OPE-344",
     label: "GSC monthly oracle (Google's own monthly email figures)",
@@ -2235,6 +2785,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         agentHeartbeats,
         agentHeartbeats.lastSeenAt,
         eq(agentHeartbeats.agentCode, "watchdog:request-sample-retention")
+      ),
+  },
+  {
+    // OPE-1664 — the */10 MCP cron drains the KV buffer of error_logs rows a D1
+    // overload kept out of the table. Evidence is the RUN STAMP, written only
+    // when a drain COMPLETED (an empty buffer included): a drain that D1 refused,
+    // or that threw, writes none. 2h = twelve missed runs, so one blip doesn't
+    // fire it, but a dead replay path is seen the same morning.
+    name: "error-log-buffer-replay",
+    ownerOpe: "OPE-1664",
+    label: "error_logs KV buffer replay (*/10 MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 2,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:error-log-buffer-replay")
       ),
   },
   {
@@ -2346,6 +2915,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1597 — proof the daily full-table similarity sweep still runs for
+    // EVERY entity type. Reads the OLDEST run row, not the newest: vendors is
+    // the type most likely to fail alone, and a newest-row read would stay
+    // green on the other three.
+    name: "entity-duplicate-full-sweep",
+    ownerOpe: "OPE-1597",
+    label: "daily full-table duplicate sweep running for every entity type",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({
+          oldest: sql<number | null>`min(${entityDuplicateSweepRuns.lastRunAt})`,
+          types: sql<number>`count(*)`,
+        })
+        .from(entityDuplicateSweepRuns);
+      if (!r || r.oldest == null || Number(r.types) < FULL_SWEEP_TYPES.length) return null;
+      return new Date(Number(r.oldest) * 1000);
+    },
+  },
+  {
     // OPE-1152 — proof enrich-on-match still RECORDS a disposition for every
     // match. It staged ONE proposal in its lifetime because its writer was
     // reachable from one branch with a scope that was always already filled —
@@ -2382,6 +2972,168 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       );
       return demandConditionalEvidence(demand, evidence, new Date());
     },
+  },
+  {
+    // OPE-1617 — proof the hourly organizer-feed poll still RUNS. It writes one
+    // info row per run whether FEED_POLLING_ENABLED is on or off ("read nothing"
+    // is a run too), so this is live from the ship date while the reads it
+    // gates stay dormant (organizer-feed-ingest). 3h = three runs missed.
+    // Literal source: the job lives in the MCP Worker (FEED_POLL_SOURCE).
+    name: "organizer-feed-poll",
+    ownerOpe: "OPE-1617",
+    label: "hourly organizer-feed poll is running (reads gated by FEED_POLLING_ENABLED)",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "feeds:scheduled-poll"), eq(errorLogs.level, "info"))
+      ),
+  },
+  {
+    // OPE-1621 — proof a change ping (POST /api/v1/ping, or a verified WebSub
+    // notification) is actually SERVED: the 10-minute pinged-feed pass reads
+    // the feed and clears `ping_requested_at`. Demand-conditional: no
+    // outstanding ping reads healthy now; an outstanding one starts the clock
+    // at the OLDEST ping still waiting. 1h = six passes missed.
+    //
+    // Seeded DORMANT (drizzle/0412, enabled_at NULL) while FEED_POLLING_ENABLED
+    // was "false"; armed 2026-11-11 by drizzle/0413 when the flag flipped.
+    name: "feed-change-ping",
+    ownerOpe: "OPE-1621",
+    label: "a pinged organizer feed is re-read within the hour",
+    priority: "P1",
+    expectedWindowHours: 1,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ oldest: sql<number | null>`min(${promoterEventFeeds.pingRequestedAt})` })
+        .from(promoterEventFeeds)
+        .where(eq(promoterEventFeeds.enabled, true));
+      const oldest = r?.oldest != null ? new Date(Number(r.oldest) * 1000) : null;
+      return demandConditionalEvidence(oldest, null, new Date());
+    },
+  },
+  {
+    // OPE-1626 — per-feed staleness: every ENABLED feed has had a successful
+    // read (ingested or 304, `last_ok_at`) within 2× its own poll interval.
+    // Job liveness is organizer-feed-poll's (3h), so this does not repeat it.
+    // Intervals differ per feed (1–168h), so the evidence is synthetic: the
+    // earliest feed deadline minus this probe's 1h window — red exactly when a
+    // deadline has passed (feedReaderEvidence). No enabled feed reads healthy.
+    // A feed never read starts its clock at registration. An auto-disabled
+    // feed leaves the probe (it is not enabled); its fault row reports it.
+    name: "feed-reader",
+    ownerOpe: "OPE-1626",
+    label: "every enabled organizer feed read successfully within 2× its poll interval",
+    priority: "P1",
+    expectedWindowHours: FEED_READER_WINDOW_HOURS,
+    lastEvidenceAt: async (db) => {
+      const rows = await db
+        .select({
+          lastOkAt: promoterEventFeeds.lastOkAt,
+          createdAt: promoterEventFeeds.createdAt,
+          pollIntervalHours: promoterEventFeeds.pollIntervalHours,
+        })
+        .from(promoterEventFeeds)
+        .where(eq(promoterEventFeeds.enabled, true));
+      return feedReaderEvidence(rows, new Date());
+    },
+  },
+  {
+    // OPE-1633 — proof the hourly feed poll still EVALUATES feed health. The
+    // flags table is rightly empty while every feed is healthy, so the evidence
+    // is the one info row each hourly run writes under `feeds:health-eval`
+    // after the freshness pass (mcp-server/src/feeds/schedule.ts). 3h = three
+    // missed hourly runs. Polling is on (OPE-1626), so it is live from ship.
+    name: "feed-health-eval",
+    ownerOpe: "OPE-1633",
+    label: "the hourly feed poll evaluated every enabled feed's health",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: async (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "feeds:health-eval"), eq(errorLogs.level, "info"))
+      ),
+  },
+  {
+    // OPE-1610 — proof the hourly pending-contact attach job still RUNS. Most
+    // runs attach nothing, so it writes one info row per run. 3h = three runs
+    // missed. Literal source: the job lives in the MCP Worker.
+    name: "pending-contact-attach",
+    ownerOpe: "OPE-1610",
+    label: "hourly attach of pending promoter contacts is running",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "mcp:inbound:pending-contact-attach"), eq(errorLogs.level, "info"))
+      ),
+  },
+  {
+    // OPE-1608 — the onboarding lane. Two questions, one answer: has the pass
+    // run lately (its info row), and is any request overdue? A request with no
+    // draft after 2h, or a draft past its deadline, is RED at once, which is
+    // why it returns the epoch rather than the request's own age.
+    name: "promoter-onboarding",
+    ownerOpe: "OPE-1608",
+    label: "onboarding lane running, no request overdue for a draft or a send",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: async (db) => {
+      const now = new Date();
+      const [overdue] = await db
+        .select({ id: promoterOnboardingRequests.id })
+        .from(promoterOnboardingRequests)
+        .where(
+          and(
+            isNull(promoterOnboardingRequests.closedAt),
+            or(
+              and(
+                isNull(promoterOnboardingRequests.draftId),
+                lt(promoterOnboardingRequests.createdAt, new Date(now.getTime() - 2 * 3_600_000))
+              ),
+              and(
+                isNotNull(promoterOnboardingRequests.draftId),
+                isNull(promoterOnboardingRequests.repliedAt),
+                lt(promoterOnboardingRequests.targetAt, now)
+              )
+            )
+          )
+        )
+        .limit(1);
+      if (overdue) return new Date(0);
+      return maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "mcp:inbound:promoter-onboarding"), eq(errorLogs.level, "info"))
+      );
+    },
+  },
+  {
+    // OPE-1609 — proof the hourly replied-row ledger check still RUNS. Its
+    // normal output is "0 faults", so it writes one info row per run. 3h = three
+    // runs missed. Literal source: the checker lives in the MCP Worker.
+    name: "replied-ledger-check",
+    ownerOpe: "OPE-1609",
+    label: "hourly check that replied inbound rows have a ledger row is running",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(eq(errorLogs.source, "mcp:inbound:replied-without-ledger"), eq(errorLogs.level, "info"))
+      ),
   },
   {
     // OPE-1205 — proof the daily sync-staleness sweep still RUNS. It writes one
@@ -2597,6 +3349,9 @@ export function assessHeartbeatSilence(a: HeartbeatActivity, now: Date): StaleRe
   };
 }
 
+/** Max heartbeat probe queries in flight at once (OPE-1573). */
+export const HEARTBEAT_PROBE_CONCURRENCY = 4;
+
 /** Join every probe to its `heartbeat_probes.enabled_at` + newest evidence. */
 export async function gatherHeartbeatActivity(db: Db): Promise<HeartbeatActivity[]> {
   const anchors = await db
@@ -2604,13 +3359,15 @@ export async function gatherHeartbeatActivity(db: Db): Promise<HeartbeatActivity
     .from(heartbeatProbes);
   const enabledByName = new Map(anchors.map((a) => [a.probeName, a.enabledAt ?? null]));
 
-  return Promise.all(
-    HEARTBEAT_PROBES.map(async (probe) => ({
-      probe,
-      enabledAt: enabledByName.get(probe.name) ?? null,
-      lastEvidenceAt: await probe.lastEvidenceAt(db),
-    }))
-  );
+  // OPE-1573: bounded, not Promise.all. ~110 probes fired at once put ~110
+  // requests in D1's single-threaded queue on every Overview render and every
+  // stale-red scan; concurrent public renders then failed with "Requests
+  // queued for too long". See src/lib/concurrency.ts.
+  return mapWithConcurrency(HEARTBEAT_PROBES, HEARTBEAT_PROBE_CONCURRENCY, async (probe) => ({
+    probe,
+    enabledAt: enabledByName.get(probe.name) ?? null,
+    lastEvidenceAt: await probe.lastEvidenceAt(db),
+  }));
 }
 
 /** Assess all probes; returns the silent ones as StaleReds (healthy drop out). */

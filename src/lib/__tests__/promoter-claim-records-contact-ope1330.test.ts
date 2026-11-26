@@ -42,9 +42,9 @@ for (const f of FILES) {
 }
 
 describe("every promoter claim write records the claimant as a contact", () => {
-  it("the scan sees every known claim path (non-vacuous landmark: 7 writes in 6 files)", () => {
-    expect(writes.length).toBe(7);
-    expect(new Set(writes.map((w) => w.file)).size).toBe(6);
+  it("the scan sees every known claim path (non-vacuous landmark: 8 writes in 7 files — OPE-1692 added the invite same-domain approval)", () => {
+    expect(writes.length).toBe(8);
+    expect(new Set(writes.map((w) => w.file)).size).toBe(7);
   });
 
   it("each one is followed by recordClaimantAsPromoterContact", () => {

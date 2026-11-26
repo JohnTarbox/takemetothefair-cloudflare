@@ -733,7 +733,7 @@ export function trackClaimStep(
 // forgotten.
 
 /** Fire once when a funnel's entry page renders. */
-export function trackFunnelView(funnel: "register" | "submit") {
+export function trackFunnelView(funnel: "register" | "submit" | "list") {
   sendBeacon(`${funnel}_view`, "funnel");
 }
 
@@ -745,7 +745,7 @@ export function trackFunnelView(funnel: "register" | "submit") {
  * client (see funnel-steps.ts). Re-firing per keystroke would exhaust that
  * budget and start dropping the very steps we are trying to measure.
  */
-export function trackFunnelInteracted(funnel: "register" | "claim" | "submit") {
+export function trackFunnelInteracted(funnel: "register" | "claim" | "submit" | "list") {
   sendBeacon(`${funnel}_form_interacted`, "funnel");
 }
 
@@ -761,7 +761,7 @@ export function trackFunnelInteracted(funnel: "register" | "claim" | "submit") {
  * resubmitting three times in a minute is a friction signal. The funnel read path
  * counts only `attempt = 1` as the step.
  */
-export function trackFunnelSubmitted(funnel: "register" | "submit", attempt: number) {
+export function trackFunnelSubmitted(funnel: "register" | "submit" | "list", attempt: number) {
   sendBeacon(`${funnel}_submitted`, "funnel", { attempt });
 }
 
@@ -771,7 +771,7 @@ export function trackFunnelSubmitted(funnel: "register" | "submit", attempt: num
  * visit and starts again at 1. `send` is injectable for tests.
  */
 export function makeSubmitAttemptTracker(
-  funnel: "register" | "submit",
+  funnel: "register" | "submit" | "list",
   send: typeof trackFunnelSubmitted = trackFunnelSubmitted
 ): () => number {
   let attempts = 0;

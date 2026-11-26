@@ -19,6 +19,9 @@
 import { errorLogs } from "@/lib/db/schema";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { errorCauseMessages } from "@takemetothefair/utils";
+import { getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { bufferFailedErrorLog, type ErrorLogRow } from "@/lib/observability/error-log-buffer";
+import { isReadOnlyDb } from "@/lib/test-submission/read-only-db";
 
 /** Truncation caps — keep a single row bounded even for pathological errors. */
 const MAX_MESSAGE_CHARS = 4_000;
@@ -33,6 +36,15 @@ export interface CaptureServerRenderErrorArgs {
   /** The Next `onRequestError` context descriptor. */
   context?: { routePath?: string; routerKind?: string; routeType?: string };
 }
+
+/**
+ * OPE-1601 — error objects already written. A page's `generateMetadata` and its
+ * component read through one cached fetcher, so a failed read rejects both with
+ * the SAME object and Next reports it twice: 74 same-second pairs of
+ * `server-render` rows in the 2026-11-09 D1 burst. Identity rather than message,
+ * so two visitors hitting the same fault still write two rows.
+ */
+const capturedErrors = new WeakSet<object>();
 
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max)}…[truncated]` : value;
@@ -49,13 +61,17 @@ export async function captureServerRenderError(
   db: DrizzleD1Database<Record<string, unknown>> | null,
   args: CaptureServerRenderErrorArgs
 ): Promise<void> {
+  let row: ErrorLogRow | null = null;
   try {
     const { error, request, context } = args;
 
+    if (typeof error === "object" && error !== null) {
+      if (capturedErrors.has(error)) return;
+      capturedErrors.add(error);
+    }
+
     const err = error as
-      | { message?: unknown; stack?: unknown; digest?: unknown }
-      | null
-      | undefined;
+      { message?: unknown; stack?: unknown; digest?: unknown } | null | undefined;
 
     // OPE-1030 — with the cause chain, and truncation applied to the wrapper
     // text rather than the cause: 225 `/blog` render errors on 2026-09-12 were
@@ -92,7 +108,7 @@ export async function captureServerRenderError(
 
     if (!db) return;
 
-    await db.insert(errorLogs).values({
+    row = {
       id: crypto.randomUUID(),
       timestamp: new Date(),
       level: "error",
@@ -110,9 +126,14 @@ export async function captureServerRenderError(
         routeType: context?.routeType ?? null,
         routePath: context?.routePath ?? null,
       }),
-    });
+    };
+    await db.insert(errorLogs).values(row as typeof errorLogs.$inferInsert);
   } catch (captureErr) {
     // A logging failure must never compound the render failure that caused it.
     console.error("[captureServerRenderError] failed to persist render error:", captureErr);
+    // OPE-1664 — the row was built and only the D1 write failed (usually an
+    // overload): keep it in KV for the */10 replay cron. Never throws.
+    // Not for a dry-run (OPE-1625 readOnlyDb) handle, which refuses on purpose.
+    if (row && !isReadOnlyDb(db)) await bufferFailedErrorLog(getCloudflareRateLimitKv, row);
   }
 }

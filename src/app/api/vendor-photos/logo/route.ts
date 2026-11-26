@@ -33,13 +33,14 @@ export const dynamic = "force-dynamic";
  * object costs fractions of a cent while a broken reference costs a vendor
  * their brand image.
  */
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors } from "@/lib/db/schema";
 import { authorizeVendorGallery } from "@/lib/vendor-photo-auth";
-import { runUploadPipeline } from "@/lib/upload-image-pipeline";
+import { runUploadPipeline, describeRefusedDeclaredType } from "@/lib/upload-image-pipeline";
+import { unsupportedImageFormatForMime } from "@takemetothefair/utils";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -79,7 +80,11 @@ export async function POST(request: Request) {
   }
   if (!ALLOWED_TYPES.has(file.type)) {
     return NextResponse.json(
-      { error: `Unsupported file type "${file.type || "unknown"}". Use JPEG, PNG or WebP.` },
+      {
+        error: unsupportedImageFormatForMime(file.type)
+          ? describeRefusedDeclaredType(file.type)
+          : `Unsupported file type "${file.type || "unknown"}". Use JPEG, PNG or WebP.`,
+      },
       { status: 400 }
     );
   }
@@ -129,7 +134,15 @@ export async function DELETE(request: Request) {
   const gate = await authorizeVendorGallery(db, vendorId, session?.user?.id, session?.user?.role);
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status });
 
-  await db.update(vendors).set({ logoUrl: null }).where(eq(vendors.id, vendorId));
+  // OPE-1653 — a removed logo is recoverable from its history row.
+  await updateWithFieldHistory(db, {
+    table: vendors,
+    entityType: "vendor",
+    entityId: vendorId,
+    patch: { logoUrl: null },
+    actor: session!.user!.id,
+    source: "api:DELETE /api/vendor-photos/logo",
+  });
 
   // OPE-1112 scope 5 / the OPE-830 family — say what was written. A save that
   // reports success without naming the field it touched is how a silent no-op

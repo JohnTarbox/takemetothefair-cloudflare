@@ -387,7 +387,7 @@ describe("listReviewableClaims", () => {
     expect(await listReviewableClaims(db as never)).toEqual([]);
   });
 
-  it("returns only PENDING + DISPUTED vendor/promoter claims, decorated, newest first", async () => {
+  it("returns only PENDING + DISPUTED vendor/promoter claims, decorated, oldest first", async () => {
     seedVendor({ id: "v1", slug: "acme-foods" });
     seedPromoter({ id: "p1", slug: "big-events-co" });
 
@@ -430,7 +430,7 @@ describe("listReviewableClaims", () => {
     });
 
     const rows = await listReviewableClaims(db as never);
-    expect(rows.map((r) => r.id)).toEqual(["c-disputed", "c-pending"]); // newest first, no venue
+    expect(rows.map((r) => r.id)).toEqual(["c-pending", "c-disputed"]); // oldest first (OPE-1599), no venue
 
     const disputed = rows.find((r) => r.id === "c-disputed")!;
     expect(disputed.entityType).toBe("PROMOTER");

@@ -43,8 +43,20 @@ const ALLOWED: Array<{ path: RegExp; why: string }> = [
     why: "writer (claim approval), returns nothing public",
   },
   {
+    path: /^mcp-server\/src\/inbound\/known-contact\.ts$/,
+    why: "OPE-1510: inbound-email workflow only; returns a basis and an entity id to the admin draft queue",
+  },
+  {
     path: /^mcp-server\/src\/inbound\/promoter-contact-capture\.ts$/,
     why: "writer (inbound capture)",
+  },
+  {
+    path: /^mcp-server\/src\/inbound\/pending-promoter-contact-attach\.ts$/,
+    why: "writer (OPE-1610 hourly attach), returns only counts",
+  },
+  {
+    path: /^mcp-server\/src\/inbound\/promoter-onboarding\.ts$/,
+    why: "reader (OPE-1608), only asks whether the sender's own address is validated",
   },
   { path: /^mcp-server\/src\/promoter-claimant-contact\.ts$/, why: "writer (MCP claim twin)" },
   { path: /^mcp-server\/src\/tools\/admin-promoter-contacts\.ts$/, why: "admin-gated tools" },
@@ -55,6 +67,18 @@ const ALLOWED: Array<{ path: RegExp; why: string }> = [
   {
     path: /^mcp-server\/src\/email-handlers\/enrich-auto-apply\.ts$/,
     why: "reader (OPE-1506 sender basis): yields only whether a validated contact matched",
+  },
+  {
+    path: /^mcp-server\/src\/feeds\/contact-answer\.ts$/,
+    why: "reader (OPE-1613): matches a reply's sender to a validated contact; called only by admin-gated record_feed_discrepancy_answer",
+  },
+  {
+    path: /^mcp-server\/src\/feeds\/batch\.ts$/,
+    why: "reader (OPE-1613): addresses an operator DRAFT to the validated contact; called only by admin-gated compose_feed_discrepancy_batch",
+  },
+  {
+    path: /^mcp-server\/src\/feeds\/ownership\.ts$/,
+    why: "reader (OPE-1617): yields only whether the sender of a calendar address is a validated contact; called only by admin-gated register_promoter_feed",
   },
 ];
 

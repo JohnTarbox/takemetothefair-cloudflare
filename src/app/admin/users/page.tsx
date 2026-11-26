@@ -1,15 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 import {
-  SortableHeader,
-  SortConfig,
-  sortData,
-  getNextSortDirection,
-} from "@/components/ui/sortable-table";
+  AdminPagedTable,
+  type AdminColumn,
+  type AdminFilter,
+} from "@/components/admin/admin-paged-table";
 
 interface User {
   id: string;
@@ -28,179 +25,124 @@ const roleColors: Record<string, "default" | "success" | "warning" | "danger" | 
   USER: "default",
 };
 
-export default function AdminUsersPage() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [sortConfig, setSortConfig] = useState<SortConfig>({
-    column: "email",
-    direction: "asc",
-  });
+const FILTERS: AdminFilter[] = [
+  {
+    param: "role",
+    allLabel: "All roles",
+    options: [
+      { value: "USER", label: "User" },
+      { value: "VENDOR", label: "Vendor" },
+      { value: "PROMOTER", label: "Promoter" },
+      { value: "ADMIN", label: "Admin" },
+    ],
+  },
+  {
+    param: "includePlaceholders",
+    allLabel: "Real accounts",
+    title: "Placeholder owner accounts minted by the vendor and promoter creation tools",
+    options: [{ value: "1", label: "Include placeholders" }],
+  },
+];
 
-  useEffect(() => {
-    fetchUsers();
-  }, []);
-
-  const fetchUsers = async () => {
-    try {
-      const res = await fetch("/api/admin/users");
-      const data = (await res.json()) as unknown;
-      // Guard: non-2xx returns { error } (object), not an array — without this,
-      // users.map() white-screens the page.
-      setUsers(res.ok && Array.isArray(data) ? (data as User[]) : []);
-    } catch (error) {
-      console.error("Failed to fetch users:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRoleChange = async (userId: string, newRole: string) => {
-    try {
-      const res = await fetch(`/api/admin/users/${userId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: newRole }),
-      });
-
-      if (res.ok) {
-        setUsers(users.map((u) => (u.id === userId ? { ...u, role: newRole } : u)));
-      }
-    } catch (error) {
-      console.error("Failed to update user role:", error);
-    }
-  };
-
-  // OPE-177 — clear a stuck account by marking its email verified.
-  const handleMarkVerified = async (userId: string) => {
-    try {
-      const res = await fetch(`/api/admin/users/${userId}/mark-verified`, { method: "POST" });
-      const data = (await res.json().catch(() => ({}))) as { emailVerified?: string };
-      if (res.ok) {
-        setUsers((prev) =>
-          prev.map((u) =>
-            u.id === userId
-              ? { ...u, emailVerified: data.emailVerified ?? new Date().toISOString() }
-              : u
-          )
-        );
-      }
-    } catch (error) {
-      console.error("Failed to mark user verified:", error);
-    }
-  };
-
-  const handleSort = (column: string) => {
-    setSortConfig(getNextSortDirection(sortConfig, column));
-  };
-
-  const sortedUsers = sortData(users, sortConfig, {
-    email: (u) => u.email,
-    name: (u) => u.name || "",
-    role: (u) => u.role,
-    createdAt: (u) => new Date(u.createdAt).getTime(),
-  });
-
-  if (loading) {
-    return (
-      <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-muted rounded w-1/4"></div>
-        <div className="h-64 bg-muted rounded"></div>
-      </div>
-    );
+async function changeRole(userId: string, role: string, reload: () => void) {
+  try {
+    const res = await fetch(`/api/admin/users/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    });
+    if (res.ok) reload();
+  } catch (error) {
+    console.error("Failed to update user role:", error);
   }
+}
 
+// OPE-177 — clear a stuck account by marking its email verified.
+async function markVerified(userId: string, reload: () => void) {
+  try {
+    const res = await fetch(`/api/admin/users/${userId}/mark-verified`, { method: "POST" });
+    if (res.ok) reload();
+  } catch (error) {
+    console.error("Failed to mark user verified:", error);
+  }
+}
+
+const COLUMNS: AdminColumn<User>[] = [
+  {
+    key: "email",
+    label: "Email",
+    sortKey: "email",
+    cell: (u) => <p className="font-medium text-foreground">{u.email}</p>,
+  },
+  {
+    key: "name",
+    label: "Name",
+    sortKey: "name",
+    cell: (u) => <span className="text-muted-foreground">{u.name || "-"}</span>,
+  },
+  {
+    key: "role",
+    label: "Role",
+    sortKey: "role",
+    cell: (u) => <Badge variant={roleColors[u.role]}>{u.role}</Badge>,
+  },
+  {
+    key: "createdAt",
+    label: "Joined",
+    sortKey: "createdAt",
+    cell: (u) => <span className="text-muted-foreground">{formatDate(u.createdAt)}</span>,
+  },
+  {
+    key: "actions",
+    label: "Actions",
+    align: "right",
+    cell: (u, { reload }) => (
+      <div className="flex items-center justify-end gap-2">
+        {/* OPE-177 — verification state + manual override for accounts whose
+            verification email never arrived. */}
+        {u.emailVerified ? (
+          <Badge variant="success">Verified</Badge>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void markVerified(u.id, reload)}
+            className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-muted"
+            title="Manually mark this user's email as verified"
+          >
+            Mark verified
+          </button>
+        )}
+        <select
+          value={u.role}
+          onChange={(e) => void changeRole(u.id, e.target.value, reload)}
+          className="text-sm border rounded px-2 py-1"
+          aria-label={`Role for ${u.email}`}
+        >
+          <option value="USER">User</option>
+          <option value="VENDOR">Vendor</option>
+          <option value="PROMOTER">Promoter</option>
+          <option value="ADMIN">Admin</option>
+        </select>
+      </div>
+    ),
+  },
+];
+
+export default function AdminUsersPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-2xl font-bold text-foreground">Manage Users</h1>
       </div>
-
-      <Card>
-        <CardHeader>
-          <p className="text-sm text-muted-foreground">{users.length} users total</p>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <SortableHeader
-                    column="email"
-                    label="Email"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="name"
-                    label="Name"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="role"
-                    label="Role"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <SortableHeader
-                    column="createdAt"
-                    label="Joined"
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedUsers.map((user) => (
-                  <tr key={user.id} className="border-b border-border">
-                    <td className="py-3 px-4">
-                      <p className="font-medium text-foreground">{user.email}</p>
-                    </td>
-                    <td className="py-3 px-4 text-muted-foreground">{user.name || "-"}</td>
-                    <td className="py-3 px-4">
-                      <Badge variant={roleColors[user.role]}>{user.role}</Badge>
-                    </td>
-                    <td className="py-3 px-4 text-muted-foreground">
-                      {formatDate(user.createdAt)}
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center justify-end gap-2">
-                        {/* OPE-177 — verification state + manual override for
-                            accounts whose verification email never arrived. */}
-                        {user.emailVerified ? (
-                          <Badge variant="success">Verified</Badge>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => void handleMarkVerified(user.id)}
-                            className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-muted"
-                            title="Manually mark this user's email as verified"
-                          >
-                            Mark verified
-                          </button>
-                        )}
-                        <select
-                          value={user.role}
-                          onChange={(e) => handleRoleChange(user.id, e.target.value)}
-                          className="text-sm border rounded px-2 py-1"
-                        >
-                          <option value="USER">User</option>
-                          <option value="VENDOR">Vendor</option>
-                          <option value="PROMOTER">Promoter</option>
-                          <option value="ADMIN">Admin</option>
-                        </select>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+      <AdminPagedTable<User>
+        endpoint="/api/admin/users"
+        columns={COLUMNS}
+        rowKey={(u) => u.id}
+        noun="user"
+        searchPlaceholder="Search by email or name…"
+        filters={FILTERS}
+        defaultSort={{ column: "email", direction: "asc" }}
+      />
     </div>
   );
 }

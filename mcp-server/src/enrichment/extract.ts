@@ -314,6 +314,21 @@ const PLATFORM_PLACEHOLDER_HANDLES = new Set([
   "yourbusiness",
   "yourpage",
   "username",
+  // OPE-1686 — WordPress THEME vendors, whose accounts ship in the demo footer
+  // of every site built on their theme. SoWa Boston staged AncoraThemes'
+  // Facebook/Twitter/Instagram (`ancora_themes` normalizes to `ancorathemes`).
+  // Whole-handle match, like the rest of this set.
+  "ancorathemes",
+  "themeforest",
+  "envato",
+  "envatomarket",
+  "elementor",
+  "elegantthemes",
+  "themeisle",
+  "themefusion",
+  "qodeinteractive",
+  "mikadothemes",
+  "studiopress",
 ]);
 
 /**
@@ -618,6 +633,52 @@ function socialFromUrl(rawUrl: string): { platform: string; url: string } | null
   if (!keepQuery) u.search = "";
   u.hash = "";
   return { platform, url: u.toString() };
+}
+
+/**
+ * OPE-1706 — every DISTINCT phone and social account the page's JSON-LD names,
+ * across all nodes. `extractVendorContact` keeps only the FIRST of each, so a
+ * page whose structured data describes two businesses (Purity Spring Resort's
+ * carried its own accounts plus Highway West Vacations', and phones in 605 and
+ * 949) is indistinguishable from a clean one there. Promoter enrichment reads
+ * this to decide whether a JSON-LD contact can be trusted to auto-apply.
+ */
+export function jsonLdIdentitySummary(html: string): { phones: string[]; socialUrls: string[] } {
+  const phones = new Set<string>();
+  const socialUrls = new Set<string>();
+  // Walk EVERY nested object, not only the top-level / @graph nodes
+  // parseJsonLdNodes yields. On the real Purity Spring page the second
+  // business is NESTED: `{ "@type": …, telephone: "605-…", sameAs: [resort],
+  // parentOrganization: { telephone: "949-…", sameAs: [Highway West ×4] } }`.
+  // The first version read only top-level nodes and missed it in production
+  // (verified on the deployed build, 2026-11-23).
+  const seen = new Set<object>();
+  const stack: unknown[] = [...parseJsonLdNodes(html)];
+  let visited = 0;
+  while (stack.length && visited < 5000) {
+    const cur = stack.pop();
+    if (!cur || typeof cur !== "object" || seen.has(cur)) continue;
+    seen.add(cur);
+    visited++;
+    if (Array.isArray(cur)) {
+      stack.push(...cur);
+      continue;
+    }
+    const node = cur as Record<string, unknown>;
+    if (typeof node.telephone === "string") {
+      const tel = normalizePhone(node.telephone);
+      if (tel) phones.add(tel);
+    }
+    const sameAs = node.sameAs;
+    const list = Array.isArray(sameAs) ? sameAs : typeof sameAs === "string" ? [sameAs] : [];
+    for (const link of list) {
+      if (typeof link !== "string") continue;
+      const s = socialFromUrl(link);
+      if (s) socialUrls.add(s.url);
+    }
+    for (const v of Object.values(node)) if (v && typeof v === "object") stack.push(v);
+  }
+  return { phones: [...phones], socialUrls: [...socialUrls] };
 }
 
 export function extractVendorContact(html: string, sourceUrl: string): VendorExtraction {

@@ -58,6 +58,13 @@ export type ReplyKind =
   // sent, and puts the fault on them for a failure that is ours. The two are
   // different claims about WHOSE mistake it was, so they get different copy.
   | "unfetchable-url"
+  // OPE-1316 (reply A) — the link the sender gave is, exactly, the stored
+  // source_url of an event we list publicly. Chosen only on an exact-link match
+  // (link-reply.ts), never on a text match.
+  | "already-listed-link"
+  // OPE-1591 — the sender's only link is a shared Google AI answer. Not fetched
+  // and not a source, so "we couldn't open it" would be the wrong reason.
+  | "ai-answer-link"
   // OPE-407 — the message arrived carrying nothing: no attachment, no
   // meaningful body, no usable subject. Distinct from `no-url`, which is a
   // claim about a body that contains no link; these have no body to inspect.
@@ -86,6 +93,9 @@ export type ReplyKind =
   // the inbound_emails persistence so the row still exists for admin
   // review even though the auto-reply was a soft fail.
   | "no-url-prose-failed"
+  // OPE-1505 Ask 4 — a trusted sender is never asked for the fields back.
+  | "trusted-listing-match"
+  | "trusted-no-match"
   | "extract-failed"
   | "submit-failed"
   | "already-exists"
@@ -113,6 +123,9 @@ export type ReplyKind =
   // Generic per-intent acks (initial / timeout fallback)
   | "correction-ack"
   | "support-ack"
+  // OPE-1615 — the support-ack wording, sent after every classifier retry
+  // failed; a distinct kind so the fallback is countable.
+  | "ack-after-classifier-failure"
   // OPE-1134 — intent-matched acks for the two intents the dispatch collapses
   // (vendor_inquiry → support, claim_request → correction). See ack-kind.ts.
   | "vendor-inquiry-ack"

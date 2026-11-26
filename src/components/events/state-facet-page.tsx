@@ -10,22 +10,24 @@
  * of this ticket; this file renders the decision rather than making it.
  */
 import Link from "next/link";
+import { ListEventCtaLink } from "@/components/list-your-event/list-event-cta";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { CalendarDays, MapPin, Tag, Sparkles } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { FacetNav } from "@/components/events/facet-nav";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { truncateAtBoundary } from "@/lib/seo/truncate-meta";
 import { STATES, STATE_BY_SLUG } from "@/lib/states";
+import { getFacetEvents } from "@/lib/events/facet-query";
 import {
-  countFacetEvents,
-  countFacetForIndexing,
-  getFacetEvents,
-  getFacetSeasonality,
-} from "@/lib/events/facet-query";
+  facetPageFromSet,
+  getCachedFacetIndex,
+  getCachedFacetSeasonality,
+  getCachedStateUpcomingSet,
+} from "@/lib/events/state-listing-cache";
 import {
   resolveFacet,
   isFacetIndexable,
@@ -124,6 +126,14 @@ const SEASON_MONTHS = [
   "December",
 ];
 
+/** One shared formatter: building one per row would construct a new Intl object each call. */
+const LAST_SEASON_DATE = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
 /**
  * OPE-470 — render a month set as a season.
  *
@@ -161,8 +171,18 @@ export async function getFacetMetadata(stateSlug: string, facetSlug: string): Pr
   // Before this, a summer region measured in mid-August looked thin: the
   // Berkshires read 5 forward against 12 in calendar 2026 and went noindex at
   // the exact moment its season peaks.
-  const total = await countFacetEvents(db, state.code, stateSlug, facet, now);
-  const depth = await countFacetForIndexing(db, state.code, stateSlug, facet, now);
+  // OPE-1662 — both answers come from the cached facet index: `ids.length` is
+  // countFacetEvents (same predicate) and `depth` is countFacetForIndexing.
+  const index = await getCachedFacetIndex(
+    db,
+    getCloudflareRateLimitKv(),
+    state.code,
+    stateSlug,
+    facet,
+    now
+  );
+  const total = index.ids.length;
+  const depth = index.depth;
   const indexable = isFacetIndexable(facet, depth);
 
   const title = `${headline(facet, state.name)} | Meet Me at the Fair`;
@@ -217,22 +237,25 @@ export async function StateFacetPage({ stateSlug, facetSlug, searchParams }: Sta
 
   const page = Math.max(1, parseInt(searchParams.page || "1", 10) || 1);
   const db = getCloudflareDb();
-  const { events: eventsList, total } = await getFacetEvents(
-    db,
-    state.code,
-    stateSlug,
-    facet,
-    now,
-    page,
-    PAGE_SIZE
-  );
+  // OPE-1662 — the page is a slice of the cached facet index mapped onto the
+  // cached state set, so `?page=` of any value costs no D1. If the two cached
+  // entries disagree (built minutes apart around an edit), read this page live
+  // rather than render a short page as if it were the answer.
+  const kv = getCloudflareRateLimitKv();
+  const [index, stateSet] = await Promise.all([
+    getCachedFacetIndex(db, kv, state.code, stateSlug, facet, now),
+    getCachedStateUpcomingSet(db, kv, state.code),
+  ]);
+  const fromCache = facetPageFromSet(index, stateSet, page, PAGE_SIZE);
+  const { events: eventsList, total } = fromCache
+    ? { events: fromCache, total: index.ids.length }
+    : await getFacetEvents(db, state.code, stateSlug, facet, now, page, PAGE_SIZE);
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  // OPE-470 — only when there is nothing forward to show. A populated page pays
-  // nothing for this.
+  // OPE-470 — only when there is nothing forward to show.
   const seasonality =
     eventsList.length === 0
-      ? await getFacetSeasonality(db, state.code, stateSlug, facet, now)
+      ? await getCachedFacetSeasonality(db, kv, state.code, stateSlug, facet, now)
       : null;
   const heading = headline(facet, state.name);
   const Icon = KIND_ICON[facet.kind];
@@ -336,6 +359,28 @@ export async function StateFacetPage({ stateSlug, facetSlug, searchParams }: Sta
               . Next season&rsquo;s dates are usually published a few months ahead.
             </p>
           )}
+          {/* OPE-1675 — "plus last season's list" (OPE-470 scope 3): the events the
+              sentence above counted, so a reader in January can see which fairs
+              they are and open last year's listing. */}
+          {seasonality && seasonality.recent && seasonality.recent.length > 0 && (
+            <div className="mt-6 mx-auto max-w-md text-left">
+              <h2 className="text-base font-semibold text-foreground mb-2">
+                Last season in {facet.label}
+              </h2>
+              <ul className="space-y-1 text-sm">
+                {seasonality.recent.map((e) => (
+                  <li key={e.slug} className="flex justify-between gap-4">
+                    <Link href={`/events/${e.slug}`} className="text-royal hover:text-navy">
+                      {e.name}
+                    </Link>
+                    <span className="shrink-0 text-muted-foreground">
+                      {LAST_SEASON_DATE.format(new Date(e.startMs))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p className="mt-2 text-muted-foreground">
             Organisers publish dates throughout the year — or{" "}
             <Link href={`/events/${stateSlug}`} className="text-royal hover:text-navy font-medium">
@@ -356,6 +401,17 @@ export async function StateFacetPage({ stateSlug, facetSlug, searchParams }: Sta
           All {state.name} fairs &amp; festivals &rarr;
         </Link>
       </div>
+
+      {/* OPE-1559 (John, 2026-11-02) — contextual free-listing CTA. */}
+      <p className="mt-6 text-center text-sm text-muted-foreground">
+        <ListEventCtaLink
+          placement="state_facet_page"
+          href={`/list-your-event/${stateSlug}`}
+          className="font-medium text-royal hover:text-navy"
+        >
+          Running an event in {state.name}? List it free →
+        </ListEventCtaLink>
+      </p>
     </div>
   );
 }

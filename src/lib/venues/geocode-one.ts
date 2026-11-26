@@ -27,6 +27,7 @@
  *
  * The batch route now calls this too, so there is one gate, not two.
  */
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { and, eq, ne } from "drizzle-orm";
 import { venues, adminActions, entityDataCitations } from "@/lib/db/schema";
 import { buildEntityCitations, toCitationFields } from "@takemetothefair/utils";
@@ -42,6 +43,7 @@ import {
   shouldWrite,
   forcedOutcome,
   duplicateOutcome,
+  compareToStored,
   type VenueForGeocode,
   type GeocodeOutcome,
   type GeocodePin,
@@ -67,11 +69,19 @@ export async function geocodeVenueRow(
   db: any,
   v: VenueForGeocode,
   apiKey: string,
-  force: boolean
+  force: boolean,
+  opts: { compareOnly?: boolean } = {}
 ): Promise<GeocodeOutcome> {
+  // OPE-1698 — compare_only re-asks Google for an ALREADY-pinned venue (hence
+  // preflight's `force` = true, which only skips the already-geocoded
+  // short-circuit there) and reports the distance. It never writes, and it
+  // never treats `force` as an override of the confidence verdict.
+  const compareOnly = opts.compareOnly === true;
+  const writeForce = compareOnly ? false : force;
+
   // Cheap outcomes first — already geocoded, no usable inputs, not a point.
   // No Google call for any of these.
-  const pre = preflight(v, force);
+  const pre = preflight(v, compareOnly ? true : force);
   if (pre) return pre;
 
   // Which API can answer is a property of the ROW, not a caller choice: a
@@ -117,22 +127,29 @@ export async function geocodeVenueRow(
   // OPE-228 — `google_place_id` is UNIQUE, so writing a Place another venue
   // already owns would throw a raw D1 traceback. Surfacing it as
   // `duplicate-with` turns every collision into a merge_venue candidate.
-  if (shouldWrite(outcome, force) && pin?.placeId) {
+  // (A read, so compare_only runs it too: a correction would hit the same wall.)
+  if ((compareOnly || shouldWrite(outcome, writeForce)) && pin?.placeId) {
     const [owner] = await db
       .select({ id: venues.id, name: venues.name, slug: venues.slug })
       .from(venues)
       .where(and(eq(venues.googlePlaceId, pin.placeId), ne(venues.id, v.id)))
       .limit(1);
     if (owner) {
-      return duplicateOutcome(outcome, {
+      const dup = duplicateOutcome(outcome, {
         venue_id: owner.id,
         name: owner.name,
         slug: owner.slug,
       });
+      return compareOnly ? { ...dup, compare: compareToStored(v, dup, pin) } : dup;
     }
   }
 
-  if (shouldWrite(outcome, force) && pin) {
+  // OPE-1698 — the read-only exit. Everything below this line writes.
+  if (compareOnly) {
+    return { ...outcome, compare: compareToStored(v, outcome, pin) };
+  }
+
+  if (shouldWrite(outcome, writeForce) && pin) {
     if (outcome.status === "low-confidence") outcome = forcedOutcome(outcome, pin);
 
     const updates: Record<string, unknown> = {
@@ -148,7 +165,15 @@ export async function geocodeVenueRow(
     // Fill blanks from the geocode, but never overwrite what is stored.
     if (!v.zip && pin.zip) updates.zip = pin.zip;
     if (!v.address?.trim() && pin.address) updates.address = pin.address;
-    await db.update(venues).set(updates).where(eq(venues.id, v.id));
+    // OPE-1653 — the pin (and any filled zip / address) this geocode replaced.
+    await updateWithFieldHistory(db, {
+      table: venues,
+      entityType: "venue",
+      entityId: v.id,
+      patch: updates,
+      actor: systemActor("venues_geocode"),
+      source: "lib:venues/geocode-one",
+    });
 
     // OPE-433 scope 5 — THE specimen. Venue 5e6f81ed was mutated in production
     // at 04:00:20Z on 2026-08-17 (city normalised, address filled, lat/long

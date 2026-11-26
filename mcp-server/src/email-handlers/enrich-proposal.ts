@@ -42,7 +42,9 @@ import {
   AUTO_APPLY_FIELDS,
   OVERWRITE_FIELDS,
   applyEmptyFields,
+  isTrustedVenueDatePath,
   isUnambiguousMatch,
+  venueDateMatchIsSingle,
   recordEnrichApplied,
   resolveAutoApplyBasis,
   type AutoApplyBasis,
@@ -450,6 +452,7 @@ export async function stageEnrichOnMatch(
       petFriendly: events.petFriendly,
       promoterId: events.promoterId,
       promoterWebsite: promoters.website,
+      venueId: events.venueId,
     })
     .from(events)
     .leftJoin(promoters, eq(promoters.id, events.promoterId))
@@ -479,12 +482,19 @@ export async function stageEnrichOnMatch(
     errors?: Record<string, string>;
   } | null = null;
   const eligible = Object.keys(disposition.proposals).filter((f) => AUTO_APPLY_FIELDS.has(f));
+  // OPE-1529 — one timestamp for this match's audit rows. The applied row is
+  // written BEFORE the staged row and `created_at` has whole-second resolution,
+  // so separate clocks could put the staged row a second later, and the
+  // enrich-auto-apply probe (evidence >= demand) would read a working writer as
+  // silent.
+  const auditAt = new Date();
   // The amendment's candidates — decided below, once the basis is known.
   const overwriteCandidates = Object.keys(disposition.differing).filter((f) =>
     OVERWRITE_FIELDS.has(f)
   );
   if (input.inboundEmailId && eligible.length + overwriteCandidates.length > 0) {
-    if (!isUnambiguousMatch(input.path, input.matchType)) {
+    const unambiguous = isUnambiguousMatch(input.path, input.matchType);
+    if (!unambiguous && !isTrustedVenueDatePath(input.path, input.matchType)) {
       autoApply = {
         basis: null,
         reason: `match not unambiguous (${input.path}/${input.matchType})`,
@@ -497,8 +507,22 @@ export async function stageEnrichOnMatch(
         promoterId: existing.promoterId ?? null,
         promoterWebsite: existing.promoterWebsite ?? null,
       });
+      // John, 2026-11-10 — a venue+date match qualifies for a TRUSTED sender
+      // only, and only when it is provably the one overlapping event there.
+      const venueDateRefusal =
+        unambiguous || !b.basis
+          ? null
+          : b.basis !== "trusted"
+            ? "a venue+date match qualifies for trusted senders only"
+            : await venueDateMatchIsSingle(db, {
+                eventId: input.existingEventId,
+                venueId: existing.venueId ?? null,
+                incoming: input.event,
+              }).then((v) => (v.ok ? null : v.reason));
       if (!b.basis) {
         autoApply = { basis: null, reason: b.reason, eligible, applied: [] };
+      } else if (venueDateRefusal) {
+        autoApply = { basis: null, reason: venueDateRefusal, eligible, applied: [] };
       } else {
         // Amendment (John 2026-10-20 12:42 ET): ONLY a validated contact of this
         // promoter replaces filled fields; every other basis stays empty-only.
@@ -523,6 +547,7 @@ export async function stageEnrichOnMatch(
             inboundEmailId: input.inboundEmailId,
             path: input.path,
             matchType: input.matchType,
+            createdAt: auditAt,
           });
         }
         disposition.proposals = r.notApplied;
@@ -573,7 +598,7 @@ export async function stageEnrichOnMatch(
       // field: the probe reads `basis` + `eligible` here as its DEMAND.
       ...(autoApply ? { autoApply } : {}),
     }),
-    createdAt: new Date(),
+    createdAt: auditAt,
   });
 
   if (flag && input.inboundEmailId) {

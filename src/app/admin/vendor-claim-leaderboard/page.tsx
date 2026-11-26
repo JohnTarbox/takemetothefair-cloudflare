@@ -307,8 +307,8 @@ export default async function VendorClaimLeaderboardPage() {
         <p className="text-sm text-muted-foreground mt-1">
           Unclaimed vendors with <code>contact_email</code> set, ranked by composite of
           event-participation count, /vendors/&lt;slug&gt; view count, completeness, and
-          contact-channel richness (phone + website). The pool is small (~29 today); the ranking
-          turns judgment-based outreach into a worked list.
+          contact-channel richness (phone + website). The ranking turns judgment-based outreach into
+          a worked list.
         </p>
       </header>
 

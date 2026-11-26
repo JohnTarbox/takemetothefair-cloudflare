@@ -11,6 +11,11 @@
 // exponential backoff. A fetch miss is NOT a retryable failure — a dead/blocked
 // site is itself a signal; we mark BLOCKED (+ reason) and ack. Only an
 // unexpected DB error retries → DLQ after max_retries.
+import {
+  buildFieldHistoryRows,
+  recordFieldHistory,
+  systemActor,
+} from "@takemetothefair/db-schema/field-history";
 import { and, eq, inArray } from "drizzle-orm";
 import { applyHumanVeto } from "./human-veto.js";
 import {
@@ -31,7 +36,10 @@ import { isCeasedPromoter } from "../promoters/succession.js";
 import { fetchVendorSite } from "./fetch-site.js";
 import { extractPromoterSignals, type PromoterExtraction } from "./promoter-extract.js";
 import { probePromoterImage } from "./promoter-image.js";
+import { contactPageSignals, findContactLink } from "./contact-page.js";
 import { writeGuardedFills, type GuardedFill } from "./guarded-fill.js";
+import { jsonLdIdentitySummary } from "./extract.js";
+import { applyPromoterSanityFlags, logoBelowIconSize } from "./promoter-sanity.js";
 
 /** One promoter pre-extraction job. */
 export interface PromoterEnrichmentMessage {
@@ -103,6 +111,8 @@ const PROMOTER_COLUMNS = {
   companyName: promoters.companyName,
   slug: promoters.slug,
   website: promoters.website,
+  // OPE-1706 — the phone-region check compares an area code with this.
+  state: promoters.state,
   heroImageUrl: promoters.heroImageUrl,
   logoUrl: promoters.logoUrl,
   description: promoters.description,
@@ -133,6 +143,8 @@ interface Proposal {
   flags: string[];
   /** Eligible for high-confidence auto-apply on a live (non-dry-run) run. */
   autoApply: boolean;
+  /** OPE-1689 — the page this value came from, when it is not the homepage. */
+  sourceUrl?: string;
 }
 
 function isEmpty(v: string | null | undefined): boolean {
@@ -240,6 +252,119 @@ export function socialLinksHaveNameAffinity(
 }
 
 /**
+ * OPE-1706 — one social URL whose NAMED handle shares nothing with the
+ * promoter's name or website. Opaque handles (channel ids, profile.php, numeric
+ * groups) are not evidence either way and return false. Exported for tests.
+ */
+export function socialUrlIsUnaffine(
+  url: string,
+  companyName: string | null | undefined,
+  website: string | null | undefined
+): boolean {
+  const handle = namedHandleOf(url);
+  if (!handle || handle.length < 3 || isOpaqueHandle(handle)) return false;
+  return !socialLinksHaveNameAffinity(JSON.stringify({ x: url }), companyName, website);
+}
+
+/**
+ * OPE-1706 — does the page's JSON-LD describe more than one business? True
+ * when it names more than one distinct phone, or any named social account with
+ * no affinity to the promoter. Purity Spring Resort's carried 605 and 949
+ * numbers and Highway West Vacations' accounts next to its own. Exported for
+ * tests.
+ */
+export function jsonLdHasMultipleEntities(
+  html: string,
+  companyName: string | null | undefined,
+  website: string | null | undefined
+): boolean {
+  const { phones, socialUrls } = jsonLdIdentitySummary(html);
+  if (phones.length > 1) return true;
+  return socialUrls.some((u) => socialUrlIsUnaffine(u, companyName, website));
+}
+
+/** OPE-1707 — the confidence a jsonld social needs to auto-apply (the extractor emits 0.85). */
+export const JSONLD_SOCIAL_CONFIDENCE_FLOOR = 0.85;
+
+/**
+ * OPE-1707 — the name-affinity gate a jsonld social must pass to auto-apply.
+ * Flags it (so it stages, with a reason) when:
+ *   - the payload mixes accounts: some named handle shares nothing with the
+ *     promoter (`social_mixed_affinity`). We stage the WHOLE payload rather
+ *     than apply the affine subset, because a page that lists a second
+ *     business's accounts is not trustworthy about the first one's either;
+ *   - the page's JSON-LD describes more than one business
+ *     (`jsonld_multiple_entities`, OPE-1706), even if the extracted payload
+ *     happened to keep only the promoter's own accounts. Purity Spring
+ *     Resort's JSON-LD carried Highway West Vacations' accounts.
+ * A fully unaffine payload already carries `social_no_name_affinity`.
+ * Mutates in place; exported for tests.
+ */
+export function gateJsonLdSocial(
+  proposals: {
+    field: string;
+    method: string;
+    proposedValue: string;
+    flags: string[];
+    autoApply: boolean;
+  }[],
+  companyName: string | null | undefined,
+  website: string | null | undefined,
+  jsonLdMultipleEntities: boolean
+): void {
+  for (const p of proposals) {
+    if (p.field !== "social_links" || p.method !== "jsonld") continue;
+    if (p.flags.includes("social_no_name_affinity")) continue;
+    let links: Record<string, string> = {};
+    try {
+      links = JSON.parse(p.proposedValue) as Record<string, string>;
+    } catch {
+      // An unparseable payload carries no links to judge.
+    }
+    if (Object.values(links).some((u) => socialUrlIsUnaffine(u, companyName, website))) {
+      if (!p.flags.includes("social_mixed_affinity")) p.flags.push("social_mixed_affinity");
+      p.autoApply = false;
+    }
+    if (jsonLdMultipleEntities) {
+      if (!p.flags.includes("jsonld_multiple_entities")) p.flags.push("jsonld_multiple_entities");
+      p.autoApply = false;
+    }
+  }
+}
+
+/**
+ * OPE-1686 — a social payload the pipeline has TWO independent reasons to
+ * distrust is dropped, not re-staged.
+ *
+ * The human veto (OPE-964/OPE-249) deliberately still STAGES a vetoed value,
+ * because a human may change their mind. That is right for one signal. When the
+ * same payload ALSO shares nothing with the promoter's name or site
+ * (`social_no_name_affinity`, OPE-963), the human has already said no to a
+ * value the rule itself doubted, and re-staging it only puts the same wrong
+ * answer back in front of them every run. Specimen: SoWa Boston, AncoraThemes'
+ * accounts off a theme footer, re-staged after a revert.
+ *
+ * Narrow on purpose: either flag ALONE still stages. A dropped proposal never
+ * becomes a candidate row, so rule agreement simply excludes it rather than
+ * counting it as an agreement. Mutates in place; exported for tests.
+ */
+export function dropVetoedUnaffineSocials(proposals: { field: string; flags: string[] }[]): number {
+  let dropped = 0;
+  for (let i = proposals.length - 1; i >= 0; i--) {
+    const p = proposals[i];
+    if (
+      p.field === "social_links" &&
+      p.flags.includes("social_no_name_affinity") &&
+      (p.flags.includes("previously_reverted") || p.flags.includes("previously_rejected"))
+    ) {
+      proposals.splice(i, 1);
+      dropped++;
+    }
+  }
+  return dropped;
+}
+
+/**
  * Build the fill-empty-only proposal set from a promoter row + the extraction
  * (og:image already probed into hero/logo). Pure — no DB.
  */
@@ -263,13 +388,23 @@ async function buildProposals(
           // Hero auto-applies only when the full hero rule holds.
           autoApply: probed.heroConfident,
         });
-      } else if (probed.classification === "logo" && isEmpty(row.logoUrl as string | null)) {
+      } else if (
+        probed.classification === "logo" &&
+        isEmpty(row.logoUrl as string | null) &&
+        // OPE-1687 — the image already serving as this promoter's HERO is not
+        // its logo. Mad River Valley Craft Fair's og:image auto-merged as the
+        // hero in September (0.85); on 2026-11-18 the probe could not measure
+        // it, it fell back to "logo", and the identical URL staged as a logo.
+        probed.url.trim() !== ((row.heroImageUrl as string | null) ?? "").trim()
+      ) {
         proposals.push({
           field: "logo",
           proposedValue: probed.url,
           method: "og-image",
           confidence: 0.5,
-          flags: [],
+          // OPE-1714 — the size half of logo_favicon: only here is the probed
+          // size known. The URL half runs in applyPromoterSanityFlags.
+          flags: logoBelowIconSize(probed.width, probed.height) ? ["logo_favicon"] : [],
           // Logo is never auto-applied (a square og:image is often a hero crop
           // or a generic share card — a human confirms).
           autoApply: false,
@@ -361,6 +496,70 @@ export interface PromoterEnrichmentRunSummary {
   socialStagedNotPromotable?: number;
   blockedReason?: BlockedReason;
   fetchMethod?: string;
+  /** OPE-1689 — the same-site Contact page rendered as a second hop, when one was. */
+  contactPageUrl?: string;
+}
+
+/**
+ * OPE-1689 — one same-site hop to the Contact page, before a run can count as
+ * empty. Runs ONLY when contact email or phone is still empty after the
+ * homepage (on the row AND in this run's proposals), follows at most ONE link,
+ * and goes through the same SSRF-guarded fetch — so a promoter costs at most
+ * two renders. A failed or link-less hop adds nothing and is not an error.
+ *
+ * Proposals carry the contact page as their source_url. A value picked out of
+ * a multi-person page is flagged `contact_page_multiple` and never auto-applies
+ * (applyFills skips any flagged candidate). Returns the page URL used, or null.
+ */
+async function addContactPageProposals(
+  row: Record<string, unknown>,
+  homepageHtml: string,
+  homepageUrl: string,
+  env: PromoterEnrichmentEnv,
+  proposals: Proposal[]
+): Promise<string | null> {
+  const needEmail =
+    isEmpty(row.contactEmail as string | null) &&
+    !proposals.some((p) => p.field === "contact_email");
+  const needPhone =
+    isEmpty(row.contactPhone as string | null) &&
+    !proposals.some((p) => p.field === "contact_phone");
+  if (!needEmail && !needPhone) return null;
+
+  const link = findContactLink(homepageHtml, homepageUrl);
+  if (!link) return null;
+  const page = await fetchVendorSite(link, env);
+  if (!page.ok || !page.html) return null;
+  const pageUrl = page.finalUrl ?? link;
+
+  const sig = contactPageSignals(page.html, pageUrl, { email: needEmail, phone: needPhone });
+  if (sig.contactEmail) {
+    proposals.push({
+      field: "contact_email",
+      proposedValue: sig.contactEmail.value,
+      method: sig.contactEmail.method,
+      confidence: sig.contactEmail.confidence,
+      flags: sig.contactEmail.multiple ? ["contact_page_multiple"] : [],
+      autoApply:
+        !sig.contactEmail.multiple &&
+        (sig.contactEmail.method === "mailto" || sig.contactEmail.method === "jsonld"),
+      sourceUrl: pageUrl,
+    });
+  }
+  if (sig.contactPhone) {
+    proposals.push({
+      field: "contact_phone",
+      proposedValue: sig.contactPhone.value,
+      method: sig.contactPhone.method,
+      confidence: sig.contactPhone.confidence,
+      flags: sig.contactPhone.multiple ? ["contact_page_multiple"] : [],
+      autoApply:
+        !sig.contactPhone.multiple &&
+        (sig.contactPhone.method === "tel" || sig.contactPhone.method === "jsonld"),
+      sourceUrl: pageUrl,
+    });
+  }
+  return pageUrl;
 }
 
 /**
@@ -451,6 +650,32 @@ export async function processPromoterEnrichmentJob(
 
   const extraction = extractPromoterSignals(fetched.html, sourceUrl);
   const proposals = await buildProposals(row as Record<string, unknown>, extraction);
+  const contactPageUrl = await addContactPageProposals(
+    row as Record<string, unknown>,
+    fetched.html,
+    fetched.finalUrl ?? sourceUrl,
+    env,
+    proposals
+  );
+
+  // OPE-1706 — cheap sanity checks (phone region, role mailbox, JSON-LD naming
+  // two businesses, offsite / stock-photo logo). Each adds a flag; a flagged
+  // contact stages instead of auto-applying. After the Contact-page hop, so its
+  // contacts are checked too.
+  const jsonLdMultipleEntities = jsonLdHasMultipleEntities(
+    fetched.html,
+    row.companyName,
+    row.website
+  );
+  applyPromoterSanityFlags(proposals, {
+    state: row.state,
+    name: row.companyName,
+    website: row.website,
+    finalUrl: fetched.finalUrl ?? null,
+    jsonLdMultipleEntities,
+  });
+  // OPE-1707 — a jsonld social auto-applies again, so it gets its own gate.
+  gateJsonLdSocial(proposals, row.companyName, row.website, jsonLdMultipleEntities);
 
   // OPE-964 — a value a human REVERTED is never auto-applied again. Under
   // fill-empty-only the revert leaves the field empty, so without this the next
@@ -478,6 +703,7 @@ export async function processPromoterEnrichmentJob(
     .from(promoterEnrichmentCandidates)
     .where(eq(promoterEnrichmentCandidates.promoterId, msg.promoterId));
   applyHumanVeto(proposals, priorCandidates);
+  dropVetoedUnaffineSocials(proposals);
   const newCandidateCount = countNewCandidates(proposals, priorCandidates);
 
   // Idempotent re-run: clear this promoter's still-open proposals, then restage
@@ -506,7 +732,7 @@ export async function processPromoterEnrichmentJob(
             ? ((row as Record<string, unknown>)[FIELD_TO_COLUMN[p.field]] ?? null)
             : null) as string | null,
           proposedValue: p.proposedValue,
-          sourceUrl,
+          sourceUrl: p.sourceUrl ?? sourceUrl,
           extractionMethod: p.method,
           fetchMethod: fetched.fetchMethod,
           confidence: p.confidence,
@@ -547,6 +773,7 @@ export async function processPromoterEnrichmentJob(
       candidateCount: proposals.length,
       newCandidateCount,
       fetchMethod: fetched.fetchMethod,
+      ...(contactPageUrl ? { contactPageUrl } : {}),
     };
   }
 
@@ -600,6 +827,7 @@ export async function processPromoterEnrichmentJob(
     appliedFields: applied,
     socialStagedNotPromotable,
     fetchMethod: fetched.fetchMethod,
+    ...(contactPageUrl ? { contactPageUrl } : {}),
   };
 }
 
@@ -643,6 +871,14 @@ async function holdSocialUnlessPromotable(db: Db, proposals: Proposal[]): Promis
   let held = 0;
   for (const p of proposals) {
     if (p.field !== "social_links" || !p.autoApply || p.flags.length > 0) continue;
+    // OPE-1707 — John, 2026-11-22: a social read from the site's OWN JSON-LD
+    // auto-applies again (72 auto-merged 07-01 → 10-01 at 98.7% machine
+    // agreement), behind the stricter jsonld gate in gateJsonLdSocial instead
+    // of this one. The 10-04 ruling this gate implements named `social-link`
+    // values, and jsonld (6 human decisions) could never reach its 20-decision
+    // floor, so it had silently become stage-only too. `social-link` still
+    // waits for promotion here.
+    if (p.method === "jsonld" && p.confidence >= JSONLD_SOCIAL_CONFIDENCE_FLOOR) continue;
     if (await socialRulePromotable(db, p.method)) continue;
     p.autoApply = false;
     held++;
@@ -681,6 +917,21 @@ async function applyFills(
   // never overwritten; only the fills that land count as applied.
   const applied = await writeGuardedFills(db, promoters, promoters.id, promoterId, fills);
   if (applied.length === 0) return [];
+  // OPE-1653 — each landed fill matched its read value (the guard), so that is
+  // what it replaced.
+  const landed = fills.filter((f) => applied.includes(f.field));
+  await recordFieldHistory(
+    db,
+    buildFieldHistoryRows({
+      table: promoters,
+      entityType: "promoter",
+      entityId: promoterId,
+      before: Object.fromEntries(landed.map((f) => [f.key, f.readValue])),
+      patch: Object.fromEntries(landed.map((f) => [f.key, f.value])),
+      actor: systemActor("promoter-enrichment-auto-merge"),
+      source: "mcp:enrichment/promoter-dispatch.applyFills",
+    })
+  );
   await db
     .update(promoterEnrichmentCandidates)
     .set({ decision: "auto_merged", reviewedAt: new Date(), reviewedBy: "auto-merge" })

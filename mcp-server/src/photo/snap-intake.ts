@@ -30,7 +30,15 @@
  * `capture_meta`, which is not public.
  */
 import { eq } from "drizzle-orm";
-import { stripExifFromJpeg } from "@takemetothefair/utils";
+import {
+  parseSnapChoiceBasis,
+  type SnapEventChoiceBasis,
+  stripExifFromJpeg,
+  identifyUnsupportedImageFormat,
+  unsupportedImageFormatForMime,
+  unsupportedImageMessage,
+} from "@takemetothefair/utils";
+import { sniffAttachmentType } from "../attachment-sniff.js";
 import { inboundEmails } from "../schema.js";
 import type { Db } from "../db.js";
 import { parseExif, type ExifData } from "./exif.js";
@@ -57,9 +65,34 @@ export interface CaptureMeta {
   taken_on_local_date: string | null;
   event_id: string | null;
   event_slug: string | null;
+  /**
+   * OPE-1697 — how the page chose `event_slug`: `picked` (the user tapped it),
+   * `auto_single` (the only fair nearby), `server` ("Let the server decide").
+   * NULL = a page build older than this field, treated as NOT picked. The
+   * photo-intake guard overwrites it with `auto_nearest_ambiguous` when it holds
+   * auto-write because the location is near more than one same-day fair.
+   */
+  event_choice_basis?: SnapEventChoiceBasis | null;
+  /** OPE-1697 — set with `auto_nearest_ambiguous`: the fairs it was near. */
+  event_choice_candidates?: Array<{ id: string; name: string; distanceMiles: number }>;
   note: string | null;
   /** The admin account that uploaded it (from the main app's session). */
   actor: string;
+  /**
+   * OPE-1705 slice 3 — "No fair: vendor card only". The shot is a business card
+   * taken away from any fair: the fair resolver is skipped (no event, no
+   * "which fair?" hold). A shot that turns out NOT to be a card falls back to
+   * the ordinary resolution, so the mode can never lose a booth photo.
+   */
+  no_fair?: boolean;
+  /**
+   * OPE-1705 slice 3 — the "Add as vendor" box. John vouching that this card is
+   * a vendor: an unmatched, legibly-named card creates one. Absent/false = never
+   * create (the card is kept privately as `card_unmatched`).
+   */
+  add_as_vendor?: boolean;
+  /** OPE-1705 slice 3 — "Met them at…": a past event to link the card's vendor to. No-fair only. */
+  met_at_event_id?: string | null;
 }
 
 /** What the phone sends beside the bytes. Every field optional except client_id. */
@@ -72,7 +105,15 @@ export interface SnapClientMeta {
   takenOnLocalDate?: string | null;
   eventId?: string | null;
   eventSlug?: string | null;
+  /** OPE-1697 — "picked" | "auto_single" | "server"; anything else is dropped. */
+  eventChoice?: string | null;
   note?: string | null;
+  /** OPE-1705 slice 3 — "No fair: vendor card only". */
+  noFair?: boolean | null;
+  /** OPE-1705 slice 3 — the "Add as vendor" box. */
+  addAsVendor?: boolean | null;
+  /** OPE-1705 slice 3 — "Met them at…" event id (honoured only with noFair). */
+  metAtEventId?: string | null;
 }
 
 export function isSnapRow(row: { routingSource?: string | null }): boolean {
@@ -82,6 +123,8 @@ export function isSnapRow(row: { routingSource?: string | null }): boolean {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LOCAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/** An events.id: a UUID, or the short hex/slug-ish ids older rows carry. */
+const EVENT_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
 
 /**
  * The row id for a snap — derived from the phone's own id for the shot, so a
@@ -245,9 +288,31 @@ export async function ingestSnap(
   const contentType = input.contentType.toLowerCase().split(";")[0].trim();
   const type = contentType === "image/jpg" ? "image/jpeg" : contentType;
   if (!SNAP_ALLOWED_TYPES.has(type)) {
-    return { ok: false, status: 415, error: `unsupported content type ${contentType}` };
+    // OPE-1550 — name the format. The capture page sends the camera original
+    // when the browser can't decode it, so a JPEG XL lands here as image/jxl.
+    const known = unsupportedImageFormatForMime(contentType);
+    return {
+      ok: false,
+      status: 415,
+      error: known ? unsupportedImageMessage(known) : `unsupported content type ${contentType}`,
+    };
   }
   if (input.bytes.length === 0) return { ok: false, status: 400, error: "empty file" };
+  // OPE-1550 — the declared type is only a label. A JPEG XL renamed .jpg
+  // arrives as image/jpeg; storing it under that type hands every downstream
+  // reader (vision, EXIF, the admin viewer, a hero via /cdn-cgi/image) bytes it
+  // can't decode. Refuse unless the bytes ARE the declared format.
+  const sniffed = sniffAttachmentType(input.bytes);
+  if (sniffed !== type) {
+    const known = identifyUnsupportedImageFormat(input.bytes);
+    return {
+      ok: false,
+      status: 415,
+      error: known
+        ? unsupportedImageMessage(known)
+        : `file bytes are not ${type}${sniffed ? ` (they look like ${sniffed})` : ""}`,
+    };
+  }
   if (input.bytes.length > SNAP_MAX_BYTES) {
     return { ok: false, status: 413, error: `file exceeds ${SNAP_MAX_BYTES} bytes` };
   }
@@ -276,9 +341,18 @@ export async function ingestSnap(
   const stored = type === "image/jpeg" ? stripExifFromJpeg(input.bytes).bytes : input.bytes;
 
   const where = decideLocation(exif, input.meta);
+  // OPE-1705 slice 3 — "No fair" wins over any pin the page also sent: the
+  // photographer said this card is not from a fair.
+  const noFair = input.meta.noFair === true;
   const eventSlug =
-    typeof input.meta.eventSlug === "string" && SLUG_RE.test(input.meta.eventSlug)
+    !noFair && typeof input.meta.eventSlug === "string" && SLUG_RE.test(input.meta.eventSlug)
       ? input.meta.eventSlug
+      : null;
+  const metAt =
+    noFair &&
+    typeof input.meta.metAtEventId === "string" &&
+    EVENT_ID_RE.test(input.meta.metAtEventId)
+      ? input.meta.metAtEventId
       : null;
   const note =
     typeof input.meta.note === "string" && input.meta.note.trim()
@@ -290,8 +364,11 @@ export async function ingestSnap(
     ...where,
     event_id: eventSlug && typeof input.meta.eventId === "string" ? input.meta.eventId : null,
     event_slug: eventSlug,
+    event_choice_basis: noFair ? null : parseSnapChoiceBasis(input.meta.eventChoice),
     note,
     actor: input.actor,
+    ...(noFair ? { no_fair: true, met_at_event_id: metAt } : {}),
+    ...(input.meta.addAsVendor === true ? { add_as_vendor: true } : {}),
   };
 
   const name = safeName(input.fileName, type);

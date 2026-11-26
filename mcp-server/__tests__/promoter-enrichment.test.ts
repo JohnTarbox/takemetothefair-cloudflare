@@ -118,9 +118,14 @@ describe("classifyPromoterImage — hero vs logo", () => {
   });
 
   it("un-measurable image (null dims) → logo, not hero-confident", () => {
-    const r = classifyPromoterImage("https://cdn.example.com/banner.png", null);
+    const r = classifyPromoterImage("https://cdn.example.com/share.png", null);
     expect(r.classification).toBe("logo");
     expect(r.heroConfident).toBe(false);
+    // OPE-1687 — a banner FILENAME is never a logo; unmeasured it stages as an
+    // unconfident hero, and still never auto-applies.
+    const b = classifyPromoterImage("https://cdn.example.com/banner.png", null);
+    expect(b.classification).toBe("hero");
+    expect(b.heroConfident).toBe(false);
   });
 });
 

@@ -25,7 +25,20 @@ export interface SnapMeta {
   takenOnLocalDate: string;
   eventId: string | null;
   eventSlug: string | null;
+  /**
+   * OPE-1697 — how the fair was chosen: "picked" (tapped), "auto_single" (the
+   * only fair close by), "server" ("Let the server decide"), or null (nothing
+   * chosen). The server's auto-write guard trusts only "picked" when the
+   * location is near more than one fair.
+   */
+  eventChoice: "picked" | "auto_single" | "server" | null;
   note: string | null;
+  /** OPE-1705 slice 3 — "No fair: vendor card only". Optional: absent on a shot queued by an older build. */
+  noFair?: boolean;
+  /** OPE-1705 slice 3 — the "Add as vendor" box at the shutter. */
+  addAsVendor?: boolean;
+  /** OPE-1705 slice 3 — "Met them at…" (No fair only); null = none. */
+  metAtEventId?: string | null;
 }
 
 export interface QueuedShot {

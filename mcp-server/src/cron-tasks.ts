@@ -73,3 +73,33 @@ export async function sequenceCronTasks(
   for (const t of tasks) out.push(await runOne(db, cron, t));
   return out;
 }
+
+/**
+ * OPE-1690 — run tasks concurrently, but START them `spacingMs` apart, and wait
+ * for ALL of them (allSettled semantics, each rejection logged by name).
+ *
+ * The 06:00 daily batch started ~30 tasks in the same second. D1 rejects with
+ * "Too many resources consumed within a 10 second window" when that many open
+ * queries at once, and the rejection lands on whatever else is running too —
+ * public vendor/venue/event pages included (11-16, 11-18, 11-19). Spacing the
+ * starts keeps a long-running task concurrent with its siblings (so the batch
+ * does not grow by the sum of their durations) while capping how many begin in
+ * any one window. Never rejects.
+ */
+export async function staggerCronTasks(
+  db: D1Database | null | undefined,
+  cron: string,
+  tasks: readonly CronTask[],
+  spacingMs: number,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))
+): Promise<CronTaskOutcome[]> {
+  const settled = await Promise.allSettled(
+    tasks.map(async (t, i) => {
+      if (i > 0 && spacingMs > 0) await sleep(i * spacingMs);
+      return runOne(db, cron, t);
+    })
+  );
+  return settled.map((s, i) =>
+    s.status === "fulfilled" ? s.value : { name: tasks[i][0], ok: false }
+  );
+}

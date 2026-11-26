@@ -1,10 +1,11 @@
 export const dynamic = "force-dynamic";
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
-import { and, eq, isNull, ne } from "drizzle-orm";
+import { and, isNull, ne } from "drizzle-orm";
 import { geocodeAddress } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
 import { flagVenuePinIfFarFromTown } from "@/lib/venues/pin-sanity";
@@ -42,7 +43,16 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
         if (!venue.zip && result.zip) {
           updates.zip = result.zip;
         }
-        await db.update(venues).set(updates).where(eq(venues.id, venue.id));
+        // OPE-1653 — the coordinates this batch replaced.
+        await updateWithFieldHistory(db, {
+          table: venues,
+          entityType: "venue",
+          entityId: venue.id,
+          before: venue,
+          patch: updates,
+          actor: session.user.id,
+          source: "api:POST /api/admin/venues/geocode-batch",
+        });
         // OPE-433 scope 5 — the sweep that is a prime suspect for the ticket's
         // 04:00:20Z specimen now says so itself. Actor is the admin who ran it:
         // a sweep has no intent of its own, and the accountable party is the

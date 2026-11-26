@@ -22,7 +22,7 @@
  * domain proves the parties are UNRELATED. Adding a real organizer's domain
  * would silently stop matching it.
  */
-import { getDomain } from "tldts";
+import { getDomain, parse as parseHost } from "tldts";
 import { GENERIC_EMAIL_PROVIDERS } from "./email-providers";
 
 /**
@@ -104,4 +104,22 @@ export function isNonOwnableDomain(domain: string | null | undefined): boolean {
   if (NON_OWNABLE_DOMAINS.has(d)) return true;
   const org = organizationalDomain(d);
   return org !== null && NON_OWNABLE_DOMAINS.has(org);
+}
+
+/**
+ * OPE-1694 — a host whose suffix is a real ICANN public suffix, split into its
+ * registrable domain and that suffix. Null for anything else.
+ *
+ * `organizationalDomain` alone is too permissive for text READ OFF A SIGN: the
+ * PSL's default `*` rule makes `Mr.Smith` a registrable `mr.smith`. A sign
+ * token only counts as a web address when its last label is a suffix ICANN
+ * actually delegates (`com`, `design`, `co.uk`), so `St.Louis` stays a name.
+ */
+export function icannHost(
+  host: string | null | undefined
+): { domain: string; publicSuffix: string } | null {
+  if (!host) return null;
+  const p = parseHost(host.trim().toLowerCase());
+  if (!p.isIcann || !p.domain || !p.publicSuffix) return null;
+  return { domain: p.domain, publicSuffix: p.publicSuffix };
 }

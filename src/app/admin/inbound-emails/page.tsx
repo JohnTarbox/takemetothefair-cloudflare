@@ -19,7 +19,7 @@ import { Check, ExternalLink, HelpCircle, RotateCw, X } from "lucide-react";
 import { formatTimestamp, formatDateMedium } from "@/lib/datetime";
 import { SortHeader, sortBy, nextSort, type SortState } from "@/components/admin/sortable-table";
 import type { EnrichOnMatchEntry } from "@/lib/inbound-enrich-on-match";
-import { safeHref } from "@takemetothefair/utils";
+import { replySubject as defaultReplySubject, safeHref } from "@takemetothefair/utils";
 
 const CF_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf";
 const WORKFLOWS_DASH = `https://dash.cloudflare.com/${CF_ACCOUNT_ID}/workers/workflows/inbound-email/instance`;
@@ -204,6 +204,7 @@ const INTENTS = [
   "source_suggestion",
   "claim_request",
   "vendor_inquiry",
+  "promoter_onboarding",
   "spam",
   "unclear",
   "multi",
@@ -223,6 +224,11 @@ export default function AdminInboundEmailsPage() {
   const [senders, setSenders] = useState<SenderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("");
+  // OPE-1603 — the dashboard tile opens this page already filtered.
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("status");
+    if (fromUrl) setStatusFilter(fromUrl);
+  }, []);
   const [intentFilter, setIntentFilter] = useState<string>("");
   const [sinceHours, setSinceHours] = useState<number>(168);
   const [retrying, setRetrying] = useState<string | null>(null);
@@ -357,7 +363,7 @@ export default function AdminInboundEmailsPage() {
   // OPE-163 — open the reply composer for a row, prefilling the subject.
   const openReply = useCallback((row: InboundEmailRow) => {
     setReplyOpenId(row.id);
-    setReplySubject(`Re: ${row.subject || "your message"}`.slice(0, 200));
+    setReplySubject(defaultReplySubject(row.subject).slice(0, 200));
     setReplyBody("");
     setReplyConfirm(false);
     setReplyMsg(null);
@@ -406,7 +412,7 @@ export default function AdminInboundEmailsPage() {
   const openLogExt = useCallback((row: InboundEmailRow) => {
     setLogExtOpenId(row.id);
     setLogExtTo(row.fromAddress);
-    setLogExtSubject(`Re: ${row.subject || "your message"}`.slice(0, 200));
+    setLogExtSubject(defaultReplySubject(row.subject).slice(0, 200));
     setLogExtBody("");
     setLogExtProvider("gmail");
     setLogExtMsg(null);

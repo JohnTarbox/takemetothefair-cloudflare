@@ -54,11 +54,13 @@ describe("get_send_gates → write_gates (OPE-1486)", () => {
   });
 });
 
-describe("committed config — John's 2026-09-30 ruling on OPE-240 (OPE-1486)", () => {
+describe("committed config — John's 2026-11-01 instruction on OPE-240 (supersedes the 09-30 OFF ruling)", () => {
   const mcpVars = wranglerVars(readWranglerConfig("mcp"));
 
-  it('keeps PHOTO_AUTOWRITE_ENABLED = "false" until John says otherwise, directly', () => {
-    expect(mcpVars.PHOTO_AUTOWRITE_ENABLED).toBe("false");
+  // John, directly in session 2026-11-01: "flip PHOTO_AUTOWRITE_ENABLED to true".
+  // Same rule as before: whoever flips it again changes this test in the same PR.
+  it('keeps PHOTO_AUTOWRITE_ENABLED = "true" until John says otherwise, directly', () => {
+    expect(mcpVars.PHOTO_AUTOWRITE_ENABLED).toBe("true");
   });
 
   it("declares every write gate, so `null` from the reader means a broken binding, not a decision", () => {

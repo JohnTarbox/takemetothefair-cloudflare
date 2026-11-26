@@ -46,7 +46,7 @@
 # these entries in favour of chunking.
 mcp-server/src/tools/admin-citations.ts@ids
 mcp-server/src/tools/admin.ts@ids
-src/lib/goodwill/flip-event-field.ts:142
+src/lib/goodwill/flip-event-field.ts:143
 
 # ── OPE-1029: write-statement sites the scanner cannot bound, each read and
 #    bounded by something outside a .limit() literal. Chunked instead where the

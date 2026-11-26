@@ -185,6 +185,13 @@ export function registerDiscrepancyTools(server: McpServer, db: Db, auth: AuthCo
         .transform(sanitizeProse)
         .optional()
         .describe("Optional operator note appended to the discrepancy row."),
+      divergent_source_key: z
+        .string()
+        .max(253)
+        .optional()
+        .describe(
+          "NOT applied — accepted only so a passed value is answered instead of silently dropped (OPE-1622). Source keys are set at capture. citation_flag rows carry none by design (OPE-1065): the row is about OUR field, so resolving it must not score anyone's reliability, and `scoring.skipped_no_source` is the correct result for them."
+        ),
     },
     async (params) => {
       const existing = await db
@@ -242,6 +249,22 @@ export function registerDiscrepancyTools(server: McpServer, db: Db, auth: AuthCo
             new_status: params.resolution_status,
             scoring_triggered: wasOpen,
             scoring,
+            // OPE-1622 — say why, instead of leaving `skipped_no_source` to be
+            // read as a bug every week.
+            ...(existing[0].detectedBy === "citation_flag"
+              ? {
+                  scoring_note:
+                    "citation_flag rows have no source keys by design (OPE-1065): they record OUR field being wrong, so no source_reliability cell moves.",
+                }
+              : {}),
+            ...(params.divergent_source_key !== undefined
+              ? {
+                  ignored: {
+                    divergent_source_key:
+                      "not applied: source keys are set when a discrepancy is captured, never on resolve",
+                  },
+                }
+              : {}),
           }),
         ],
       };

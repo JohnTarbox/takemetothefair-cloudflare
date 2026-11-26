@@ -13,8 +13,9 @@ export const dynamic = "force-dynamic";
  * UPDATE rows. Idempotent — re-running after apply finds nothing to update.
  */
 
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { NextRequest, NextResponse } from "next/server";
-import { eq, isNotNull, or } from "drizzle-orm";
+import { isNotNull, or } from "drizzle-orm";
 import { requireAdminAuth } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
@@ -91,14 +92,20 @@ export async function POST(request: NextRequest) {
       // multiple UPDATE statements at the worker boundary, but each row
       // update is atomic on its own — partial-failure leaves a sane state.
       for (const row of affected) {
-        await db
-          .update(events)
-          .set({
+        // OPE-1653 — a backfill that NULLs a link keeps the dropped URL.
+        await updateWithFieldHistory(db, {
+          table: events,
+          entityType: "event",
+          entityId: row.id,
+          before: row.before,
+          patch: {
             ticketUrl: row.after.ticketUrl,
             applicationUrl: row.after.applicationUrl,
             updatedAt: new Date(),
-          })
-          .where(eq(events.id, row.id));
+          },
+          actor: systemActor("url-classification-backfill"),
+          source: "api:POST /api/admin/url-classifications/backfill",
+        });
         updated++;
       }
     }

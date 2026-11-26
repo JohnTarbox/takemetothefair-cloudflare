@@ -38,6 +38,7 @@ import { isBlockedSsrfHost } from "@takemetothefair/site-fetch";
 import {
   runUploadPipeline,
   PIPELINE_ALLOWED_TYPES,
+  describeRefusedDeclaredType,
   PIPELINE_MAX_BYTES,
   type PipelineTargetType,
   type PipelineImageRole,
@@ -273,7 +274,7 @@ export async function POST(request: NextRequest) {
   if (!PIPELINE_ALLOWED_TYPES.has(declaredType)) {
     return NextResponse.json(
       {
-        error: `Unsupported content_type "${declaredType || "unknown"}". Allowed: jpg/png/webp/svg.`,
+        error: describeRefusedDeclaredType(declaredType),
       },
       { status: 400 }
     );

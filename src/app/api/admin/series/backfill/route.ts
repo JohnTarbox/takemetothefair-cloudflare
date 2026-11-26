@@ -26,6 +26,11 @@ export const dynamic = "force-dynamic";
  *
  * Dual auth: admin session OR X-Internal-Key (the backfill_event_series MCP tool).
  */
+import {
+  buildFieldHistoryRows,
+  fieldHistoryInserts,
+  systemActor,
+} from "@takemetothefair/db-schema/field-history";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { internalKeyMatches } from "@/lib/api-auth";
@@ -91,6 +96,30 @@ function serializeGroupLean(g: SeriesGroup) {
 }
 
 /** D1 batch in chunks — a single batch over thousands of statements is unwise. */
+/** OPE-1653 — history rows for attaching previously-unattached events to a series. */
+function seriesAttachHistory(
+  db: Parameters<typeof fieldHistoryInserts>[0],
+  eventIds: string[],
+  seriesId: string,
+  at: Date
+) {
+  return eventIds.flatMap((id) =>
+    fieldHistoryInserts(
+      db,
+      buildFieldHistoryRows({
+        table: events,
+        entityType: "event",
+        entityId: id,
+        before: { seriesId: null },
+        patch: { seriesId },
+        actor: systemActor("series-backfill"),
+        source: "api:POST /api/admin/series/backfill",
+        at,
+      })
+    )
+  );
+}
+
 async function runBatched(
   db: ReturnType<typeof getCloudflareDb>,
   statements: unknown[],
@@ -298,6 +327,9 @@ async function commitBackfill(
     for (const batch of chunkIds(memberIds)) {
       phaseA.push(db.update(events).set({ seriesId }).where(inArray(events.id, batch)));
     }
+    // OPE-1653 — every member was read with series_id IS NULL, so null is what
+    // the new series replaced. Rides in the same batched phase as the attach.
+    phaseA.push(...seriesAttachHistory(db, memberIds, seriesId, now));
     manifest.push({ seriesId, canonicalSlug: g.canonicalSlug, memberIds });
   }
   await runBatched(db, phaseA);
@@ -325,6 +357,7 @@ async function commitBackfill(
       const sid = t.keeper ? keeperSeriesId.get(t.keeper) : undefined;
       if (sid) {
         phaseB.push(db.update(events).set({ seriesId: sid }).where(eq(events.id, t.id)));
+        phaseB.push(...seriesAttachHistory(db, [t.id], sid, new Date()));
         tombstoneLinks.push({ tombstone: t.id, seriesId: sid });
       }
     }

@@ -35,6 +35,7 @@ import { trackFilterApplied } from "@/lib/analytics";
 import { parseJsonArray } from "@/types";
 import type { venues, promoters } from "@/lib/db/schema";
 import type { PublicEvent } from "@/lib/db/event-join-projection";
+import { useRenderNow } from "@/lib/hooks/render-now";
 
 type CalendarViewType = "day" | "week" | "month" | "year" | "schedule";
 
@@ -401,7 +402,8 @@ function CalendarView({
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
-  const today = new Date();
+  // OPE-1691 — the server's render time during hydration, live after mount.
+  const today = useRenderNow();
 
   // F3.2 (Dev-Email-2026-06-09 §D, 2026-06-09) — "Now: HH:MM" text label
   // shown in today's day/week column. Per plan §D answer to John Q1:
@@ -412,9 +414,12 @@ function CalendarView({
   // it updates when the calendar re-renders (date change, legend
   // toggle, page navigation) — no minute tick. Acceptable: granularity
   // of "what minute is it now" matters less than "is today now."
+  // OPE-1691 — a fixed zone, so the server (UTC) and the browser print the same
+  // time during hydration. The site's events are in New England.
   const nowLabel = today.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    timeZone: "America/New_York",
   });
 
   // Dismiss all popovers on Escape
@@ -1147,7 +1152,10 @@ export function EventsView({
 }: EventsViewProps) {
   const currentSearchParams = useSearchParams();
   const viewMode = view;
-  const [calendarDate, setCalendarDate] = useState(new Date());
+  // OPE-1691 — sort keys and the calendar's start month read the server's
+  // render time during hydration (see render-now), not this browser's clock.
+  const renderNow = useRenderNow();
+  const [calendarDate, setCalendarDate] = useState(() => renderNow);
   // Calendar UX improvements (2026-06-08, per MMATF-UIUX-Calendar-Spec):
   //   - Initial state "month" matches the legacy default + works for SSR.
   //   - On mount we override from localStorage (last-used view) if
@@ -1286,7 +1294,10 @@ export function EventsView({
     }
   }
 
-  const nowForSort = new Date();
+  // OPE-1691 — was `new Date()`: under a skewed or later client clock the
+  // client sorted the grid differently from the server, so a card slot held a
+  // different card and React threw #418 (args[]=HTML).
+  const nowForSort = renderNow;
   const sortedEvents = sortData(events, sortConfig, {
     name: (e) => e.name.toLowerCase(),
     venue: (e) => e.venue?.name?.toLowerCase() || "",
@@ -1568,7 +1579,7 @@ export function EventsView({
                         </Badge>
                       )}
                       {/* OPE-1098 — past TENTATIVE reads as past, not tentative-future. */}
-                      {isPastUnconfirmed(event) ? (
+                      {isPastUnconfirmed(event, renderNow) ? (
                         <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted text-muted-foreground">
                           {PAST_UNCONFIRMED_LABEL}
                         </span>

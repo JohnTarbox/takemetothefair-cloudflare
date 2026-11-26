@@ -55,7 +55,7 @@ export interface SendVendorEmailEnv {
 const PUBLIC_HOST = "https://meetmeatthefair.com";
 // Exported so the K32 send_test_email tool sends from the SAME verified sender.
 export const FROM = "Meet Me at the Fair <hello@meetmeatthefair.com>";
-const BCC_TO = "jtarboxme@gmail.com";
+export const BCC_TO = "jtarboxme@gmail.com";
 const SIGN_OFF = "— Meet Me at the Fair";
 
 // K36 — CAN-SPAM §5(a)(5) physical postal address. OPERATOR ACTION REQUIRED:
@@ -83,7 +83,7 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function paragraphsToHtml(text: string): string {
+export function paragraphsToHtml(text: string): string {
   return `<p>${escapeHtml(text).replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`;
 }
 

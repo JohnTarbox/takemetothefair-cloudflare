@@ -97,6 +97,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
       "photo-intake-storage-record",
       "enrich-on-match-disposition",
       "free-text-extract-record",
+      "classifier-retry",
     ],
     note: "Writers inside this Workflow each carry their own probe; a new writer here needs one too, and this check cannot see it (see header).",
   },
@@ -114,12 +115,17 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   // ── scheduled() jobs ────────────────────────────────────────────────────
   "cron:runAgentSilenceWatchdog": { probes: ["agent-silence-watchdog"] },
   "cron:runErrorLogRetention": { probes: ["error-log-retention"] },
+  "cron:runScheduledErrorLogBufferReplay": { probes: ["error-log-buffer-replay"] },
+  "cron:runDeployLagWatch": { probes: ["deploy-lag-watch"] },
+  "cron:runHostSilenceWatch": { probes: ["host-silence-watch"] },
   "cron:runInboundExceptionNotice": U,
   "cron:runIndexNowSubmissionRetention": { probes: ["indexnow-submission-retention"] },
   "cron:main-app:/api/admin/venues/geocode-venues": { probes: ["venue-geocode-sweep"] },
   "cron:main-app:/api/admin/claims/corroborate": { probes: ["claim-corroboration-sweep"] },
   "cron:main-app:/api/admin/content-links/audit": U,
   "cron:runOccurredTransitionSweep": { probes: ["occurred-transition-sweep"] },
+  "cron:runTentativeAutopromote": { probes: ["tentative-autopromote"] },
+  "cron:runElapsedPendingExpiry": { probes: ["elapsed-pending-expiry"] },
   "cron:runRequestSampleRetention": { probes: ["request-sample-retention"] },
   "cron:runUnterminatedCrossingNotice": { probes: ["unterminated-crossing-notice"] },
   "cron:runScheduledBingInspectionSweep": U,
@@ -143,6 +149,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   "cron:runScheduledKpiRecompute": U,
   // OPE-1201 — daily near-duplicate candidate sweep; one admin_actions row per run.
   "cron:runScheduledNearDuplicateSweep": { probes: ["near-duplicate-sweep"] },
+  "cron:runScheduledFullDuplicateSweep": { probes: ["entity-duplicate-full-sweep"] },
   "cron:runScheduledNewsletterListBalanceCanary": { probes: ["newsletter-list-balance-canary"] },
   "cron:runScheduledOperatorQueueNotice": U,
   "cron:runScheduledPageErrorCanary": U,
@@ -150,9 +157,19 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   "cron:runScheduledPhotoCoverageScan": {
     probes: ["image-coverage-scan", "photo-coverage-snapshot"],
   },
-  "cron:runScheduledPromoterEnrichment": { probes: ["promoter-enrichment"] },
+  // OPE-1712 — + the cron's auto-apply path (dry-run off since 2026-11-26).
+  "cron:runScheduledPromoterEnrichment": {
+    probes: ["promoter-enrichment", "promoter-cron-auto-merge"],
+  },
   // OPE-1164 — weekly (Monday-gated) vendor-category new-value watch.
   // OPE-1205 — daily sync-staleness sweep; one admin_actions row per run.
+  "cron:runScheduledPendingContactAttach": { probes: ["pending-contact-attach"] },
+  // OPE-1626 — job liveness (organizer-feed-poll) + per-feed staleness (feed-reader).
+  "cron:runScheduledFeedPoll": { probes: ["organizer-feed-poll", "feed-reader"] },
+  // OPE-1621 — */10 pass over feeds a change ping (or WebSub notification) marked due.
+  "cron:runScheduledPingedFeedPass": { probes: ["feed-change-ping"] },
+  "cron:runScheduledPromoterOnboarding": { probes: ["promoter-onboarding"] },
+  "cron:runScheduledRepliedLedgerCheck": { probes: ["replied-ledger-check"] },
   "cron:runScheduledSyncStaleSweep": { probes: ["sync-stale-sweep"] },
   // OPE-1239 — */10 CI-trigger watchdog; stamps a run row at most hourly.
   "cron:runScheduledCiTriggerWatchdog": { probes: ["ci-trigger-watchdog"] },

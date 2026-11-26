@@ -25,6 +25,7 @@ function makeDb() {
       message_id TEXT PRIMARY KEY, sent_at INTEGER, recipient TEXT, source TEXT,
       provider_message_id TEXT, status TEXT, provider TEXT, error TEXT, subject TEXT,
       inbound_email_id TEXT, body_html TEXT, body_text TEXT,
+    attachments_json TEXT,
       delivery_status TEXT, delivery_updated_at INTEGER, delivery_detail TEXT
     );
   `);

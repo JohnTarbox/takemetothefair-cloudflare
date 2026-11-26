@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test.describe("Suggest Event Page", () => {
   test("page loads and shows URL input form", async ({ page }) => {

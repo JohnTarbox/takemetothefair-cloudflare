@@ -87,9 +87,32 @@ export interface GuardedFetchOptions {
   headers?: Record<string, string>;
   /** Shorthand for the Accept header (overrides `headers.Accept`). */
   accept?: string;
-  method?: "GET" | "HEAD";
+  /**
+   * OPE-1648 — POST is for a form-style request to a third-party endpoint we
+   * did not choose (the WebSub hub a feed advertises). A POST that is
+   * redirected by 301/302/303 continues as a GET without the body, as `fetch`
+   * itself would; 307/308 keep the method and body. Callers that never expect
+   * a redirect should pass `maxRedirects: 0`.
+   */
+  method?: "GET" | "HEAD" | "POST";
+  /** Request body (POST only). */
+  body?: string;
+  /**
+   * OPE-1648 — the fetch to call instead of the global one. Every hop, every
+   * check and the byte cap still apply; this only swaps the transport, so a
+   * caller that threads an injected fetch for tests keeps the guard.
+   */
+  fetchImpl?: typeof fetch;
   /** The caller's own deadline. Its abort is re-thrown as-is, not wrapped. */
   signal?: AbortSignal;
+  /**
+   * OPE-1625 — an extra check run on EVERY hop (the first URL and each
+   * redirect target) after the protocol + host check, before the request goes
+   * out. Throw (ideally a `GuardedFetchError("blocked_host", …)`) to refuse the
+   * hop. The public calendar checker uses it to refuse non-default ports and
+   * hosts whose DNS answers are private.
+   */
+  checkHop?: (url: URL) => void | Promise<void>;
 }
 
 /** A fully-validated response whose body reads are size-capped. */
@@ -163,7 +186,9 @@ export async function guardedFetch(
   const maxBytes = opts.maxBytes;
   const timeoutMs = opts.timeoutMs ?? GUARDED_DEFAULT_TIMEOUT_MS;
   const maxRedirects = opts.maxRedirects ?? GUARDED_DEFAULT_MAX_REDIRECTS;
-  const method = opts.method ?? "GET";
+  let method: "GET" | "HEAD" | "POST" = opts.method ?? "GET";
+  let body: string | undefined = method === "POST" ? opts.body : undefined;
+  const doFetch = opts.fetchImpl ?? fetch;
 
   let current: URL;
   try {
@@ -211,12 +236,13 @@ export async function guardedFetch(
   try {
     for (;;) {
       assertFetchableUrl(current);
+      if (opts.checkHop) await opts.checkHop(current);
       try {
         // Hop 0 goes out exactly as the caller spelled it (fetch normalizes it
         // the same way `new URL` just did for the check); later hops are the
         // resolved Location.
         const target = hops === 0 && typeof rawUrl === "string" ? rawUrl : current.href;
-        resp = await fetch(target, { method, headers, signal, redirect: "manual" });
+        resp = await doFetch(target, { method, headers, body, signal, redirect: "manual" });
       } catch (err) {
         throw translate(err, current.href);
       }
@@ -246,6 +272,12 @@ export async function guardedFetch(
         });
       }
       hops++;
+      // 301/302/303 after a POST continue as a GET without the body (the
+      // Fetch standard's rewrite); 307/308 resend the same request.
+      if (method === "POST" && resp.status !== 307 && resp.status !== 308) {
+        method = "GET";
+        body = undefined;
+      }
     }
   } catch (err) {
     release();

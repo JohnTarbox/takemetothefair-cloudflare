@@ -35,8 +35,8 @@
  * a matched record would sound authoritative while being wrong — strictly
  * worse than the dumb acknowledgement it replaced.
  */
-import { and, isNull, sql } from "drizzle-orm";
-import { events, promoters, users, vendors } from "@takemetothefair/db-schema";
+import { and, inArray, isNull, sql } from "drizzle-orm";
+import { events, orgDomainRowsFor, promoters, users, vendors } from "@takemetothefair/db-schema";
 import type { Db } from "../db.js";
 import { brandKey, senderNameVariants } from "./vendor-inquiry-briefing.js";
 
@@ -253,6 +253,48 @@ export async function resolveSenderIdentity(
         matchedOn: domain,
         confidence: CONFIDENCE["website-domain"],
       });
+  }
+
+  // ── (b2) org domain list (OPE-1614) ──────────────────────────────────────
+  // An org can have several domains: OHTM mails from ohtm.org while its
+  // website is owlshead.org. A domain added to an org's list (by a redirect,
+  // a site-published address or an operator) is the same evidence as its
+  // website domain. Shared domains are still reported — matched_entities is
+  // a report, not a verdict — and every writer that acts on a domain decides
+  // ownership through orgsForDomain, which refuses a shared one.
+  if (domain) {
+    // Venues are not a sender entity type here, so only vendor + promoter.
+    const listed = await orgDomainRowsFor(db, domain, ["vendor", "promoter"]);
+    const vendorIds = listed.filter((r) => r.entityType === "vendor").map((r) => r.entityId);
+    const promoterIds = listed.filter((r) => r.entityType === "promoter").map((r) => r.entityId);
+    const [lv, lp] = await Promise.all([
+      vendorIds.length
+        ? db
+            .select({ id: vendors.id, name: vendors.businessName, slug: vendors.slug })
+            .from(vendors)
+            .where(and(isNull(vendors.deletedAt), inArray(vendors.id, vendorIds)))
+        : Promise.resolve([]),
+      promoterIds.length
+        ? db
+            .select({ id: promoters.id, name: promoters.companyName, slug: promoters.slug })
+            .from(promoters)
+            .where(inArray(promoters.id, promoterIds))
+        : Promise.resolve([]),
+    ]);
+    for (const [entityType, rows] of [
+      ["vendor", lv],
+      ["promoter", lp],
+    ] as const)
+      for (const r of rows)
+        add({
+          entityType,
+          entityId: r.id,
+          name: r.name,
+          slug: r.slug,
+          basis: "website-domain",
+          matchedOn: domain,
+          confidence: CONFIDENCE["website-domain"],
+        });
   }
 
   // ── (c) brand-name ───────────────────────────────────────────────────────

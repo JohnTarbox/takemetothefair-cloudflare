@@ -14,6 +14,7 @@ import {
   partitionOccurrences,
   pickHeroOccurrence,
   toSchemaOccurrences,
+  occurrenceJsonLdDates,
 } from "@/lib/series/occurrence-view";
 import { buildEventSeriesJsonLd, seriesUrl } from "@/lib/series/series-schema-org";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
@@ -22,7 +23,6 @@ import type { VisitorGuide } from "@/lib/blog/event-guides";
 import { formatDateRange } from "@/lib/utils";
 import { occurrencePath } from "@takemetothefair/utils";
 import { cdnImage, cdnSrcSet } from "@/lib/cdn-image";
-import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
 import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 
 const HERO_WIDTHS = [400, 800, 1200, 1600];
@@ -67,8 +67,11 @@ export function SeriesLandingPage({
       // emitted `"endDate":"2026-09-27"` for a fair that ends Sep 26, while the
       // /2026 occurrence page next to it emitted the correct Sep 19 span for
       // Oxford. Two Google-visible schemas, one wrong.
-      startDateIso: hero?.startDate ? toIsoDateOnlyInVenueZone(hero.startDate) : null,
-      endDateIso: hero?.endDate ? toIsoDateOnlyInVenueZone(hero.endDate) : null,
+      //
+      // OPE-1547 — and with the hero's time when it has one, by the event page's
+      // own rule. A date-only slice here served "2026-11-07" for a market that
+      // opens at 10:00, on every dated instance whose slug is its series' slug.
+      ...(hero ? occurrenceJsonLdDates(hero) : { startDateIso: null, endDateIso: null }),
       // OPE-18 — series-level WARNING-set sources: eventStatus from the hero
       // occurrence's lifecycle; organizer (+ logo fallback for subEvent images)
       // from the series promoter. The builder already emitted these when given

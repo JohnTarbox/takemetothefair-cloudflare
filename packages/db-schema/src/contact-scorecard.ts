@@ -162,6 +162,13 @@ GROUP BY class`,
 JOIN email_send_ledger l ON l.source = 'email:promoter-outreach' AND l.provider_message_id IS NOT NULL
   AND (instr(coalesce(i.in_reply_to, ''), l.provider_message_id) > 0 OR instr(coalesce(i.email_references, ''), l.provider_message_id) > 0)
 JOIN promoter_outreach_attempts a ON lower(a.to_address) = lower(l.recipient) AND a.status = 'sent' AND a.sent_at <= i.received_at`,
+  promoter_onboarding: `SELECT COUNT(*) requests,
+  SUM(replied_at IS NOT NULL) replied,
+  AVG(CASE WHEN replied_at IS NOT NULL THEN (replied_at - created_at) / 3600.0 END) avg_hours_to_first_reply,
+  SUM(claimed_at IS NOT NULL) claimed,
+  SUM(first_submission_at IS NOT NULL AND first_submission_at <= created_at + 30*86400) submitted_within_30d,
+  SUM(followup_sent_at IS NOT NULL) followups_sent
+FROM promoter_onboarding_requests WHERE created_at >= :from AND created_at < :to`,
   validated_silent_12mo: `SELECT pc.id, pc.email FROM promoter_contacts pc WHERE pc.status = 'validated'
   AND COALESCE(pc.last_heard_at, 0) < :now - 365*86400
   AND NOT EXISTS (SELECT 1 FROM email_send_ledger l WHERE lower(l.recipient) = lower(pc.email)
@@ -294,6 +301,16 @@ async function windowMetrics(db: ScorecardDb, p: Params, days: number): Promise<
 
 export interface ContactScorecard {
   asOf: string;
+  /** OPE-1608 — the onboarding lane, for requests opened in the current window. */
+  promoterOnboarding: {
+    requests: number;
+    replied: number;
+    avgHoursToFirstReply: number | null;
+    claimed: number;
+    pctClaimed: number | null;
+    submittedWithin30d: number;
+    followupsSent: number;
+  };
   coverage: {
     contactsByStatus: Record<string, number>;
     contactsTotal: number;
@@ -331,6 +348,26 @@ export async function computeContactScorecard(
   const cur: Params = { from: nowS - w, to: nowS, now: nowS };
   const pri: Params = { from: nowS - 2 * w, to: nowS - w, now: nowS };
 
+  const [ob] = await q<{
+    requests: number;
+    replied: number | null;
+    avg_hours_to_first_reply: number | null;
+    claimed: number | null;
+    submitted_within_30d: number | null;
+    followups_sent: number | null;
+  }>(db, "promoter_onboarding", cur);
+  const obRequests = Number(ob?.requests ?? 0);
+  const obClaimed = Number(ob?.claimed ?? 0);
+  const promoterOnboarding: ContactScorecard["promoterOnboarding"] = {
+    requests: obRequests,
+    replied: Number(ob?.replied ?? 0),
+    avgHoursToFirstReply: ob?.avg_hours_to_first_reply ?? null,
+    claimed: obClaimed,
+    pctClaimed: obRequests > 0 ? Math.round((obClaimed / obRequests) * 1000) / 10 : null,
+    submittedWithin30d: Number(ob?.submitted_within_30d ?? 0),
+    followupsSent: Number(ob?.followups_sent ?? 0),
+  };
+
   const statusRows = await q<{ status: string; n: number }>(db, "contacts_by_status", cur);
   const contactsByStatus = Object.fromEntries(statusRows.map((r) => [r.status, Number(r.n)]));
   const [cov] = await q<{ upcoming: number; covered: number | null }>(db, "upcoming_coverage", cur);
@@ -361,6 +398,7 @@ export async function computeContactScorecard(
   }
 
   return {
+    promoterOnboarding,
     asOf: new Date(nowS * 1000).toISOString(),
     coverage: {
       contactsByStatus,

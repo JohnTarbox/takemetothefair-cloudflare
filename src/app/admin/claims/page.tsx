@@ -20,6 +20,7 @@ import {
 } from "@/lib/claims/list-registration-evidence";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ClaimReviewActions } from "@/components/admin/ClaimReviewActions";
+import { RegistrationReviewActions } from "@/components/admin/RegistrationReviewActions";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +62,9 @@ export default async function AdminClaimsPage() {
     getClaimEstate(db),
   ]);
 
+  // listReviewableClaims returns oldest first.
+  const oldestWaitingDays = claims[0]?.createdAt ? ageDays(claims[0].createdAt) : 0;
+
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <header>
@@ -76,6 +80,7 @@ export default async function AdminClaimsPage() {
         <Stat label="Awaiting review" value={claims.length} />
         <Stat label="Disputed" value={claims.filter((c) => c.status === "DISPUTED").length} />
         <Stat label="Pending" value={claims.filter((c) => c.status === "PENDING").length} />
+        <Stat label="Oldest waiting (days)" value={oldestWaitingDays} />
       </div>
 
       {/*
@@ -122,6 +127,7 @@ export default async function AdminClaimsPage() {
                     <th className="px-4 py-2 font-medium">evidence</th>
                     <th className="px-4 py-2 font-medium text-right">attempts</th>
                     <th className="px-4 py-2 font-medium">filed</th>
+                    <th className="px-4 py-2 font-medium text-right">age</th>
                     <th className="px-4 py-2 font-medium">actions</th>
                   </tr>
                 </thead>
@@ -187,6 +193,9 @@ export default async function AdminClaimsPage() {
                         <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
                           {c.createdAt ? c.createdAt.toISOString().slice(0, 10) : "—"}
                         </td>
+                        <td className="px-4 py-3 text-right text-xs tabular-nums text-muted-foreground whitespace-nowrap">
+                          {c.createdAt ? `${ageDays(c.createdAt)}d` : "—"}
+                        </td>
                         <td className="px-4 py-3 min-w-[200px]">
                           <ClaimReviewActions claimId={c.id} />
                         </td>
@@ -228,7 +237,8 @@ function RegistrationEvidenceSection({ rows }: { rows: RegistrationEvidenceRow[]
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-1">
           Automated screen run at signup: name/email coherence, spam fingerprints, and web
-          corroboration. Advisory only — nothing here approves, rejects, or publishes anything.{" "}
+          corroboration. The score is advisory. Suspend and Spam hide the listing and can be undone
+          with <code>undelete_vendor</code>; none of the three buttons emails anyone.{" "}
           {suspect > 0 && <strong>{suspect} flagged SUSPECT. </strong>}
           {unchecked > 0 && `${unchecked} not yet web-corroborated.`}
         </p>
@@ -250,6 +260,7 @@ function RegistrationEvidenceSection({ rows }: { rows: RegistrationEvidenceRow[]
                   <th className="px-4 py-2 font-medium">web</th>
                   <th className="px-4 py-2 font-medium">why</th>
                   <th className="px-4 py-2 font-medium">signed up</th>
+                  <th className="px-4 py-2 font-medium">actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -317,6 +328,9 @@ function RegistrationEvidenceSection({ rows }: { rows: RegistrationEvidenceRow[]
                     <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
                       {r.createdAt ? r.createdAt.toISOString().slice(0, 10) : "—"}
                     </td>
+                    <td className="px-4 py-3 min-w-[220px]">
+                      <RegistrationReviewActions vendorId={r.vendorId} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -326,6 +340,10 @@ function RegistrationEvidenceSection({ rows }: { rows: RegistrationEvidenceRow[]
       </CardContent>
     </Card>
   );
+}
+
+function ageDays(from: Date): number {
+  return Math.max(0, Math.floor((Date.now() - from.getTime()) / 86_400_000));
 }
 
 function Stat({ label, value }: { label: string; value: number }) {

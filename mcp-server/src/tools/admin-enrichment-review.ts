@@ -20,6 +20,7 @@
  *
  * Admin only.
  */
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
@@ -94,16 +95,33 @@ const FIELD_TO_COLUMN: Record<string, keyof typeof vendors.$inferInsert> = {
   city: "city",
   state: "state",
   vendor_type: "vendorType",
+  // OPE-1709 rework — the business-card lane (OPE-1705) stages these three, and
+  // none was mapped, so every one failed `field_not_applicable`: a card's
+  // contact name (ruling (a): always staged, never auto-written), and a card's
+  // website / zip whenever auto-write was off, the read was low-confidence, or
+  // it disagreed with the stored value. Like vendor_type, they are applicable by
+  // a HUMAN here and deliberately NOT added to the automatic merge map.
+  // `REVIEW_APPLICABLE_FIELDS` + the card-columns test keep the two in step.
+  contact_name: "contactName",
+  website: "website",
+  zip: "zip",
 };
+
+/** Every staged field a reviewer can approve into a live vendor column. */
+export const REVIEW_APPLICABLE_FIELDS: ReadonlySet<string> = new Set(Object.keys(FIELD_TO_COLUMN));
 
 const PROPOSED_FIELDS = [
   "contact_phone",
   "contact_email",
+  "contact_name",
   "social_links",
+  "website",
   "address",
   "city",
   "state",
+  "zip",
   "description",
+  "vendor_type",
 ] as const;
 
 /** A vendor field is "empty" (fill-eligible) when blank — and, for the JSON
@@ -535,6 +553,10 @@ export function registerEnrichmentReviewTools(
           // silently applies, which is the exact clobber this guard prevents.
           // Every key of FIELD_TO_COLUMN has to appear here.
           vendorType: vendors.vendorType,
+          // OPE-1709 rework — the card-lane fields (see FIELD_TO_COLUMN).
+          contactName: vendors.contactName,
+          website: vendors.website,
+          zip: vendors.zip,
           // OPE-1164 — a descriptive vendor_type proposal is merged into these.
           products: vendors.products,
         })
@@ -660,7 +682,16 @@ export function registerEnrichmentReviewTools(
       } else {
         update[col] = cand.proposedValue;
       }
-      await db.update(vendors).set(update).where(eq(vendors.id, vendor.id));
+      // OPE-1653 — `vendor` is a partial projection, so the helper reads the
+      // written columns first; a forced overwrite is now recoverable.
+      await updateWithFieldHistory(db, {
+        table: vendors,
+        entityType: "vendor",
+        entityId: vendor.id,
+        patch: update,
+        actor: auth.userId,
+        source: "mcp:review_enrichment_candidate (approve)",
+      });
 
       await logEnrichment(db, {
         targetType: "vendor",

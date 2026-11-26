@@ -18,6 +18,11 @@ vi.mock("@/lib/claims/resolve-claim-at-signup", () => ({
 vi.mock("@/lib/claims/resolve-claim-in-wizard", () => ({
   approvePendingDomainMatchClaims: (...a: unknown[]) => approveDomain(...a),
 }));
+// OPE-1692 — third pass (invite forwarded within one organization). Returns
+// nothing here so the two-pass assertions below keep their meaning.
+vi.mock("@/lib/claims/redeem-invite-at-signup", () => ({
+  approvePendingInviteDomainClaims: async () => ({ approved: 0, approvedClaims: [] }),
+}));
 vi.mock("@/lib/claims/claim-evidence", () => ({
   rescoreEvidenceAfterVerification: (...a: unknown[]) => rescore(...a),
 }));

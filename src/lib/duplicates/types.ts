@@ -85,6 +85,13 @@ export interface FindDuplicatesResponse {
   threshold: number;
   duplicates: DuplicatePair[];
   totalEntities: number;
+  /** OPE-1597 — present when the result came from the stored full-table sweep. */
+  sweep?: {
+    lastRunAt: string;
+    checkedCount: number;
+    liveCount: number;
+    pairCount: number;
+  };
 }
 
 // Merge preview request

@@ -34,6 +34,7 @@ function row(p: Partial<SweepEventRow> & { name: string; start: string }): Sweep
     venueName: p.venueName ?? "Augusta Armory",
     venueCity: p.venueCity ?? "Augusta",
     seriesId: p.seriesId ?? null,
+    sourceUrl: p.sourceUrl ?? null,
     promoterId: p.promoterId ?? null,
     startDate: at(p.start),
     createdAt: p.createdAt ?? new Date(seq * 1000),
@@ -94,6 +95,31 @@ describe("nearDuplicateReason — the 2026-09-28 shapes", () => {
     const a = row({ name: "Harvest Festival", start: "2026-10-01" });
     const b = row({ name: "Harvest Festival", start: "2026-10-16" });
     expect(nearDuplicateReason(a, b)).toBeNull();
+  });
+
+  it("OPE-1597: two dates on one source page are a schedule, whatever their series", () => {
+    const url = "https://waterfire.org/schedule/";
+    const a = row({
+      name: "WaterFire Full Lighting",
+      start: "2026-10-17",
+      seriesId: "s1",
+      sourceUrl: url,
+    });
+    const b = row({
+      name: "WaterFire Full Lighting",
+      start: "2026-10-24",
+      seriesId: "s2",
+      sourceUrl: url,
+    });
+    expect(nearDuplicateReason(a, b)).toBeNull();
+    // Same page, same day stays a candidate.
+    const c = row({
+      name: "WaterFire Full Lighting",
+      start: "2026-10-17",
+      seriesId: "s3",
+      sourceUrl: url,
+    });
+    expect(nearDuplicateReason(a, c)).not.toBeNull();
   });
 
   it("occurrences of one series are not duplicates", () => {
@@ -168,7 +194,8 @@ const SCHEMA_SQL = `
   CREATE TABLE events (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL DEFAULT 'APPROVED', venue_id TEXT, promoter_id TEXT,
-    series_id TEXT, start_date INTEGER, end_date INTEGER, merged_into TEXT,
+    series_id TEXT,
+    source_url TEXT, start_date INTEGER, end_date INTEGER, merged_into TEXT,
     possible_duplicate_of TEXT, created_at INTEGER, updated_at INTEGER
   );
   CREATE TABLE event_duplicate_dismissals (

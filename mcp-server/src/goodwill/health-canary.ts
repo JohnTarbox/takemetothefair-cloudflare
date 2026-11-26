@@ -38,6 +38,7 @@ import {
 } from "../schema.js";
 import type { Db } from "../db.js";
 import { logError } from "../logger.js";
+import { recordDigestSent, shouldSendDigest } from "../digest-change-gate.js";
 
 /** Mirrors the EmailJobMessage shape in mcp-server/src/queue-consumers.ts
  *  so the canary can enqueue without importing the consumer module. */
@@ -79,6 +80,8 @@ export interface CanaryOpts {
 }
 
 const RED_GROWTH_THRESHOLD = 1; // +N open rows day-over-day
+/** OPE-1585 — this digest's row in `digest_change_state`. */
+const DIGEST_KEY = "goodwill";
 const YELLOW_GROWTH_RATIO = 0.1; // >10% over 7-day rolling avg
 const YELLOW_DEBOUNCE_SECS = 72 * 60 * 60;
 const TWENTY_EIGHT_DAYS_SECS = 28 * 24 * 60 * 60;
@@ -385,13 +388,24 @@ export async function runScheduledGoodwillHealthCanary(
 
     // RED check — +N open day-over-day, always fires.
     let decision: CanaryResult["decision"] = "wrote_snapshot";
-    if (prior.priorOpen !== null && open.total >= prior.priorOpen + RED_GROWTH_THRESHOLD) {
+    // OPE-1585 — the tier says the queue grew; this says whether the operator
+    // has already been told about roughly this many rows.
+    const digestSnapshot = (tierRank: number) => ({
+      counts: { open: open.total },
+      severity: tierRank,
+    });
+    if (
+      prior.priorOpen !== null &&
+      open.total >= prior.priorOpen + RED_GROWTH_THRESHOLD &&
+      (await shouldSendDigest(db, DIGEST_KEY, digestSnapshot(2), SOURCE))
+    ) {
       const payload = buildAlertPayload("RED", {
         priorOpen: prior.priorOpen,
         openTotal: open.total,
         outreachCandidates: open.outreachCandidates,
       });
       await dispatchAlert(db, opts, "RED", payload);
+      await recordDigestSent(db, DIGEST_KEY, digestSnapshot(2), new Date(), SOURCE);
       decision = "wrote_snapshot_and_red";
     } else if (
       prior.sevenDayAvgWeighted !== null &&
@@ -400,7 +414,10 @@ export async function runScheduledGoodwillHealthCanary(
     ) {
       // YELLOW debounce check.
       const ageSecs = lastYellowAt ? (Date.now() - lastYellowAt.getTime()) / 1000 : Infinity;
-      if (ageSecs >= YELLOW_DEBOUNCE_SECS) {
+      if (
+        ageSecs >= YELLOW_DEBOUNCE_SECS &&
+        (await shouldSendDigest(db, DIGEST_KEY, digestSnapshot(1), SOURCE))
+      ) {
         const pct = (
           (100 * (open.weightedSum - prior.sevenDayAvgWeighted)) /
           prior.sevenDayAvgWeighted
@@ -414,6 +431,7 @@ export async function runScheduledGoodwillHealthCanary(
           pct,
         });
         await dispatchAlert(db, opts, "YELLOW", payload);
+        await recordDigestSent(db, DIGEST_KEY, digestSnapshot(1), new Date(), SOURCE);
         // Bump the debounce marker.
         await db
           .update(goodwillHealthSnapshots)

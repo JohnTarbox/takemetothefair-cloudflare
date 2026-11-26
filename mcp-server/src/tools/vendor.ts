@@ -10,7 +10,14 @@ import {
   promoters,
   venues,
   raiseEventReviewFlag,
+  eventDataCitations,
 } from "../schema.js";
+import { SOURCE_TYPE_VALUES as CITATION_SOURCE_TYPE_VALUES } from "./admin-citations.js";
+import {
+  hasExcerpt,
+  vendorFieldsBeingSet,
+  type VendorCitedField,
+} from "./vendor-field-citation.js";
 // OPE-1233 — the SHARED attach, like update_event. A local copy kept its own
 // edition-stripping rule, so a key fix reached one MCP write path and not this one.
 import { attachEventToSeries } from "@takemetothefair/event-series";
@@ -36,6 +43,11 @@ import {
 } from "../venues/geocode-new.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import type { Db } from "../db.js";
+import {
+  buildFieldHistoryRows,
+  fieldHistoryBeforeSelect,
+  fieldHistoryInserts,
+} from "@takemetothefair/db-schema/field-history";
 import type { AuthContext } from "../auth.js";
 import { gateUrlOnce, loadClassifications, shouldIngestFromSource } from "../url-classification.js";
 import {
@@ -206,7 +218,33 @@ export function registerVendorTools(
 
       updates.updatedAt = new Date();
 
-      await db.update(vendors).set(updates).where(eq(vendors.id, vendorId));
+      // OPE-1651 — vendor self-edit over MCP: per-field history, attributed
+      // to the vendor's own user, in the same batch as the UPDATE.
+      const [historyBefore] = await db
+        .select(fieldHistoryBeforeSelect(vendors, updates))
+        .from(vendors)
+        .where(eq(vendors.id, vendorId))
+        .limit(1);
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: vendors,
+          entityType: "vendor",
+          entityId: vendorId,
+          before: historyBefore,
+          patch: updates,
+          actor: auth.userId,
+          source: "mcp:update_vendor_profile",
+        })
+      );
+      const vendorUpdate = db.update(vendors).set(updates).where(eq(vendors.id, vendorId));
+      if (historyStmts.length > 0) {
+        await db.batch([vendorUpdate, ...historyStmts] as unknown as Parameters<
+          typeof db.batch
+        >[0]);
+      } else {
+        await vendorUpdate;
+      }
 
       await recomputeVendorCompleteness(db, vendorId);
 
@@ -757,6 +795,21 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         .describe(
           "Deadline for VENDORS to apply (YYYY-MM-DD). NOT the event's own date — leave unset unless the source states an application/registration deadline. Feeds the start_equals_deadline gate."
         ),
+      // OPE-1673 — the source behind vendor_fee_min / vendor_fee_max /
+      // application_deadline. Without it (or without the excerpt) those values
+      // are DROPPED and named in warnings.vendor_fields_dropped_uncited; the
+      // event is still created.
+      vendor_citation: z
+        .object({
+          source_url: z.string().url(),
+          source_type: z.enum(CITATION_SOURCE_TYPE_VALUES),
+          excerpt: z.string().min(1).max(1000).transform(sanitizeProse),
+          source_name: z.string().max(200).transform(sanitizeProse).optional(),
+        })
+        .optional()
+        .describe(
+          "REQUIRED to store vendor_fee_min, vendor_fee_max or application_deadline (OPE-1673): the page that states them (usually the organizer's vendor/apply page) and an `excerpt` quoting its wording. One citation row is written per field. Without it those three values are dropped and listed in warnings.vendor_fields_dropped_uncited."
+        ),
       application_instructions: z
         .string()
         .max(500)
@@ -790,6 +843,23 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         ),
     },
     async (params) => {
+      // OPE-1673 — vendor fee / deadline only with their source. Resolved ONCE
+      // here so the gates and the stored row read the same effective values.
+      const vendorFieldsRequested = vendorFieldsBeingSet(params as Record<string, unknown>);
+      const vendorCitation =
+        params.vendor_citation && hasExcerpt(params.vendor_citation.excerpt)
+          ? params.vendor_citation
+          : null;
+      const droppedUncitedVendorFields: VendorCitedField[] = vendorCitation
+        ? []
+        : vendorFieldsRequested;
+      const keepVendor = (f: VendorCitedField) => !droppedUncitedVendorFields.includes(f);
+      const vendorFeeMin = keepVendor("vendor_fee_min") ? params.vendor_fee_min : undefined;
+      const vendorFeeMax = keepVendor("vendor_fee_max") ? params.vendor_fee_max : undefined;
+      const applicationDeadlineParam = keepVendor("application_deadline")
+        ? params.application_deadline
+        : undefined;
+
       // Validate promoter FK if provided
       let eventPromoterId = COMMUNITY_PROMOTER_ID;
       if (params.promoter_id) {
@@ -1390,10 +1460,10 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         // start_equals_deadline gate on this path: the gate cannot fire on a
         // value the caller was never able to supply. Wiring the parameter
         // turns that gate on here for the first time.
-        applicationDeadline: params.application_deadline
+        applicationDeadline: applicationDeadlineParam
           ? // OPE-482: noon-UTC anchor — a midnight-UTC deadline renders a day
             // early under Eastern formatting.
-            normalizeEventDate(params.application_deadline)
+            normalizeEventDate(applicationDeadlineParam)
           : null,
         description,
       });
@@ -1482,19 +1552,15 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         // convention; `?? null` (not `|| null`) so a legitimate 0 fee — a free
         // booth, which organizers do advertise — is stored rather than erased.
         vendorFeeMinCents:
-          params.vendor_fee_min !== undefined
-            ? (dollarsToCents(params.vendor_fee_min) ?? null)
-            : null,
+          vendorFeeMin !== undefined ? (dollarsToCents(vendorFeeMin) ?? null) : null,
         vendorFeeMaxCents:
-          params.vendor_fee_max !== undefined
-            ? (dollarsToCents(params.vendor_fee_max) ?? null)
-            : null,
+          vendorFeeMax !== undefined ? (dollarsToCents(vendorFeeMax) ?? null) : null,
         vendorFeeNotes: params.vendor_fee_notes ?? null,
         applicationUrl: params.application_url ?? null,
-        applicationDeadline: params.application_deadline
+        applicationDeadline: applicationDeadlineParam
           ? // OPE-482: noon-UTC anchor — a midnight-UTC deadline renders a day
             // early under Eastern formatting.
-            normalizeEventDate(params.application_deadline)
+            normalizeEventDate(applicationDeadlineParam)
           : null,
         applicationInstructions: params.application_instructions ?? null,
         estimatedAttendance: params.estimated_attendance ?? null,
@@ -1526,6 +1592,40 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         lastSyncedAt: new Date(),
         submittedByUserId: auth.userId,
       });
+      // OPE-1673 — one citation row per vendor field stored, written after the
+      // event row so a citation never exists without the value it supports.
+      // The event is new, so there is no prior active citation to supersede.
+      const vendorCitationsInserted: Array<{ citation_id: string; field_name: string }> = [];
+      if (vendorCitation) {
+        const now = new Date();
+        const stored: Record<VendorCitedField, unknown> = {
+          vendor_fee_min: vendorFeeMin,
+          vendor_fee_max: vendorFeeMax,
+          application_deadline: applicationDeadlineParam,
+        };
+        for (const field of vendorFieldsRequested) {
+          const citationId = crypto.randomUUID();
+          await db.insert(eventDataCitations).values({
+            id: citationId,
+            eventId,
+            fieldName: field,
+            // Same value text update_event writes: dollars / YYYY-MM-DD as passed.
+            value: String(stored[field]),
+            // null, as update_event writes when no `citation.year` is given.
+            year: null,
+            sourceUrl: vendorCitation.source_url,
+            sourceName: vendorCitation.source_name ?? null,
+            sourceType: vendorCitation.source_type,
+            state: "active",
+            notes: vendorCitation.excerpt,
+            createdBy: auth.userId ?? null,
+            createdAt: now,
+            updatedAt: now,
+          });
+          vendorCitationsInserted.push({ citation_id: citationId, field_name: field });
+        }
+      }
+
       // OPE-767 — each reason recorded, so each can be discharged on its own.
       for (const reason of [
         venueStateMismatch && "venue_state_mismatch",
@@ -1609,6 +1709,15 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       if (gateResult.reasons.length > 0) {
         suggestWarnings.gate_flags = gateResult.reasons;
       }
+      if (droppedUncitedVendorFields.length > 0) {
+        suggestWarnings.vendor_fields_dropped_uncited = droppedUncitedVendorFields;
+        suggestWarnings.vendor_fields_dropped_message =
+          `NOT stored: ${droppedUncitedVendorFields.join(", ")} — ` +
+          (params.vendor_citation
+            ? "vendor_citation.excerpt was empty"
+            : "no vendor_citation was passed") +
+          ". Re-send them with update_event and a `citation` (source page + its wording in citation.notes) (OPE-1673).";
+      }
       // OPE-1348 — an unknown source_label used to fall back to domain
       // inference in silence ("press-release" became direct_scrape). Say so.
       const labelFallback = unrecognisedSourceLabel(sourceLabel, params.source_url);
@@ -1643,6 +1752,9 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
             event: { id: eventId, slug: finalSlug, name: params.name, status: eventStatus },
             venue:
               venueResult && venueGeocode ? { ...venueResult, geocode: venueGeocode } : venueResult,
+            ...(vendorCitationsInserted.length > 0 && {
+              citationsInserted: vendorCitationsInserted,
+            }),
             ...(Object.keys(suggestWarnings).length > 0 && { warnings: suggestWarnings }),
           }),
         ],

@@ -11,6 +11,7 @@
  * one-off backfill route — one rule, not three (the OPE-408 lesson: a tool that
  * is not wired into the path that creates the gap leaves the gap growing).
  */
+import { systemActor, updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { eq } from "drizzle-orm";
 import { venues } from "@/lib/db/schema";
 import { fetchPlaceAccessParking } from "@/lib/google-maps";
@@ -91,10 +92,15 @@ export async function fillVenueGoogleAmenities(
   const columns = Object.keys(updates);
   if (columns.length === 0) return { status: "unchanged" };
 
-  await db
-    .update(venues)
-    .set({ ...updates, updatedAt: new Date() })
-    .where(eq(venues.id, venueId));
+  // OPE-1653 — the accessibility / parking answers this fill replaces.
+  await updateWithFieldHistory(db, {
+    table: venues,
+    entityType: "venue",
+    entityId: venueId,
+    patch: { ...updates, updatedAt: new Date() },
+    actor: systemActor(opts.actor),
+    source: "lib:venues/google-amenity-fill",
+  });
   await recordMutation(db, {
     entityType: "venue",
     entityId: venueId,

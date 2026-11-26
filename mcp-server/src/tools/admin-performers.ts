@@ -12,6 +12,7 @@
  * (OPE-113 PR #2). Fuzzy dedup on create surfaces likely matches for manual
  * confirm and relies on the alias table, not the score alone (spec §4.1).
  */
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, desc, eq, isNull } from "drizzle-orm";
@@ -1174,15 +1175,22 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
 
       const now = new Date();
       const isTerminal = params.status !== "NEEDS_RESEARCH";
-      await db
-        .update(events)
-        .set({
+      // OPE-1653 — the roster status / source URL it replaced.
+      await updateWithFieldHistory(db, {
+        table: events,
+        entityType: "event",
+        entityId: event.id,
+        patch: {
           performerRosterStatus: params.status,
           performerRosterCheckedAt: isTerminal ? now : null,
           performerRosterSourceUrl: isTerminal ? (params.source_url ?? null) : null,
           updatedAt: now,
-        })
-        .where(eq(events.id, event.id));
+        },
+        actor: auth.userId,
+        source: "mcp:set_performer_roster_status",
+        ignore: ["performerRosterCheckedAt"],
+        at: now,
+      });
 
       await db.insert(adminActions).values({
         action: "event.performer_roster_status",

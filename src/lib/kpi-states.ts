@@ -79,6 +79,36 @@ export type KpiStateRow = {
  * entry per KPI; on a per-KPI failure (e.g. GSC config error), value is null
  * and the failure reason lands in meta.
  */
+/**
+ * OPE-1650 — the GA4 and GSC clients abort their own fetch after 10 s and
+ * re-throw the bare `AbortError` (nine admin analytics routes rely on that name
+ * to answer 504). Their KPI-facing helpers swallow only config/API errors, so
+ * one slow Google answer used to reject the whole `Promise.all` below, the
+ * route returned an empty 500, and NONE of the five KPI rows was written —
+ * 26 runs in a row on 2026-11-13. Here a timeout degrades exactly like an API
+ * error already does (`null` = can't prove freshness / no value); anything
+ * else still throws, so a real bug is not hidden behind a STALE tile.
+ */
+export function isAbortError(e: unknown): boolean {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    "name" in e &&
+    ((e as { name: unknown }).name === "AbortError" ||
+      (e as { name: unknown }).name === "TimeoutError")
+  );
+}
+
+async function nullOnTimeout<T>(p: Promise<T | null>, label: string): Promise<T | null> {
+  try {
+    return await p;
+  } catch (e) {
+    if (!isAbortError(e)) throw e;
+    console.warn(`[kpi-recompute] ${label} timed out; treating as unavailable (OPE-1650)`);
+    return null;
+  }
+}
+
 export async function readKpiValues(
   db: Db,
   env: ScEnv & Ga4Env
@@ -95,8 +125,8 @@ export async function readKpiValues(
   // Conversion-rate's freshness comes from GA4 (the staleness-sensitive
   // denominator); first-party numerator is in D1 and assumed fresh.
   const [gscMaxDate, ga4MaxDate] = await Promise.all([
-    getMaxGscDataDate(env),
-    getMaxGa4DateWithUsers(env),
+    nullOnTimeout(getMaxGscDataDate(env), "GSC freshness probe"),
+    nullOnTimeout(getMaxGa4DateWithUsers(env), "GA4 freshness probe"),
   ]);
 
   const [siteCtr, conversionRate, brandShare, sitemapQuality, timeToIndex] = await Promise.all([
@@ -232,9 +262,15 @@ async function readConversionRate(
   // OPE-1165 — the numerator is ORGANIC clicks, matching the organic-session
   // denominator. Until 21 days of clicks carry a traffic source the rate is
   // not computed (null → INDETERMINATE, which stays out of the action queue).
+  let sessionsTimedOut = false;
   const [clicks, sessions] = await Promise.all([
     readOrganicConversionClicks(db, { since: sinceDate, until: untilDate }),
-    getOrganicSessions(env, startDate, endDate),
+    getOrganicSessions(env, startDate, endDate).catch((e: unknown) => {
+      if (!isAbortError(e)) throw e;
+      sessionsTimedOut = true;
+      console.warn("[kpi-recompute] GA4 organic sessions timed out (OPE-1650)");
+      return null;
+    }),
   ]);
   const dataAgeSeconds = ageSecondsFromIsoDate(ga4MaxDate);
   if (clicks.status === "insufficient") {
@@ -261,7 +297,7 @@ async function readConversionRate(
         sessions,
         window: { startDate, endDate },
         ga4MaxDate,
-        reason: "no_organic_sessions",
+        reason: sessionsTimedOut ? "ga4_timeout" : "no_organic_sessions",
       },
     };
   }

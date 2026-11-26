@@ -378,6 +378,13 @@ export const promoters = sqliteTable(
     claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
     claimedAt: integer("claimed_at", { mode: "timestamp" }),
     claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
+    // OPE-1682 (drizzle/0432) — the promoter opts in to listing its camps and
+    // workshops from its own feed, which the kids'-program rules otherwise drop.
+    // Applies ONLY while the promoter is registered (claimed + user_id) — John's
+    // ruling 2026-11-18; see campsWorkshopsOptInActive in @takemetothefair/utils/feeds.
+    includeCampsWorkshops: integer("include_camps_workshops", { mode: "boolean" })
+      .notNull()
+      .default(false),
     /**
      * OPE-979 (drizzle/0285) — is this business still trading?
      *
@@ -516,9 +523,9 @@ export const events = sqliteTable(
     ticketPriceMaxCents: integer("ticket_price_max_cents"),
     imageUrl: text("image_url"),
     featured: integer("featured", { mode: "boolean" }).default(false),
-    commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }).default(
-      true
-    ),
+    // OPE-1606 — NULL means unknown. It defaulted to true, so a row saying "yes"
+    // usually meant nobody had checked. Read a NULL as unknown, never as no.
+    commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }),
     status: text("status", {
       enum: ["DRAFT", "PENDING", "TENTATIVE", "APPROVED", "REJECTED", "CANCELLED"],
     })
@@ -613,6 +620,17 @@ export const events = sqliteTable(
     applicationUrl: text("application_url"),
     applicationInstructions: text("application_instructions"),
     walkInsAllowed: integer("walk_ins_allowed", { mode: "boolean" }),
+    // OPE-1564 (drizzle/0392) — who may be a VENDOR here, separate from
+    // commercialVendorsAllowed (commercial sellers admitted at all) and from
+    // primaryAudience (who may ATTEND). OPEN = no restriction recorded; it
+    // renders nothing. `vendorEligibilityOrg` names the org for MEMBERS_ONLY.
+    // Values: VENDOR_ELIGIBILITY_VALUES in @takemetothefair/utils.
+    vendorEligibility: text("vendor_eligibility", {
+      enum: ["OPEN", "MEMBERS_ONLY", "JURIED", "INVITATION_ONLY"],
+    })
+      .notNull()
+      .default("OPEN"),
+    vendorEligibilityOrg: text("vendor_eligibility_org"),
     // Suggester email for community-suggested events
     suggesterEmail: text("suggester_email"),
     // Tracks who submitted the event (vendor, community user, etc.)
@@ -1243,6 +1261,19 @@ export const vendors = sqliteTable(
     vendorsDeletedBusinessNameIdx: index("idx_vendors_deleted_business_name").on(
       t.deletedAt,
       t.businessName
+    ),
+    // OPE-1573 (drizzle/0394) — /vendors `?type=` facet: seek on vendor_type,
+    // then deleted_at IS NULL + business_name order from the same index.
+    vendorsTypeDeletedBusinessNameIdx: index("idx_vendors_type_deleted_business_name").on(
+      t.vendorType,
+      t.deletedAt,
+      t.businessName
+    ),
+    // OPE-1573 (drizzle/0415) — the Overview tab's Enhanced Profile count by
+    // start window was a full vendor scan (~13.9K rows a call).
+    vendorsEnhancedProfileStartedIdx: index("idx_vendors_enhanced_profile_started").on(
+      t.enhancedProfile,
+      t.enhancedProfileStartedAt
     ),
   })
 );
@@ -1899,6 +1930,40 @@ export const adminActions = sqliteTable(
   })
 );
 
+// OPE-1651 — field-level edit history (drizzle/0420). Append-only: one row per
+// field whose value actually changed, written by the shared
+// `buildFieldHistoryRows` helper (./field-history) from every wired write path.
+// Not provenance — `event_data_citations` says WHY we believe a value; this says
+// WHAT changed, WHO changed it, and THROUGH WHICH tool/route.
+export const entityFieldHistory = sqliteTable(
+  "entity_field_history",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    entityType: text("entity_type", {
+      enum: ["event", "vendor", "venue", "promoter"],
+    }).notNull(),
+    entityId: text("entity_id").notNull(),
+    // The DB column name (snake_case), so it matches the MCP parameter names.
+    field: text("field").notNull(),
+    // Normalized text forms, stored in FULL — truncated history defeats the purpose.
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    // A user id, or `system:<name>` for a cron / pipeline with no user.
+    actor: text("actor").notNull(),
+    // The tool or route that wrote it: `mcp:update_event`, `api:PATCH /api/vendor/profile`.
+    source: text("source").notNull(),
+    // One id per write call, so the fields one call changed group together.
+    requestId: text("request_id"),
+    changedAt: integer("changed_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => ({
+    entityIdx: index("idx_entity_field_history_entity").on(t.entityType, t.entityId, t.changedAt),
+    changedAtIdx: index("idx_entity_field_history_changed_at").on(t.changedAt),
+  })
+);
+
 // Event Vendors junction table
 export const eventVendors = sqliteTable(
   "event_vendors",
@@ -1992,6 +2057,135 @@ export const eventVendors = sqliteTable(
   ]
 );
 
+/**
+ * OPE-1618 — one row per spreadsheet row a promoter (or an operator for them)
+ * committed. UNIQUE(promoter, file hash, row) makes re-uploading the same file
+ * create nothing new. `outcome`: `created` (a PENDING event) or `update_staged`
+ * (the row matched the promoter's own event; the differences are held in
+ * `proposed_changes` for review and the event carries a
+ * `promoter_import_update` review flag — nothing is written to it).
+ */
+export const promoterImportRows = sqliteTable(
+  "promoter_import_rows",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    fileHash: text("file_hash").notNull(),
+    fileName: text("file_name"),
+    rowNumber: integer("row_number").notNull(),
+    // OPE-1620 — `cancel_staged`: the promoter API asked to cancel; held for review.
+    outcome: text("outcome", { enum: ["created", "update_staged", "cancel_staged"] }).notNull(),
+    eventId: text("event_id").references(() => events.id, { onDelete: "set null" }),
+    /** JSON: the row's values as read. */
+    rowValues: text("row_values").notNull(),
+    /** JSON: { field: { current, proposed } } — only for update_staged. */
+    proposedChanges: text("proposed_changes"),
+    uploadedBy: text("uploaded_by"),
+    /** `portal` (the promoter), `operator` (admin/MCP on the promoter's behalf) or
+     *  `api` (OPE-1620 — the promoter's signed API; file_hash is `api:<key_id>:<request_id>`). */
+    channel: text("channel", { enum: ["portal", "operator", "api"] }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_import_rows_file_row").on(t.promoterId, t.fileHash, t.rowNumber),
+    index("idx_promoter_import_rows_event").on(t.eventId),
+  ]
+);
+
+/**
+ * OPE-1620 — a promoter's API keys (drizzle/0411). `keyId` is the public half
+ * (`mmk_…`); `secret` is the HMAC-SHA256 key, stored in D1 like
+ * `syndication_subscribers.signing_secret` because the server must hold it to
+ * verify. It is returned once, at creation, and never listed or logged.
+ */
+export const promoterApiKeys = sqliteTable(
+  "promoter_api_keys",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    keyId: text("key_id").notNull(),
+    secret: text("secret").notNull(),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp" }),
+    /**
+     * OPE-1625 (drizzle/0418) — a TEST key can never publish: every write
+     * endpoint answers the dry-run report and the route gets a read-only db.
+     */
+    isTest: integer("is_test", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_api_keys_key_id").on(t.keyId),
+    index("idx_promoter_api_keys_promoter").on(t.promoterId),
+  ]
+);
+
+/** OPE-1620 — request ids seen per key, for replay rejection. Pruned to a day on write. */
+export const promoterApiRequests = sqliteTable(
+  "promoter_api_requests",
+  {
+    keyId: text("key_id").notNull(),
+    requestId: text("request_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_api_requests_key_request").on(t.keyId, t.requestId),
+    index("idx_promoter_api_requests_created").on(t.createdAt),
+  ]
+);
+
+/**
+ * OPE-1620 — the promoter's own id for one of its events. UNIQUE(promoter,
+ * external_id) makes the API's upsert idempotent. `eventId` is NULL only while
+ * the create that claimed the ref is in flight.
+ */
+export const promoterApiEventRefs = sqliteTable(
+  "promoter_api_event_refs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    eventId: text("event_id").references(() => events.id, { onDelete: "cascade" }),
+    /** The key that created the ref (audit only; not an FK). */
+    keyId: text("key_id"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_api_event_refs_external").on(t.promoterId, t.externalId),
+    index("idx_promoter_api_event_refs_event").on(t.eventId),
+    index("idx_promoter_api_event_refs_updated").on(t.updatedAt),
+  ]
+);
+
+/** OPE-1613 — the authority rungs a citation can record (drizzle/0406, TS-only enum). */
+export const CITATION_PROVENANCE_KINDS = [
+  "feed",
+  "organizer_website",
+  "validated_contact",
+  "operator",
+  "extraction",
+  // OPE-1618 — a claimed promoter's own spreadsheet upload in the portal.
+  "promoter_portal",
+  // OPE-1620 — a claimed promoter's signed API call (the key_id is in the citation).
+  "promoter_api",
+] as const;
+export type CitationProvenanceKind = (typeof CITATION_PROVENANCE_KINDS)[number];
+
 // Event Data Citations table — provenance log for event field values that come
 // from external sources (homepage hero, press release, vendor PDF, etc.). One
 // row per citation, not per field; lifecycle (active / superseded / rejected /
@@ -2066,6 +2260,13 @@ export const eventDataCitations = sqliteTable(
     recheckAt: integer("recheck_at", { mode: "timestamp" }),
     /** Why, in words — the refusal reason, or what changed. */
     recheckNote: text("recheck_note"),
+    /**
+     * OPE-1613 (drizzle/0406) — which rung of the authority ladder this value
+     * sits on: validated_contact > feed / organizer_website > extraction, with
+     * operator keeping its standing. NULL = written before 0406; readers report
+     * `unclassified` and never derive a rung from `source_type`.
+     */
+    provenanceKind: text("provenance_kind", { enum: CITATION_PROVENANCE_KINDS }),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -2129,6 +2330,46 @@ export const eventDataCitations = sqliteTable(
  * discard a working route for two public events; storing them as a URL is a lie
  * about what they are. See the migration for the four values cleaned.
  */
+/**
+ * OPE-1580 — a blank vendor form a person posted to one dated event's page.
+ * Never written automatically. `expires_at` ends it, so a form never carries
+ * over to next year's occurrence.
+ */
+export const eventDocuments = sqliteTable(
+  "event_documents",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    r2Key: text("r2_key").notNull().unique(),
+    displayName: text("display_name").notNull(),
+    /** From the file's bytes, never what the sender declared. */
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    /** One of EVENT_DOCUMENT_KINDS. */
+    kind: text("kind").notNull(),
+    year: integer("year").notNull(),
+    sourceOrganizer: text("source_organizer").notNull(),
+    sourceInboundEmailId: text("source_inbound_email_id"),
+    sourceAttachmentIndex: integer("source_attachment_index"),
+    sourceUrl: text("source_url"),
+    receivedAt: integer("received_at", { mode: "timestamp" }).notNull(),
+    postedBy: text("posted_by"),
+    postedAt: integer("posted_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    /** "live" or "withdrawn". */
+    status: text("status").notNull().default("live"),
+    withdrawnReason: text("withdrawn_reason"),
+    withdrawnAt: integer("withdrawn_at", { mode: "timestamp" }),
+  },
+  (t) => ({
+    byEvent: index("idx_event_documents_event").on(t.eventId, t.status),
+  })
+);
+
 export const eventApplications = sqliteTable(
   "event_applications",
   {
@@ -2205,6 +2446,16 @@ export const eventApplications = sqliteTable(
      * from one specimen. The enum carries the decision; this carries the detail.
      */
     capacityNote: text("capacity_note"),
+    /**
+     * OPE-1512 — the "vendors wanted" call: JSON arrays of free-text categories
+     * the organizer is still looking for / has enough of. Same uncontrolled
+     * space as `vendors.sells_category` (OPE-1164). NULL = no call published —
+     * an empty list is stored as NULL too. Read with `parseVendorCategories`.
+     */
+    categoriesWanted: text("categories_wanted"),
+    categoriesFull: text("categories_full"),
+    /** When the call was true. Never inferred, never defaulted. */
+    categoriesAsOf: integer("categories_as_of", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -2853,6 +3104,8 @@ export const analyticsEvents = sqliteTable(
   (table) => [
     index("idx_analytics_events_name_ts").on(table.eventName, table.timestamp),
     index("idx_analytics_events_category_ts").on(table.eventCategory, table.timestamp),
+    // OPE-1573 — range COUNT / MAX(timestamp) from the admin analytics tiles.
+    index("idx_analytics_events_timestamp").on(table.timestamp),
   ]
 );
 
@@ -2906,6 +3159,8 @@ export const healthIssues = sqliteTable(
     index("idx_health_issues_resolution_reason").on(table.resolutionReason, table.resolvedAt),
     // OPE-382 — serves the re-verify pick: open rows, oldest attempt first.
     index("idx_health_issues_reverify").on(table.resolvedAt, table.lastReverifiedAt),
+    // OPE-1573 (drizzle/0415) — Overview tab `count(*) WHERE first_detected_at >= ?`.
+    index("idx_health_issues_first_detected").on(table.firstDetectedAt),
   ]
 );
 
@@ -2941,9 +3196,22 @@ export const supportObligations = sqliteTable(
     closedAt: integer("closed_at", { mode: "timestamp" }),
     closedBy: text("closed_by"),
     closeNote: text("close_note"),
+    /**
+     * OPE-1510 — `support` (the OPE-365 queue) or `contact` (a known contact
+     * wrote in and John owes them a reply). See SUPPORT_OBLIGATION_KIND.
+     */
+    kind: text("kind").notNull().default("support"),
+    /** OPE-1510 — reply-by time for a `contact` obligation; NULL on `support`. */
+    targetAt: integer("target_at", { mode: "timestamp" }),
   },
   (table) => [index("idx_support_obligations_status").on(table.status, table.openedAt)]
 );
+
+/** OPE-1510 — countable apart: a `contact` obligation carries a target. */
+export const SUPPORT_OBLIGATION_KIND = {
+  SUPPORT: "support",
+  CONTACT: "contact",
+} as const;
 
 /**
  * OPE-365 — `answered` and `not_an_obligation` stay distinct on purpose.
@@ -2960,6 +3228,11 @@ export const SUPPORT_OBLIGATION_STATUS = {
   NOT_AN_OBLIGATION: "not_an_obligation",
   /** Same person, same thread, already tracked elsewhere. */
   DUPLICATE: "duplicate",
+  /**
+   * OPE-1510 — the only manual close of a `contact` obligation, and it needs a
+   * note. Everything else about a contact closes on a reply that was sent.
+   */
+  NOT_NEEDED: "not_needed",
 } as const;
 
 export type SupportObligationStatus =
@@ -3090,8 +3363,19 @@ export const operatorOutboundDrafts = sqliteTable(
     reviewNote: text("review_note"),
     sentAt: integer("sent_at", { mode: "timestamp" }),
     sentMessageId: text("sent_message_id"),
+    /**
+     * OPE-1510 — the inbound this draft answers, NULL on a composed draft. The
+     * partial unique index makes the contact lane idempotent per message, and a
+     * send through this link threads the reply and closes the obligation.
+     */
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }),
   },
   (table) => [
+    uniqueIndex("uq_operator_outbound_inbound")
+      .on(table.inboundEmailId)
+      .where(sql`${table.inboundEmailId} IS NOT NULL`),
     index("idx_operator_outbound_status").on(table.status, table.composedAt),
     index("idx_operator_outbound_entity").on(table.relatedEntityType, table.relatedEntityId),
   ]
@@ -3471,6 +3755,9 @@ export const faultSignatures = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     /** OPE-1174 — 'class' when the status was inherited, not ruled. See drizzle/0330. */
     inheritedFrom: text("inherited_from"),
+    /** OPE-1665 — on a `d1-platform:*` incident row only: distinct routes / sources the burst hit. See drizzle/0426. */
+    incidentRoutes: integer("incident_routes"),
+    incidentSources: integer("incident_sources"),
   },
   (t) => [index("idx_fault_signatures_status").on(t.status)]
 );
@@ -3553,6 +3840,9 @@ export const emailSendLedger = sqliteTable(
     // viewer shows full content (not just metadata). Inline; admin-gated read.
     bodyHtml: text("body_html"),
     bodyText: text("body_text"),
+    // OPE-1579 (drizzle/0396) — JSON [{key, filename, type, size}] of the files
+    // this email carried. NULL = none.
+    attachmentsJson: text("attachments_json"),
     // OPE-177 — DOWNSTREAM delivery outcome, from the Cloudflare Email Sending
     // event subscription. Deliberately a SEPARATE column from `status`, which
     // stays the outcome of the send ATTEMPT.
@@ -3580,6 +3870,12 @@ export const emailSendLedger = sqliteTable(
   (table) => [
     index("idx_email_send_ledger_sent_at").on(table.sentAt),
     index("idx_email_send_ledger_recipient").on(table.recipient),
+    // OPE-1663 — prod ALSO has `idx_email_send_ledger_lower_recipient_sent_at
+    // ON (lower(recipient), sent_at)` (drizzle/0427). The bare-column index above
+    // cannot serve `lower(recipient) = …`, which is how every case-insensitive
+    // lookup reads. Deliberately NOT declared here: three test suites build DDL
+    // from this config by column `.name`, and an expression column has none, so
+    // declaring it renders `( , sent_at)`. The migration is the source of truth.
     index("idx_email_send_ledger_inbound").on(table.inboundEmailId),
     index("idx_email_send_ledger_status").on(table.status),
     // OPE-177 — the delivery-event consumer looks a row up by this on every
@@ -4237,6 +4533,148 @@ export const promoterContacts = sqliteTable(
   ]
 );
 
+/**
+ * OPE-1608 — one organizer asking how to get their events listed. The staged
+ * promoter lives here as JSON because a `promoters` row is public as soon as it
+ * exists: the /promoters index and its sitemap read the whole table.
+ */
+export const promoterOnboardingRequests = sqliteTable(
+  "promoter_onboarding_requests",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    /** The root message: the parent row of a multi-intent email. */
+    inboundEmailId: text("inbound_email_id")
+      .notNull()
+      .unique()
+      .references(() => inboundEmails.id, { onDelete: "cascade" }),
+    fromAddress: text("from_address").notNull(),
+    orgDomain: text("org_domain"),
+    orgName: text("org_name"),
+    matchReport: text("match_report"),
+    stagedPromoter: text("staged_promoter"),
+    enrichmentStatus: text("enrichment_status", {
+      enum: ["queued", "finished", "timed_out"],
+    })
+      .notNull()
+      .default("queued"),
+    enrichmentDetail: text("enrichment_detail"),
+    enrichmentFinishedAt: integer("enrichment_finished_at", { mode: "timestamp" }),
+    obligationId: text("obligation_id"),
+    targetAt: integer("target_at", { mode: "timestamp" }),
+    draftId: text("draft_id"),
+    draftComposedAt: integer("draft_composed_at", { mode: "timestamp" }),
+    draftMissingFaultAt: integer("draft_missing_fault_at", { mode: "timestamp" }),
+    notifiedAt: integer("notified_at", { mode: "timestamp" }),
+    remindedAt: integer("reminded_at", { mode: "timestamp" }),
+    deadlineFaultAt: integer("deadline_fault_at", { mode: "timestamp" }),
+    repliedAt: integer("replied_at", { mode: "timestamp" }),
+    claimedAt: integer("claimed_at", { mode: "timestamp" }),
+    firstSubmissionAt: integer("first_submission_at", { mode: "timestamp" }),
+    followupDraftId: text("followup_draft_id"),
+    followupComposedAt: integer("followup_composed_at", { mode: "timestamp" }),
+    followupTargetAt: integer("followup_target_at", { mode: "timestamp" }),
+    followupNotifiedAt: integer("followup_notified_at", { mode: "timestamp" }),
+    followupRemindedAt: integer("followup_reminded_at", { mode: "timestamp" }),
+    followupDeadlineFaultAt: integer("followup_deadline_fault_at", { mode: "timestamp" }),
+    followupSentAt: integer("followup_sent_at", { mode: "timestamp" }),
+    closedAt: integer("closed_at", { mode: "timestamp" }),
+    closeReason: text("close_reason"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_promoter_onboarding_open").on(t.closedAt, t.createdAt)]
+);
+
+/**
+ * OPE-1610 — a DMARC-aligned sender whose org has no promoter row yet. Held here
+ * until a promoter with that website domain exists, then copied to
+ * `promoter_contacts` by the hourly attach job. drizzle/0404.
+ */
+export const pendingPromoterContacts = sqliteTable(
+  "pending_promoter_contacts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    email: text("email").notNull().unique(),
+    orgDomain: text("org_domain").notNull(),
+    name: text("name"),
+    /** The non-promoter record the sender resolved to; NULL when none. */
+    matchedEntityType: text("matched_entity_type"),
+    matchedEntityId: text("matched_entity_id"),
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }),
+    validationEvidence: text("validation_evidence"),
+    senderAuth: text("sender_auth", { enum: ["pass", "partial", "fail"] }),
+    authDomain: text("auth_domain"),
+    status: text("status", { enum: ["pending", "attached"] })
+      .notNull()
+      .default("pending"),
+    attachedPromoterId: text("attached_promoter_id").references(() => promoters.id, {
+      onDelete: "set null",
+    }),
+    attachedAt: integer("attached_at", { mode: "timestamp" }),
+    /** OPE-1614 — when the hourly attach last redirect-checked org_domain. drizzle/0408. */
+    domainProbedAt: integer("domain_probed_at", { mode: "timestamp" }),
+    firstValidatedAt: integer("first_validated_at", { mode: "timestamp" }).notNull(),
+    lastHeardAt: integer("last_heard_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_pending_promoter_contacts_status").on(t.status),
+    index("idx_pending_promoter_contacts_domain").on(t.orgDomain),
+  ]
+);
+
+/**
+ * OPE-1614 — an organization's domains, each with how it was established.
+ * drizzle/0408. The entity's website host is an IMPLICIT active member (read
+ * time, see org-domains.ts); a `retired` row withdraws it. Read through
+ * `orgsForDomain` / `matchableDomainsFor`, never by hand.
+ */
+export const orgDomains = sqliteTable(
+  "org_domains",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    entityType: text("entity_type", { enum: ["promoter", "vendor", "venue"] }).notNull(),
+    entityId: text("entity_id").notNull(),
+    /** Registrable (eTLD+1) domain, lowercased. */
+    domain: text("domain").notNull(),
+    status: text("status", { enum: ["active", "candidate", "retired"] }).notNull(),
+    method: text("method", {
+      enum: ["website", "website_redirect", "site_published_email", "operator", "contact_claim"],
+    }).notNull(),
+    evidence: text("evidence"),
+    sourceUrl: text("source_url"),
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }),
+    addedBy: text("added_by").notNull(),
+    retiredBy: text("retired_by"),
+    retiredAt: integer("retired_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_org_domains_entity_domain").on(t.entityType, t.entityId, t.domain),
+    index("idx_org_domains_domain").on(t.domain, t.status),
+  ]
+);
+
+/** OPE-1614 — operator-maintained umbrella domains; always shared. drizzle/0408. */
+export const sharedOrgDomains = sqliteTable("shared_org_domains", {
+  domain: text("domain").primaryKey(),
+  note: text("note"),
+  addedBy: text("added_by").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
 /** OPE-1265 — one row per inbound email to lists@ / lists+*@. drizzle/0350. */
 export const promoterListArrivals = sqliteTable(
   "promoter_list_arrivals",
@@ -4554,6 +4992,8 @@ export const vendorClaimEvidence = sqliteTable(
     /** Operator triage, independent of the claim's own approve/reject. */
     reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
     reviewedBy: text("reviewed_by"),
+    /** OPE-1599 (drizzle/0399) — LOOKS_REAL | SUSPENDED | SPAM. NULL = not reviewed. */
+    reviewDecision: text("review_decision", { enum: ["LOOKS_REAL", "SUSPENDED", "SPAM"] }),
   },
   (t) => [
     // One evidence row per vendor — the registration mints the listing once.
@@ -4607,6 +5047,8 @@ export const vendorEnrichmentCandidates = sqliteTable(
     index("idx_vec_vendor").on(t.vendorId),
     index("idx_vec_decision").on(t.decision),
     index("idx_vec_job_run").on(t.jobRunId),
+    // OPE-1573 (drizzle/0415) — Overview tab `max(created_at)` was a full scan.
+    index("idx_vec_created_at").on(t.createdAt),
     // Partial unique: at most one OPEN proposal per (vendor, field).
     uniqueIndex("idx_vec_pending_field")
       .on(t.vendorId, t.proposedField)
@@ -5092,6 +5534,16 @@ export const kpiStateHistory = sqliteTable(
   (t) => [index("idx_kpi_state_history_name_at").on(t.kpiName, t.computedAt)]
 );
 
+// OPE-1585 (drizzle/0395) — what each change-gated operator digest last
+// reported. A digest sends only when today's counts differ from this row by
+// more than drift (see mcp-server/src/digest-change-gate.ts).
+export const digestChangeState = sqliteTable("digest_change_state", {
+  key: text("key").primaryKey(),
+  countsJson: text("counts_json").notNull(),
+  severity: integer("severity").notNull().default(0),
+  lastSentAt: integer("last_sent_at", { mode: "timestamp" }).notNull(),
+});
+
 // A3 / K2 part 7 (drizzle/0099, analyst 2026-06-01 EVE). Daily snapshot
 // rows from the MCP Worker's dedup-sweep canary. Each row records the
 // cluster counts from GET /api/admin/duplicates/sweep at the time of
@@ -5184,6 +5636,34 @@ export const heartbeatProbes = sqliteTable("heartbeat_probes", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/**
+ * OPE-1597 (drizzle/0398) — the current full-table similarity sweep for one
+ * entity type. One row per type; its `runId` names the pairs a reader may use.
+ */
+export const entityDuplicateSweepRuns = sqliteTable("entity_duplicate_sweep_runs", {
+  entityType: text("entity_type").primaryKey(),
+  runId: text("run_id").notNull(),
+  lastRunAt: integer("last_run_at", { mode: "timestamp" }).notNull(),
+  checkedCount: integer("checked_count").notNull(),
+  liveCount: integer("live_count").notNull(),
+  comparisons: integer("comparisons").notNull(),
+  pairCount: integer("pair_count").notNull(),
+  storedPairCount: integer("stored_pair_count").notNull(),
+});
+
+/** OPE-1597 — the candidate pairs of a sweep run. Proposals only; nothing merges. */
+export const entityDuplicateSweepPairs = sqliteTable(
+  "entity_duplicate_sweep_pairs",
+  {
+    runId: text("run_id").notNull(),
+    entityType: text("entity_type").notNull(),
+    entity1Id: text("entity1_id").notNull(),
+    entity2Id: text("entity2_id").notNull(),
+    similarity: real("similarity").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.entity1Id, t.entity2Id] })]
+);
 
 export type HeartbeatProbeRow = typeof heartbeatProbes.$inferSelect;
 
@@ -5775,6 +6255,13 @@ export const inboundEmails = sqliteTable(
     matchedEntityId: text("matched_entity_id"),
     matchBasis: text("match_basis"),
     matchConfidence: real("match_confidence"),
+    /**
+     * OPE-1510 — this sender is a known contact, and on what evidence. Unlike the
+     * report-only match_* columns above, the contact lane branches on it.
+     */
+    knownContactBasis: text("known_contact_basis"),
+    knownContactEntityType: text("known_contact_entity_type"),
+    knownContactEntityId: text("known_contact_entity_id"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
@@ -5970,10 +6457,11 @@ export const submissionCorrectionTokens = sqliteTable(
       .notNull()
       .references(() => events.id, { onDelete: "cascade" }), // OPE-1121 (0313)
     /** Inbound email that produced this token. Useful for the admin UI
-     *  to backlink "this event was corrected via inbound 2f5f0c74". */
-    inboundEmailId: text("inbound_email_id")
-      .notNull()
-      .references(() => inboundEmails.id, { onDelete: "cascade" }), // OPE-1121 (0313)
+     *  to backlink "this event was corrected via inbound 2f5f0c74".
+     *  NULL = minted for a web-form submission's receipt (OPE-1558, 0389). */
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "cascade",
+    }), // OPE-1121 (0313); nullable since OPE-1558 (0389)
     expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
     usedAt: integer("used_at", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
@@ -6167,6 +6655,9 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
       // OPE-1285 — a promoter's own newsletter states dates that disagree with
       // the event we hold. TS-only, like the others.
       "newsletter",
+      // OPE-1613 — an organizer's own event feed disagrees with us or with
+      // itself. Asked of the validated contact in a batch; never auto-corrected.
+      "organizer_feed",
       "manual",
     ],
   }).notNull(),
@@ -6227,7 +6718,8 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
   resolvedValue: text("resolved_value"),
   /** higher_tier | post_event | operator. Phase 2 will add promoter_reply. */
   resolutionSource: text("resolution_source", {
-    enum: ["higher_tier", "post_event", "operator"],
+    // OPE-1613 — `promoter_reply`: a validated contact answered (TS-only).
+    enum: ["higher_tier", "post_event", "operator", "promoter_reply"],
   }),
   resolvedAt: integer("resolved_at", { mode: "timestamp" }),
   /** Computed by GW1d queue ranker. Boolean-as-integer. */
@@ -6251,6 +6743,389 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
 });
 
 export type EventDiscrepancy = typeof eventDiscrepancies.$inferSelect;
+
+// ── OPE-1613 (drizzle/0406) — organizer feeds, feed items, field pins ──────
+
+/** A promoter's own event feed. Read only by an operator through MCP for now. */
+export const promoterEventFeeds = sqliteTable(
+  "promoter_event_feeds",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    feedUrl: text("feed_url").notNull(),
+    /** tec_rest = The Events Calendar REST; ical = any iCal/ICS URL incl. Google/Outlook; jsonld = schema.org Event pages (OPE-1617). */
+    kind: text("kind", { enum: ["tec_rest", "ical", "jsonld"] })
+      .notNull()
+      .default("tec_rest"),
+    /** JSON FeedInclusionRules; NULL = the defaults. */
+    inclusionRules: text("inclusion_rules"),
+    /** The feed-discrepancy question limit — separate from the pre-season cap. */
+    batchMinIntervalDays: integer("batch_min_interval_days").notNull().default(7),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    lastReadAt: integer("last_read_at", { mode: "timestamp" }),
+    lastReadStatus: text("last_read_status"),
+    // OPE-1617 — polite polling: per-feed interval, next due time, error streak (backoff),
+    // and the HTTP validators sent back on the next conditional GET.
+    pollIntervalHours: integer("poll_interval_hours").notNull().default(6),
+    nextReadAt: integer("next_read_at", { mode: "timestamp" }),
+    consecutiveErrors: integer("consecutive_errors").notNull().default(0),
+    httpEtag: text("http_etag"),
+    httpLastModified: text("http_last_modified"),
+    // OPE-1617 — which ownership rule admitted the feed, recorded at registration.
+    ownershipBasis: text("ownership_basis", { enum: ["domain_list", "validated_contact"] }),
+    ownershipEvidence: text("ownership_evidence"),
+    ownershipInboundEmailId: text("ownership_inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }),
+    // OPE-1621 (drizzle/0412) — change pings. A ping only TRIGGERS a read:
+    // the oldest outstanding ping (cleared by the read that serves it), the
+    // newest one, and a lifetime count. See feed-ping.ts.
+    pingRequestedAt: integer("ping_requested_at", { mode: "timestamp" }),
+    lastPingedAt: integer("last_pinged_at", { mode: "timestamp" }),
+    pingCount: integer("ping_count").notNull().default(0),
+    // OPE-1626 (drizzle/0413) — the scheduled reader.
+    /** While set, a read may open discrepancies but no question batch / operator draft is composed. */
+    questionsHold: integer("questions_hold", { mode: "boolean" }).notNull().default(false),
+    /** Why the feed was switched off (auto-disable after FEED_AUTO_DISABLE_AFTER failures, or an operator). */
+    disabledReason: text("disabled_reason"),
+    disabledAt: integer("disabled_at", { mode: "timestamp" }),
+    /** The last read that succeeded (ingested or 304) — the feed-reader probe's staleness clock. */
+    lastOkAt: integer("last_ok_at", { mode: "timestamp" }),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_event_feeds_url").on(t.promoterId, t.feedUrl),
+    index("idx_promoter_event_feeds_due").on(t.enabled, t.nextReadAt),
+    index("idx_promoter_event_feeds_ping").on(t.pingRequestedAt),
+  ]
+);
+
+/**
+ * OPE-1621 (drizzle/0412) — a WebSub subscription for one feed, made when a
+ * read saw a `rel="hub"` link. A verified notification is treated as a ping
+ * (mark the feed due); its body is never read as content.
+ *
+ * `pendingMode` is set when we POST a subscribe request and cleared when the
+ * hub's intent check arrives: the callback echoes `hub.challenge` ONLY while
+ * it matches, so nobody else can confirm a subscription we did not ask for.
+ */
+export const feedWebsubSubscriptions = sqliteTable(
+  "feed_websub_subscriptions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    feedId: text("feed_id")
+      .notNull()
+      .references(() => promoterEventFeeds.id, { onDelete: "cascade" }),
+    hubUrl: text("hub_url").notNull(),
+    topicUrl: text("topic_url").notNull(),
+    /** HMAC key for X-Hub-Signature; sent to the hub as hub.secret. */
+    secret: text("secret").notNull(),
+    state: text("state", { enum: ["pending", "active", "denied"] })
+      .notNull()
+      .default("pending"),
+    pendingMode: text("pending_mode", { enum: ["subscribe"] }),
+    leaseSeconds: integer("lease_seconds"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp" }),
+    requestedAt: integer("requested_at", { mode: "timestamp" }),
+    verifiedAt: integer("verified_at", { mode: "timestamp" }),
+    lastNotifiedAt: integer("last_notified_at", { mode: "timestamp" }),
+    notifyCount: integer("notify_count").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_feed_websub_feed_hub_topic").on(t.feedId, t.hubUrl, t.topicUrl),
+    index("idx_feed_websub_lease").on(t.state, t.leaseExpiresAt),
+  ]
+);
+
+/**
+ * OPE-1621 (drizzle/0412) — what change pings and WebSub notifications did,
+ * counted per UTC day. The ignored ones are counted here and nowhere else; the
+ * URL is never stored, so this table cannot become a list of probed hosts.
+ */
+export const feedPingCounts = sqliteTable(
+  "feed_ping_counts",
+  {
+    day: text("day").notNull(),
+    channel: text("channel", { enum: ["ping", "websub"] }).notNull(),
+    outcome: text("outcome").notNull(),
+    count: integer("count").notNull().default(0),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.day, t.channel, t.outcome] })]
+);
+
+/**
+ * OPE-1626 (drizzle/0413) — one row per real (non-dry) read of a feed: what
+ * triggered it, how it ended, and the ingest counts. Kept to the newest
+ * FEED_READ_LOG_KEEP rows per feed, pruned by the writer.
+ */
+export const promoterFeedReads = sqliteTable(
+  "promoter_feed_reads",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    feedId: text("feed_id")
+      .notNull()
+      .references(() => promoterEventFeeds.id, { onDelete: "cascade" }),
+    startedAt: integer("started_at", { mode: "timestamp" }).notNull(),
+    finishedAt: integer("finished_at", { mode: "timestamp" }),
+    triggeredBy: text("triggered_by", { enum: ["schedule", "ping", "manual"] }).notNull(),
+    outcome: text("outcome", { enum: ["ok", "not_modified", "error", "skipped"] }).notNull(),
+    httpStatus: integer("http_status"),
+    itemsRead: integer("items_read").notNull().default(0),
+    included: integer("included").notNull().default(0),
+    linked: integer("linked").notNull().default(0),
+    awaitingReview: integer("awaiting_review").notNull().default(0),
+    discrepancies: integer("discrepancies").notNull().default(0),
+    thirdValues: integer("third_values").notNull().default(0),
+    error: text("error"),
+    // OPE-1633 — written on outcome='ok' reads only; NULL everywhere else.
+    titleFilled: integer("title_filled"),
+    startFilled: integer("start_filled"),
+    venueFilled: integer("venue_filled"),
+    unmappable: integer("unmappable"),
+  },
+  (t) => [index("idx_promoter_feed_reads_feed").on(t.feedId, t.startedAt)]
+);
+
+/**
+ * OPE-1633 — feed health flags (drizzle/0416). One OPEN row per (feed, check)
+ * while the check trips; `clearedAt` is set when a later evaluation is back in
+ * bounds. Written by mcp-server/src/feeds/health.ts; read by
+ * list_promoter_feeds, loadFeedLaneMetrics (digest line + /admin tile).
+ */
+export const FEED_HEALTH_CHECKS = [
+  "freshness",
+  "volume_drop",
+  "format_drift",
+  "inclusion_swing",
+] as const;
+export type FeedHealthCheck = (typeof FEED_HEALTH_CHECKS)[number];
+
+export const feedHealthFlags = sqliteTable(
+  "feed_health_flags",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    feedId: text("feed_id")
+      .notNull()
+      .references(() => promoterEventFeeds.id, { onDelete: "cascade" }),
+    checkName: text("check_name", { enum: FEED_HEALTH_CHECKS }).notNull(),
+    observed: real("observed"),
+    baseline: real("baseline"),
+    detail: text("detail"),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+    clearedAt: integer("cleared_at", { mode: "timestamp" }),
+  },
+  (t) => [index("idx_feed_health_flags_feed").on(t.feedId, t.firstSeenAt)]
+);
+
+export const promoterFeedItems = sqliteTable(
+  "promoter_feed_items",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    feedId: text("feed_id")
+      .notNull()
+      .references(() => promoterEventFeeds.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    eventId: text("event_id").references(() => events.id, { onDelete: "set null" }),
+    title: text("title"),
+    url: text("url"),
+    startLocal: text("start_local"),
+    included: integer("included", { mode: "boolean" }).notNull().default(false),
+    exclusionReason: text("exclusion_reason"),
+    reviewState: text("review_state", {
+      // OPE-1630 — `rejected`: a reviewer's no, remembered across reads.
+      enum: ["none", "awaiting_review", "linked", "dropped", "rejected"],
+    })
+      .notNull()
+      .default("none"),
+    /** OPE-1630 — the reviewer's note; for a rejection, the reason. */
+    reviewNote: text("review_note"),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
+    reviewedBy: text("reviewed_by"),
+    contentHash: text("content_hash"),
+    snapshot: text("snapshot"),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+    /** OPE-1617 — a read no longer carries this item (cancellation signal); cleared when it returns. */
+    missingSince: integer("missing_since", { mode: "timestamp" }),
+    /** OPE-1634 — the inclusion verdict's reason, kept for included items too
+     *  (`exclusion_reason` is NULL when included). Written on every read. */
+    inclusionReason: text("inclusion_reason"),
+    /** OPE-1634 — how the item came to be linked: `source_url` /
+     *  `promoter_date_name` (automatic, by the ingest), `review_link` or
+     *  `review_approve` (a reviewer). NULL when unlinked. */
+    linkBasis: text("link_basis"),
+    /** OPE-1634 — the event a reviewer UNLINKED this item from (a wrong match).
+     *  The ingest never auto-links the item to that event again. */
+    unlinkedEventId: text("unlinked_event_id"),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_feed_items_ext").on(t.feedId, t.externalId),
+    index("idx_promoter_feed_items_event").on(t.eventId),
+  ]
+);
+
+/**
+ * OPE-1634 (drizzle/0438) — reviewer decisions as ground-truth labels on feed
+ * items. One row per decision, with the rule or match that produced the item's
+ * state at that moment, so per-rule precision and matcher accuracy are counts
+ * over this table. Written by `recordFeedItemLabel` (./feed-quality.ts) from the
+ * review step (main app) and `label_dropped_feed_item` (MCP).
+ */
+export const FEED_ITEM_LABELS = [
+  /** review approve / approve_as_occurrence on the item. */
+  "approved",
+  /** review reject. */
+  "rejected",
+  /** review link: the item was one of our listings the matcher missed. */
+  "missed_match",
+  /** review unlink: the item was linked to the wrong event. */
+  "wrong_match",
+  /** analyst: a dropped item that was rightly dropped. */
+  "correct_drop",
+  /** analyst: a dropped item that should have been kept — a false drop. */
+  "false_drop",
+] as const;
+export type FeedItemLabel = (typeof FEED_ITEM_LABELS)[number];
+
+export const feedItemLabels = sqliteTable(
+  "feed_item_labels",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    feedItemId: text("feed_item_id")
+      .notNull()
+      .references(() => promoterFeedItems.id, { onDelete: "cascade" }),
+    feedId: text("feed_id").notNull(),
+    label: text("label", { enum: FEED_ITEM_LABELS }).notNull(),
+    /** Stable rule key (inclusionRuleKey) of the verdict in force, e.g. `program_title:\bstem\b`. */
+    ruleKey: text("rule_key"),
+    /** The verdict's full reason text at labelling time. */
+    reason: text("reason"),
+    /** Whether the item was included by the filter at labelling time. */
+    included: integer("included", { mode: "boolean" }),
+    /** For match labels: the link basis in force (automatic vs reviewer). */
+    linkBasis: text("link_basis"),
+    eventId: text("event_id"),
+    /** Who decided: `review` (the review step) or `analyst` (drop sample). */
+    source: text("source", { enum: ["review", "analyst"] }).notNull(),
+    actor: text("actor"),
+    note: text("note"),
+    /** analyst labels: the drop sample the item came from. */
+    sampleId: text("sample_id"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_feed_item_labels_item").on(t.feedItemId, t.createdAt),
+    index("idx_feed_item_labels_created").on(t.createdAt),
+  ]
+);
+
+/**
+ * OPE-1634 (drizzle/0438) — the weekly dropped-item sample (John 2026-11-11:
+ * it goes to the analyst). Built each Monday by the MCP hourly cron, one row
+ * per week (`week_start` = that Monday, YYYY-MM-DD UTC), EVEN WHEN EMPTY, so
+ * "the builder ran" is visible. The Worker has no Linear token (OPE-76's rail
+ * shape), so an agent session files the ticket via `list_feed_drop_samples`
+ * and stamps it with `record_feed_drop_sample_filing`.
+ */
+export const feedDropSamples = sqliteTable(
+  "feed_drop_samples",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    weekStart: text("week_start").notNull(),
+    windowStart: integer("window_start", { mode: "timestamp" }).notNull(),
+    windowEnd: integer("window_end", { mode: "timestamp" }).notNull(),
+    /** JSON DropSampleItem[] — everything the ticket body lists. */
+    items: text("items").notNull(),
+    itemCount: integer("item_count").notNull(),
+    /** Dropped items in the window, before sampling (the denominator). */
+    droppedTotal: integer("dropped_total").notNull(),
+    opeId: text("ope_id"),
+    filedAt: integer("filed_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [uniqueIndex("uq_feed_drop_samples_week").on(t.weekStart)]
+);
+
+/** A validated contact's answer, holding a field above the feed. */
+export const eventFieldPins = sqliteTable(
+  "event_field_pins",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    fieldName: text("field_name").notNull(),
+    pinnedValue: text("pinned_value").notNull(),
+    /** The feed's value when the contact answered; "still wrong" is judged against it. */
+    feedValueAtPin: text("feed_value_at_pin"),
+    contactId: text("contact_id").references(() => promoterContacts.id, { onDelete: "set null" }),
+    inboundEmailId: text("inbound_email_id"),
+    citationId: text("citation_id").references(() => eventDataCitations.id, {
+      onDelete: "set null",
+    }),
+    discrepancyId: text("discrepancy_id"),
+    status: text("status", { enum: ["active", "released"] })
+      .notNull()
+      .default("active"),
+    /** How many batches repeated "your feed still says X" — capped at 1. */
+    stillWrongNotesSent: integer("still_wrong_notes_sent").notNull().default(0),
+    releasedAt: integer("released_at", { mode: "timestamp" }),
+    releaseReason: text("release_reason", { enum: ["feed_fixed", "operator", "superseded"] }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_event_field_pins_live")
+      .on(t.eventId, t.fieldName)
+      .where(sql`${t.status} = 'active'`),
+  ]
+);
+
+/** One row per batched question email composed (as an operator draft). */
+export const feedDiscrepancyBatches = sqliteTable(
+  "feed_discrepancy_batches",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => promoterContacts.id, { onDelete: "cascade" }),
+    draftId: text("draft_id"),
+    discrepancyIds: text("discrepancy_ids").notNull(),
+    stillWrongPinIds: text("still_wrong_pin_ids").notNull().default("[]"),
+    composedAt: integer("composed_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_feed_discrepancy_batches_contact").on(t.contactId, t.composedAt)]
+);
 
 export const sourceReliability = sqliteTable(
   "source_reliability",
@@ -6316,6 +7191,8 @@ export const sources = sqliteTable("sources", {
       "social",
       "aggregator",
       "community",
+      // OPE-1634 — an organizer's own event feed (key `organizer_feed:<feed id>`).
+      "organizer_feed",
       "unknown",
     ],
   }).notNull(),
@@ -7194,6 +8071,11 @@ export * from "./contact-scorecard";
 export * from "./promoter-appliable-gap";
 // OPE-1330 — promoter contacts: domain verification + the one write rule.
 export * from "./promoter-contacts";
+export * from "./org-domains";
+// OPE-1621 — change pings (main-app /api/v1/ping + MCP WebSub callback).
+export * from "./feed-ping";
+// OPE-1632 — feed-lane funnel metrics (MCP tool, /admin tile, digest line).
+export * from "./feed-lane-metrics";
 export * from "./gallery-photos";
 // OPE-759 — the hours-review rule, shared because event_days has five writers.
 export * from "./hours-review-flag";

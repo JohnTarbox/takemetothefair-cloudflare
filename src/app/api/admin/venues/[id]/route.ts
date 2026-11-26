@@ -14,6 +14,11 @@ import { findVenueByGooglePlaceId } from "@/lib/queries";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { venueSyndicationStatements } from "@/lib/syndication/outbox";
 import { enqueueSyndicationChange } from "@/lib/queues/producers";
+import {
+  buildFieldHistoryRows,
+  fieldHistoryBeforeSelect,
+  fieldHistoryInserts,
+} from "@takemetothefair/db-schema/field-history";
 
 export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
   const { id } = params;
@@ -188,10 +193,30 @@ export const PATCH = withAuth<{ id: string }>(
           zip: (updateData.zip as string) ?? currentVenue.zip,
         },
       });
+      // OPE-1651 — per-field history, in the same batch as the UPDATE. Reads
+      // exactly the patched columns so the diff never sees a partial row.
+      const [historyBefore] = await db
+        .select(fieldHistoryBeforeSelect(venues, updateData))
+        .from(venues)
+        .where(eq(venues.id, id))
+        .limit(1);
+      const historyStmts = fieldHistoryInserts(
+        db,
+        buildFieldHistoryRows({
+          table: venues,
+          entityType: "venue",
+          entityId: id,
+          before: historyBefore,
+          patch: updateData,
+          actor: session.user.id,
+          source: "api:PATCH /api/admin/venues/[id]",
+        })
+      );
       const venueBatch = [
         db.update(venues).set(updateData).where(eq(venues.id, id)),
         ...(slugRename ? [slugRename.historyInsert] : []),
         ...venueSyndicationStmts,
+        ...historyStmts,
       ] as const;
       await db.batch(venueBatch as unknown as Parameters<typeof db.batch>[0]);
 

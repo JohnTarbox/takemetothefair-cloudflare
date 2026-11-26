@@ -82,6 +82,17 @@ export function unresolvedDuplicateFlag(db: Db): SQL {
     isNull(events.mergedInto),
     isNull(events.rejectedAsDuplicateOf),
     ne(events.status, "REJECTED"),
+    // OPE-1597 — also clears flags written before the sweep learned this rule.
+    // Raw on purpose: `events` is the outer row here, the candidate is a self-join.
+    sql`NOT EXISTS (
+      SELECT 1 FROM events candidate_row
+      WHERE candidate_row.id = ${events.possibleDuplicateOf}
+        AND date(candidate_row.start_date, 'unixepoch') != date(${events.startDate}, 'unixepoch')
+        AND (
+          (candidate_row.source_url IS NOT NULL AND candidate_row.source_url = ${events.sourceUrl})
+          OR (candidate_row.series_id IS NOT NULL AND candidate_row.series_id = ${events.seriesId})
+        )
+    )`,
     notExists(
       db
         .select({ one: sql`1` })
@@ -276,10 +287,7 @@ export async function dismissedFlagIds(db: Db, ids: string[]): Promise<Set<strin
 }
 
 export type ResolveFailure =
-  | "not_found"
-  | "not_flagged"
-  | "candidate_mismatch"
-  | "already_resolved";
+  "not_found" | "not_flagged" | "candidate_mismatch" | "already_resolved";
 
 export type ResolveResult = { ok: true } | { ok: false; reason: ResolveFailure };
 

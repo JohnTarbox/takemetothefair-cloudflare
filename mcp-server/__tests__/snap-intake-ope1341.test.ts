@@ -220,6 +220,52 @@ describe("ingestSnap (OPE-1341)", () => {
     expect(rows).toHaveLength(1);
   });
 
+  it("OPE-1705 slice 3 — 'No fair' drops any pin, keeps 'Met them at…'; the box is recorded", async () => {
+    const bucket = fakeBucket();
+    const env = { VENDOR_ASSETS: bucket as never, INBOUND_EMAIL: fakeWorkflow() as never };
+    await ingestSnap(env, db, {
+      bytes: gpsJpeg(),
+      contentType: "image/jpeg",
+      meta: {
+        clientId: CLIENT_ID,
+        eventId: "e1",
+        eventSlug: "fryeburg-fair",
+        eventChoice: "picked",
+        noFair: true,
+        addAsVendor: true,
+        metAtEventId: "ev-met-at-1",
+      },
+      actor: "john@example.com",
+    });
+    const [row] = await db.select().from(inboundEmails);
+    // No plus-address: a "No fair" card must not be resolved onto the pin.
+    expect(row.toAddress).toBe("photos@meetmeatthefair.com");
+    expect(JSON.parse(row.captureMeta!)).toMatchObject({
+      no_fair: true,
+      add_as_vendor: true,
+      met_at_event_id: "ev-met-at-1",
+      event_id: null,
+      event_slug: null,
+      event_choice_basis: null,
+    });
+  });
+
+  it("OPE-1705 slice 3 — 'Met them at…' without 'No fair' is ignored; an unticked box is absent", async () => {
+    const bucket = fakeBucket();
+    const env = { VENDOR_ASSETS: bucket as never, INBOUND_EMAIL: fakeWorkflow() as never };
+    await ingestSnap(env, db, {
+      bytes: gpsJpeg(),
+      contentType: "image/jpeg",
+      meta: { clientId: CLIENT_ID, metAtEventId: "ev-met-at-1", addAsVendor: false },
+      actor: "john@example.com",
+    });
+    const meta = JSON.parse((await db.select().from(inboundEmails))[0].captureMeta!);
+    expect(meta.no_fair).toBeUndefined();
+    expect(meta.met_at_event_id).toBeUndefined();
+    expect(meta.add_as_vendor).toBeUndefined();
+    expect(meta.client_id).toBe(CLIENT_ID); // landmark: the meta WAS written
+  });
+
   it("carries a pinned event as the plus-address and refuses bad input", async () => {
     const bucket = fakeBucket();
     const env = { VENDOR_ASSETS: bucket as never, INBOUND_EMAIL: fakeWorkflow() as never };

@@ -1,13 +1,39 @@
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
 import nextTypescript from "eslint-config-next/typescript";
 
-// OPE-1403 — eslint-config-next 16 ships native flat configs, so the
-// FlatCompat adapter that bridged its legacy `extends` form is gone (it
-// crashes on the v16 package). Same two presets, imported directly.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// eslint-config-next 16 ships native flat configs, so the FlatCompat adapter
+// (@eslint/eslintrc) is gone. ESLint 10 removed eslintrc, and running these
+// configs back through FlatCompat crashed its validator with "Converting
+// circular structure to JSON" (PR #1736). The two imports below are the same
+// presets the old `compat.extends("next/core-web-vitals", "next/typescript")`
+// loaded.
 
 export default [
   ...nextCoreWebVitals,
   ...nextTypescript,
+  // eslint-plugin-react-hooks 7 (pulled in by eslint-config-next 16) adds the
+  // React Compiler rules to the preset at "error". Every rule the old preset
+  // had is unchanged, and the new ones stay on. These five already fire on
+  // existing code (93 sites at the bump: set-state-in-effect 42,
+  // static-components 22, immutability 17, purity 7, refs 5), so they're
+  // warnings for now. Fixing them is component refactoring, not a dependency
+  // bump, and it belongs with the React 19 / Next 16 move (#1659). The other
+  // compiler rules found nothing and stay at "error" to guard new code. Move
+  // each of these back to "error" once its count reaches zero.
+  {
+    rules: {
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/static-components": "warn",
+      "react-hooks/immutability": "warn",
+      "react-hooks/purity": "warn",
+      "react-hooks/refs": "warn",
+    },
+  },
   // OPE-902 — type-aware promise rules, scoped to the two directories where a
   // dropped `await` is a security bug rather than a latency bug.
   //
@@ -62,7 +88,7 @@ export default [
     languageOptions: {
       parserOptions: {
         projectService: true,
-        tsconfigRootDir: import.meta.dirname,
+        tsconfigRootDir: __dirname,
       },
     },
     plugins: {
@@ -156,6 +182,11 @@ export default [
         //   - src/app/admin/**/*.tsx — admin dashboards use hex for chart
         //     visualization colors (axes, plot lines) where Tailwind
         //     utilities don't fit the SVG attribute syntax.
+        //   - src/lib/charts/echarts-options.ts, src/components/admin/charts/**
+        //     — OPE-1565: the shared admin ECharts palette. ECharts paints its
+        //     own SVG from option objects, so neither Tailwind classes nor
+        //     CSS variables reach it; dark mode is a second literal palette
+        //     chosen from next-themes' resolvedTheme.
         //   - src/lib/newsletter-masthead.ts — email HTML. Mail clients
         //     support neither CSS custom properties nor <style> blocks
         //     (Gmail strips them), so the brand band MUST inline raw hex.
@@ -189,7 +220,13 @@ export default [
   // (not eslint-disable-line comments) keeps the allowlist auditable
   // in one place.
   {
-    files: ["src/app/global-error.tsx", "src/app/admin/**/*.tsx", "src/lib/newsletter-masthead.ts"],
+    files: [
+      "src/app/global-error.tsx",
+      "src/app/admin/**/*.tsx",
+      "src/lib/newsletter-masthead.ts",
+      "src/lib/charts/echarts-options.ts",
+      "src/components/admin/charts/**/*.{ts,tsx}",
+    ],
     rules: {
       "no-restricted-syntax": [
         "error",
@@ -223,21 +260,6 @@ export default [
     files: ["src/lib/logger.ts", "src/lib/scrapers/**/*", "scripts/**/*", "src/test/**/*"],
     rules: {
       "no-console": "off",
-    },
-  },
-  {
-    // OPE-1403 — eslint-config-next 16 brings eslint-plugin-react-hooks v7,
-    // whose React Compiler rules are new and fire on existing code: 93 errors
-    // in 58 files at the upgrade (set-state-in-effect 38, immutability 22,
-    // static-components 22, purity 6, refs 5). Downgraded to warn so the
-    // framework upgrade lands on its own; burn them down in follow-ups, then
-    // delete this block. Every other react-hooks rule keeps its preset severity.
-    rules: {
-      "react-hooks/set-state-in-effect": "warn",
-      "react-hooks/immutability": "warn",
-      "react-hooks/static-components": "warn",
-      "react-hooks/purity": "warn",
-      "react-hooks/refs": "warn",
     },
   },
   {

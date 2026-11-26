@@ -22,6 +22,11 @@ export const dynamic = "force-dynamic";
  * Batched at 20 rows: each row binds 7 audit columns plus 3 update params, and
  * D1 refuses a statement carrying more than 100 bound parameters.
  */
+import {
+  buildFieldHistoryRows,
+  fieldHistoryInserts,
+  systemActor,
+} from "@takemetothefair/db-schema/field-history";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { eq, isNull } from "drizzle-orm";
@@ -48,7 +53,7 @@ function parseArray(raw: string | null): string[] {
   }
 }
 
-export const POST = withAuthorized(async ({ request, db }) => {
+export const POST = withAuthorized(async ({ request, db, userId }) => {
   const parsed = Body.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "Invalid body" }, { status: 400 });
@@ -132,6 +137,20 @@ export const POST = withAuthorized(async ({ request, db }) => {
           .update(events)
           .set({ categories: JSON.stringify(c.after), tags: JSON.stringify(c.tagsAfter) })
           .where(eq(events.id, c.id)),
+        // OPE-1653 — the same before/after, in the per-entity field history.
+        ...fieldHistoryInserts(
+          db,
+          buildFieldHistoryRows({
+            table: events,
+            entityType: "event",
+            entityId: c.id,
+            before: { categories: JSON.stringify(c.before), tags: JSON.stringify(c.tagsBefore) },
+            patch: { categories: JSON.stringify(c.after), tags: JSON.stringify(c.tagsAfter) },
+            actor: userId ?? systemActor("category-cleanup"),
+            source: "api:POST /api/admin/events/category-cleanup",
+            at: now,
+          })
+        ),
       ]);
       try {
         await db.batch(statements as unknown as Parameters<typeof db.batch>[0]);

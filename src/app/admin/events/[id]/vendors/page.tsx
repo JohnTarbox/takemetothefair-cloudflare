@@ -47,7 +47,7 @@ interface EventVendor {
 interface Event {
   id: string;
   name: string;
-  commercialVendorsAllowed: boolean;
+  commercialVendorsAllowed: boolean | null;
   // K18 Phase 2 — the admin GET /api/admin/events/[id] already returns
   // this; surfacing it lets the Add Vendor form show a per-day selector.
   eventDays?: EventDay[];
@@ -282,7 +282,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
         <div>
           <h1 className="text-2xl font-bold text-foreground">Manage Vendors</h1>
           <p className="text-muted-foreground mt-1">{event.name}</p>
-          {!event.commercialVendorsAllowed && (
+          {event.commercialVendorsAllowed === false && (
             <Badge variant="warning" className="mt-2">
               Commercial vendors not allowed
             </Badge>

@@ -57,7 +57,15 @@ export type ConversionsCard = Delta & {
 };
 
 export type CatalogGrowthCard = {
-  totals: { events: number; venues: number; vendors: number; total: number };
+  totals: {
+    events: number;
+    venues: number;
+    vendors: number;
+    total: number;
+    promoters: number;
+    users: number;
+    eventVendorLinks: number;
+  };
   newInWindow: number;
   newInPriorWindow: number;
   trend: Trend;
@@ -184,6 +192,10 @@ export type ConversionRateCard = {
   rateMeasured: import("./render-state").Measurement<number>;
   /** OPE-1165 — true once `conversions` counts ORGANIC clicks only. */
   organicBasis: boolean;
+  /** OPE-1658 — organic "Official Event Website" fallback clicks (ctaSource=source_url). */
+  officialSiteClicks: number | null;
+  /** OPE-1658 — official_site_click_rate: those clicks ÷ the same organic sessions. Value only. */
+  officialSiteRateMeasured: import("./render-state").Measurement<number>;
   windowDays: number;
   /** ISO date string for the window end so the tooltip can show the lag. */
   windowEndDate: string;
@@ -357,9 +369,7 @@ export type OverviewSnapshot = {
   recentErrors: RecentErrorsCard;
   recommendations: RecommendationsSummaryCard;
   blogCoverage: BlogCoverageCard;
-  conversionsSparkline: SparklinePoint[];
   publishingSparkline: SparklinePoint[];
-  searchVisibilitySparkline: SparklineSeries;
   activity: ActivityEntry[];
   // §10.3 additions
   siteCtr: SiteCtrCard;

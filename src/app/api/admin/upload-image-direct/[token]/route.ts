@@ -33,8 +33,10 @@ import { logError } from "@/lib/logger";
 import {
   runUploadPipeline,
   PIPELINE_ALLOWED_TYPES,
+  describeRefusedDeclaredType,
   PIPELINE_MAX_BYTES,
 } from "@/lib/upload-image-pipeline";
+import { unsupportedImageFormatForMime } from "@takemetothefair/utils";
 import { consumeUploadSlot } from "@/lib/upload-slot-token";
 
 async function readBytesFromRequest(
@@ -71,7 +73,7 @@ async function readBytesFromRequest(
       return {
         ok: false,
         status: 400,
-        error: `Unsupported content_type "${declaredType}". Allowed: jpg/png/webp/svg.`,
+        error: describeRefusedDeclaredType(declaredType),
       };
     }
     const formCaption = formData.get("caption");
@@ -90,7 +92,9 @@ async function readBytesFromRequest(
     return {
       ok: false,
       status: 400,
-      error: `Unsupported Content-Type "${contentType}". Allowed: jpg/png/webp/svg or multipart/form-data.`,
+      error: unsupportedImageFormatForMime(contentType)
+        ? describeRefusedDeclaredType(contentType)
+        : `Unsupported Content-Type "${contentType}". Allowed: jpg/png/webp/svg or multipart/form-data.`,
     };
   }
   const buf = await request.arrayBuffer();

@@ -431,7 +431,7 @@ describe("the workflow switch-over (source-level)", () => {
     '} else if (newsletterLane && (intent === "submit" || intent === "new_event")) {'
   );
   const submitPipeline = WF.indexOf(
-    "result = await this.runSubmitPipeline(step, messageRowId, sessionId);"
+    "result = await this.runSubmitPipeline(step, messageRowId, sessionId, senderTrust);"
   );
 
   it("landmarks exist", () => {

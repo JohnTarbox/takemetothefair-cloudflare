@@ -368,3 +368,91 @@ describe("OPE-1505 — matchEventFromText over D1", () => {
     expect(r.outcome).toBe("no-query");
   });
 });
+
+describe("OPE-1571 — a text match must agree with the place the subject names", () => {
+  const subject = "gardiner maine high school craft fair";
+  const input = {
+    subject,
+    bodyText: "https://share.google/aimode/x",
+    receivedAt: sec("2026-10-29T18:36:00Z"),
+  };
+  const cvu = cand("9e579450", "CVU High School Craft Fair 2026", "2026-10-24", "Hinesburg", {
+    state: "VT",
+  });
+
+  it("REGRESSION 07e7c5cb: never names the Vermont school fair", () => {
+    const scored = scoreCandidates(input, [cvu]);
+    // Positive landmark: the candidate was examined and its name did match.
+    expect(scored[0].nameContainment).toBe(1);
+    expect(scored[0].eligible).toBe(false);
+    const result = decideTextMatch(scored, ["gardiner", "high", "school"]);
+    expect(result.outcome).toBe("below-threshold");
+    expect(result.matched).toBeNull();
+    expect(result.candidates[0].id).toBe("9e579450");
+  });
+
+  it("generic school words alone are not a match, with no state in the subject", () => {
+    const scored = scoreCandidates({ ...input, subject: "high school craft fair" }, [cvu]);
+    expect(scored[0].nameContainment).toBe(1);
+    expect(scored[0].eligible).toBe(false);
+    expect(scored[0].reasons.join(" ")).toMatch(
+      /only common words shared \((school, high|high, school)\)/
+    );
+  });
+
+  it("names a school fair once its distinctive word is in the email", () => {
+    const scored = scoreCandidates({ ...input, subject: "gardiner high school craft fair" }, [
+      cand("g", "Gardiner High School Craft Fair 2026", "2026-12-19", "Gardiner", { state: "ME" }),
+    ]);
+    expect(decideTextMatch(scored, ["gardiner"]).matched?.id).toBe("g");
+  });
+
+  it("a named state rejects a strong name match in another state", () => {
+    const scored = scoreCandidates({ ...input, subject: "Blueberry Festival Vermont" }, [
+      cand("b", "Blueberry Festival 2026", "2026-11-20", "Machias", { state: "ME" }),
+    ]);
+    expect(scored[0].nameContainment).toBe(1);
+    expect(scored[0].eligible).toBe(false);
+    expect(scored[0].reasons.join(" ")).toContain("subject names VT, event is in ME");
+  });
+
+  it("the event's own town overrides the state word", () => {
+    const scored = scoreCandidates(
+      { ...input, subject: "Maine Made Crafts at Topsfield Blueberry Festival" },
+      [cand("t", "Blueberry Festival 2026", "2026-11-20", "Topsfield", { state: "MA" })]
+    );
+    expect(scored[0].eligible).toBe(true);
+  });
+
+  it("a state in the body alone is a signature, not a disagreement", () => {
+    const scored = scoreCandidates(
+      { ...input, subject: "Blueberry Festival", bodyText: "Sent from Portland, Maine" },
+      [cand("b", "Blueberry Festival 2026", "2026-11-20", "Salem", { state: "MA" })]
+    );
+    expect(scored[0].eligible).toBe(true);
+  });
+
+  it("an unknown venue state is never a disagreement", () => {
+    const scored = scoreCandidates({ ...input, subject: "Blueberry Festival Maine" }, [
+      cand("b", "Blueberry Festival 2026", "2026-11-20", null),
+    ]);
+    expect(scored[0].eligible).toBe(true);
+  });
+
+  it("reads the comma form of a state code, but not a bare uppercase word", () => {
+    const eligibleFor = (s: string) =>
+      scoreCandidates({ ...input, subject: s }, [
+        cand("b", "Blueberry Festival 2026", "2026-11-20", "Salem", { state: "MA" }),
+      ])[0].eligible;
+    expect(eligibleFor("Blueberry Festival, ME")).toBe(false);
+    expect(eligibleFor("TELL ME ABOUT Blueberry Festival")).toBe(true);
+  });
+
+  it("an upcoming edition beats one already over", () => {
+    const scored = scoreCandidates({ ...input, subject: "Blueberry Festival" }, [
+      cand("past", "Blueberry Festival 2026", "2026-09-01", "Machias"),
+      cand("next", "Blueberry Festival 2027", "2027-01-15", "Machias"),
+    ]);
+    expect(decideTextMatch(scored, ["blueberry"]).matched?.id).toBe("next");
+  });
+});

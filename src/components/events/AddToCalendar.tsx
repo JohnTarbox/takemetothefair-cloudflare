@@ -5,6 +5,7 @@ import { Calendar, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { trackAddToCalendar } from "@/lib/analytics";
+import { isPublicEventDay } from "@/lib/seo/column-date-jsonld";
 
 // U7 / Phase D (2026-06-02) — the icon variant's trigger moved from a
 // raw <button> with `p-3.5 -m-1` (~44px hit area but loosely enforced,
@@ -95,7 +96,9 @@ export function AddToCalendar({
   // null openTime/closeTime can't be put on the user's calendar without
   // fabricating times. Fall back to the event-level startDate/endDate
   // for those events (same as the no-eventDays branch below).
-  const openDays = eventDays.filter((d) => !d.closed);
+  // OPE-1563 — and never a vendor-setup row: it would become the .ics's first
+  // day and the Google/Outlook start time.
+  const openDays = eventDays.filter(isPublicEventDay);
   const openDaysWithHours = openDays.filter(
     (d): d is EventDay & { openTime: string; closeTime: string } =>
       d.openTime != null && d.closeTime != null

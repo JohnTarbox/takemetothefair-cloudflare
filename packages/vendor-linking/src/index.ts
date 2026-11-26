@@ -23,6 +23,7 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@takemetothefair/db-schema";
 import { containsCI } from "@takemetothefair/db-schema";
 import { mergeProductsJson, routeVendorCategoriesForWrite, sameVendorType } from "./vendor-type";
+import { extractSignDomain, resolveVendorBySignDomain } from "./sign-domain";
 import {
   appendSlugSegment,
   createSlug,
@@ -60,6 +61,8 @@ export type VendorLinkDb = DrizzleD1Database<typeof schema>;
 const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
 const FUZZY_THRESHOLD = 0.92;
 const FUZZY_CANDIDATE_CAP = 200;
+/** Each token binds 2 params in the ranked pass; 8 keeps it far under D1's 100. */
+const RANKED_PASS_MAX_TOKENS = 8;
 const REDIRECT_CHAIN_MAX_DEPTH = 5;
 
 export const DEDUP_STRATEGY_VALUES = ["strict", "fuzzy", "skip"] as const;
@@ -111,6 +114,25 @@ export interface CreateOrLinkVendorInput {
   /** OPE-316 — false when participation is recorded but must not render
    *  publicly (the LeafFilter case). Defaults true. */
   publicVisible?: boolean;
+  /**
+   * OPE-1694 — match on the web address BEFORE the name. Opt-in: the booth-photo
+   * paths pass it, because their "name" is whatever a sign said, domain and all.
+   *
+   * When a domain is found (in `website`, or embedded in `businessName`):
+   *   - one live vendor owns it → link that vendor; name dedup is skipped;
+   *   - several do → `{ ok: false, code: "domain_ambiguous" }`, nothing written;
+   *   - none do → the name is cleaned of the domain suffix and, when `website`
+   *     was not given, the domain becomes the new vendor's website.
+   */
+  matchByDomain?: boolean;
+  /**
+   * OPE-1704 — link THIS vendor; skip domain and name matching and never create.
+   * For a reviewer who already knows which record a booth photo shows. The id
+   * is followed through `redirect_to_vendor_id` to the canonical row, and a
+   * soft-deleted vendor (with no redirect) is refused rather than relinked.
+   * `businessName` is still required by the signature but is not used to match.
+   */
+  vendorId?: string | null;
 }
 
 /** DB-integrity side-effects each runtime supplies its own implementation of. */
@@ -142,6 +164,11 @@ export interface CreateOrLinkVendorSuccess {
   wasAlreadyLinked: boolean;
   statusChanged: boolean;
   matchedExisting: { name: string; similarity_score: number | null } | null;
+  /** OPE-1694 — why an existing vendor was used: its domain, or its name. Null on a create. */
+  /** "id" = the caller named the vendor (OPE-1704 `vendorId`). */
+  matchBasis: "domain" | "name" | "id" | null;
+  /** OPE-1694 — the registrable domain the sign carried, when `matchByDomain` found one. */
+  matchedDomain: string | null;
   /** True when the link is in a public status — the adapter decides whether to
    *  ping IndexNow for the event. */
   linkIsPublic: boolean;
@@ -160,6 +187,9 @@ export interface CreateOrLinkVendorSuccess {
 export interface CreateOrLinkVendorFailure {
   ok: false;
   error: string;
+  /** OPE-1694 — set when `matchByDomain` found more than one owner. */
+  code?: "domain_ambiguous";
+  domainCandidates?: Array<{ id: string; businessName: string }>;
 }
 
 export type CreateOrLinkVendorResult = CreateOrLinkVendorSuccess | CreateOrLinkVendorFailure;
@@ -202,6 +232,37 @@ async function resolveRedirectChain(db: VendorLinkDb, startRow: VendorRow): Prom
 }
 
 /**
+ * A live row whose name equals `businessName` case-insensitively — no stem, no
+ * cap, no scorer. Lowest id wins, so a name that is already duplicated links
+ * the same row every time.
+ *
+ * OPE-1544 — `fuzzy` had no such pass: it reached an exact name only through
+ * the capped stem narrowing, so on 2026-10-30 "Tree House Brewing" minted a
+ * second byte-identical row once 350 live vendors contained "brewing" against
+ * a 200-row cap. An exact name must never depend on the narrowing.
+ */
+async function findExactNameMatch(
+  db: VendorLinkDb,
+  businessName: string
+): Promise<VendorRow | null> {
+  const rows = await db
+    .select({
+      id: vendors.id,
+      businessName: vendors.businessName,
+      vendorType: vendors.vendorType,
+      redirectToVendorId: vendors.redirectToVendorId,
+      slug: vendors.slug,
+    })
+    .from(vendors)
+    .where(
+      and(sql`lower(${vendors.businessName}) = lower(${businessName})`, isNull(vendors.deletedAt))
+    )
+    .orderBy(vendors.id)
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
  * `strict` — "case-insensitive exact match", which is what the tool has always
  * documented and, until OPE-451, not what it did.
  *
@@ -229,20 +290,8 @@ export async function findStrictMatch(
   db: VendorLinkDb,
   businessName: string
 ): Promise<VendorRow | null> {
-  const caseInsensitive = await db
-    .select({
-      id: vendors.id,
-      businessName: vendors.businessName,
-      vendorType: vendors.vendorType,
-      redirectToVendorId: vendors.redirectToVendorId,
-      slug: vendors.slug,
-    })
-    .from(vendors)
-    .where(
-      and(sql`lower(${vendors.businessName}) = lower(${businessName})`, isNull(vendors.deletedAt))
-    )
-    .limit(1);
-  if (caseInsensitive.length > 0) return caseInsensitive[0];
+  const caseInsensitive = await findExactNameMatch(db, businessName);
+  if (caseInsensitive) return caseInsensitive;
 
   const normalizedTarget = normalizeVendorName(businessName);
   if (!normalizedTarget) return null;
@@ -478,21 +527,75 @@ async function selectStemCandidates(db: VendorLinkDb, businessName: string): Pro
     stem ? containsCI(vendors.businessName, stem) : undefined
   );
 
-  const slugToken = slugStem(businessName);
-  // No stem at all already means "scan the cap unfiltered"; a second pass over
+  // No stem at all already means "scan the cap unfiltered"; a further pass over
   // the same unfiltered set would add nothing.
-  if (!slugToken || !stem) return byName;
+  if (!stem) return byName;
 
-  const bySlug = await fetchCandidates(db, containsCI(vendors.slug, slugToken));
+  const passes = [byName];
+  const slugToken = slugStem(businessName);
+  if (slugToken) passes.push(await fetchCandidates(db, containsCI(vendors.slug, slugToken)));
+  const tokens = safeNameTokens(businessName);
+  if (tokens.length >= 2) passes.push(await fetchRankedCandidates(db, tokens));
 
-  const seen = new Set(byName.map((r) => r.id));
-  const merged = byName.slice();
-  for (const row of bySlug) {
+  const seen = new Set<string>();
+  const merged: VendorRow[] = [];
+  for (const row of passes.flat()) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
     merged.push(row);
   }
   return merged;
+}
+
+/** Every distinct raw-name token a stem could use (>= 3 chars, not unsafe). */
+function safeNameTokens(businessName: string): string[] {
+  const tokens = businessName
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length >= 3 && !isUnsafeStem(t));
+  return [...new Set(tokens)].slice(0, RANKED_PASS_MAX_TOKENS);
+}
+
+/**
+ * OPE-1544 — the longest token is not always the distinctive one.
+ *
+ * "Tree House Brewing", "Castle Island Brewing Co.", "True West Brewing Co."
+ * and "Night Shift Brewing" all stem on "brewing", the longest token. Measured
+ * on prod 2026-10-30: **350 of 13,070 live vendors contain "brewing"** against
+ * the 200-row cap, and the 200 fetched held none of the four existing rows, so
+ * a Mass Craft Brewers roster pass minted a duplicate of each. "Arlington
+ * Brewing Co." and "Aeronaut Brewing Co." stemmed on their own names and
+ * matched. OPE-715 was this shape with "the"; any category word ("farm",
+ * "pottery", "brewing") becomes it as the table grows.
+ *
+ * This pass matches on ANY safe token but RANKS by the total length of the
+ * tokens a row contains, so a row sharing several of the incoming tokens
+ * outranks the mass of rows sharing only the category word, and lands inside
+ * the cap. It supplements the longest-stem pass rather than replacing it: a
+ * row sharing only one rare token still arrives through that pass, so no
+ * candidate the old selector found is lost. Lowest id breaks ties, for the
+ * same repeat-backfill determinism as the scorer.
+ */
+async function fetchRankedCandidates(db: VendorLinkDb, tokens: string[]): Promise<VendorRow[]> {
+  const contains = (t: string) => sql`(instr(lower(${vendors.businessName}), ${t}) > 0)`;
+  const weight = sql.join(
+    tokens.map((t) => sql`${contains(t)} * ${t.length}`),
+    sql` + `
+  );
+  return db
+    .select({
+      id: vendors.id,
+      businessName: vendors.businessName,
+      vendorType: vendors.vendorType,
+      redirectToVendorId: vendors.redirectToVendorId,
+      slug: vendors.slug,
+    })
+    .from(vendors)
+    .where(and(isNull(vendors.deletedAt), sql`(${sql.join(tokens.map(contains), sql` OR `)})`))
+    .orderBy(sql`${weight} DESC`, vendors.id)
+    .limit(FUZZY_CANDIDATE_CAP);
 }
 
 /**
@@ -504,6 +607,9 @@ export async function findFuzzyMatch(
   businessName: string,
   vendorType: string | null | undefined
 ): Promise<{ row: VendorRow; score: number } | null> {
+  const exact = await findExactNameMatch(db, businessName);
+  if (exact) return { row: exact, score: 1 };
+
   const candidates = await selectStemCandidates(db, businessName);
   if (candidates.length === 0) return null;
 
@@ -535,6 +641,146 @@ export async function findFuzzyMatch(
   return best;
 }
 
+/** OPE-1705 — the fields `createVendorRow` stores, already sanitized/routed by the caller. */
+export interface NewVendorFields {
+  businessName: string;
+  vendorType: string | null;
+  sellsCategory: string | null;
+  businessSector: string | null;
+  vendorIdentity: string | null;
+  description: string | null;
+  /** JSON array string. */
+  productsJson: string;
+  website: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  logoUrl?: string | null;
+  city?: string | null;
+  state?: string | null;
+  location?: string | null;
+  /** The `enrichment_log` note; defaults to the create_or_link_vendor one. */
+  enrichmentNote?: string;
+}
+
+export type CreateVendorRowResult =
+  | { ok: true; vendorId: string; vendorSlug: Slug; city: string | null; state: string | null }
+  | { ok: false; error: string };
+
+/**
+ * Create ONE vendor row (with its placeholder owner) — the create branch of
+ * `createOrLinkVendor`, extracted so a writer with no event (OPE-1705: a business
+ * card shot away from a fair) creates vendors exactly the way a roster link does,
+ * instead of a second hand-written insert. No dedup here: the caller matches first.
+ */
+export async function createVendorRow(
+  db: VendorLinkDb,
+  f: NewVendorFields,
+  deps: CreateOrLinkVendorDeps
+): Promise<CreateVendorRowResult> {
+  const baseSlug = createSlug(f.businessName);
+  if (!baseSlug) {
+    return { ok: false, error: "Could not generate a valid slug from the business name." };
+  }
+
+  let finalSlug: Slug = baseSlug;
+  let suffix = 0;
+  while (true) {
+    const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
+    const slugCheck = await db
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(eq(vendors.slug, candidate))
+      .limit(1);
+    if (slugCheck.length === 0) {
+      finalSlug = candidate;
+      break;
+    }
+    suffix++;
+    if (suffix > 20) {
+      return { ok: false, error: "Too many slug collisions. Try a more unique business name." };
+    }
+  }
+
+  // OPE-835 — the third construction site. The filed ticket named only
+  // the promoter one; a fix wired there alone would have left this and
+  // the vendor site in admin.ts still minting invalid addresses.
+  // OPE-1223 — a FREE address: a tombstone's owner row can still hold the
+  // one this slug would give (the slug was renamed on merge, the email not).
+  const placeholderEmail = await freePlaceholderEmail("pending+", finalSlug, async (email) => {
+    const taken = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+    return taken.length > 0;
+  });
+  const userId = crypto.randomUUID();
+  await db.insert(users).values({
+    id: userId,
+    email: placeholderEmail,
+    // OPE-292 — a placeholder OWNER row, not a registration.
+    //
+    // ⚠️ This is the writer the original fix MISSED. `create_vendor` and
+    // `create_promoter` in mcp-server were both stamped in PR #900; this one
+    // lives in a shared package and was not, so it kept defaulting to
+    // `registration`. Between 2026-08-18 22:09 and 2026-08-20 00:20 it minted
+    // **389** mislabelled rows — enough that `origin='registration'` read 64%
+    // placeholder, making the column wrong in the exact way it was added to
+    // prevent.
+    //
+    // The audit that accompanied #900 enumerated `from(users)` sites across
+    // `src/` and `mcp-server/src/` and did not reach `packages/`. A fix wired
+    // into one of two parallel paths is this repo's most repeated defect;
+    // when stamping a field on creation, grep the WORKSPACE, not the app.
+    //
+    // The health-report invariant added alongside this makes a recurrence
+    // visible instead of silent.
+    origin: "ingestion",
+    role: "VENDOR",
+  });
+
+  // OPE-1094 — canonical city/state win; `location` remains as the alias so
+  // existing callers keep working. Resolved here rather than at the adapter
+  // so every runtime calling the core gets the same precedence.
+  const aliasLoc = f.location ? parseLocation(f.location) : { city: null, state: null };
+  const loc = {
+    city: f.city ?? aliasLoc.city,
+    state: f.state ?? aliasLoc.state,
+  };
+
+  const vendorId = crypto.randomUUID();
+  await db.insert(vendors).values({
+    id: vendorId,
+    userId,
+    businessName: f.businessName,
+    slug: finalSlug,
+    vendorType: f.vendorType,
+    sellsCategory: f.sellsCategory,
+    businessSector: f.businessSector,
+    vendorIdentity: f.vendorIdentity,
+    description: f.description,
+    products: f.productsJson,
+    website: f.website,
+    contactEmail: f.contactEmail ?? null,
+    contactPhone: f.contactPhone ?? null,
+    logoUrl: f.logoUrl ?? null,
+    city: loc.city,
+    state: loc.state,
+  });
+
+  await deps.recomputeVendorCompleteness(db, vendorId);
+  await deps.logEnrichment(db, {
+    targetType: "vendor",
+    targetId: vendorId,
+    source: "mcp_create",
+    status: "success",
+    actorUserId: deps.actorUserId,
+    notes: f.enrichmentNote ?? "create_or_link_vendor (new vendor)",
+  });
+
+  return { ok: true, vendorId, vendorSlug: finalSlug, city: loc.city, state: loc.state };
+}
+
 /**
  * Dedup-search, create-if-needed, and link a vendor to an event in one call.
  * The single source of truth for this write; the MCP tool and the app route are
@@ -545,7 +791,8 @@ export async function createOrLinkVendor(
   input: CreateOrLinkVendorInput,
   deps: CreateOrLinkVendorDeps
 ): Promise<CreateOrLinkVendorResult> {
-  const businessName = sanitizeProse(input.businessName ?? "");
+  let businessName = sanitizeProse(input.businessName ?? "");
+  let website: string | null = input.website ?? null;
   // OPE-1113 — resolve to the existing spelling of the same category, so a
   // roster that writes "crafts " stores "Crafts" rather than a new variant.
   //
@@ -591,9 +838,87 @@ export async function createOrLinkVendor(
   }
   const event = eventRows[0];
 
-  // 2. Dedup
+  // 2a. OPE-1694 — domain first. A sign's web address names the business more
+  // reliably than its lettering does.
   let matched: { row: VendorRow; score: number | null } | null = null;
-  if (dedupStrategy !== "skip") {
+  let matchBasis: "domain" | "name" | "id" | null = null;
+  let matchedDomain: string | null = null;
+
+  // 2·. OPE-1704 — an explicit vendor id wins over every heuristic.
+  if (input.vendorId) {
+    const rows = await db
+      .select({
+        id: vendors.id,
+        businessName: vendors.businessName,
+        vendorType: vendors.vendorType,
+        redirectToVendorId: vendors.redirectToVendorId,
+        slug: vendors.slug,
+        deletedAt: vendors.deletedAt,
+      })
+      .from(vendors)
+      .where(eq(vendors.id, input.vendorId))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return { ok: false, error: `Vendor not found: ${input.vendorId}` };
+    if (row.deletedAt && !row.redirectToVendorId) {
+      return { ok: false, error: `Vendor ${input.vendorId} is deleted; pick a live vendor.` };
+    }
+    try {
+      const canonical = await resolveRedirectChain(db, {
+        id: row.id,
+        businessName: row.businessName,
+        vendorType: row.vendorType,
+        redirectToVendorId: row.redirectToVendorId,
+        slug: row.slug,
+      });
+      matched = { row: canonical, score: null };
+      matchBasis = "id";
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  if (!matched && input.matchByDomain) {
+    const sd = extractSignDomain(businessName, website);
+    if (sd.domain) {
+      matchedDomain = sd.domain;
+      const dm = await resolveVendorBySignDomain(db, sd);
+      if (dm.kind === "ambiguous") {
+        return {
+          ok: false,
+          code: "domain_ambiguous",
+          error: `Not written: ${dm.reason}. Pick the right vendor by hand.`,
+          domainCandidates: dm.candidates,
+        };
+      }
+      if (dm.kind === "one") {
+        const rows = await db
+          .select({
+            id: vendors.id,
+            businessName: vendors.businessName,
+            vendorType: vendors.vendorType,
+            redirectToVendorId: vendors.redirectToVendorId,
+            slug: vendors.slug,
+          })
+          .from(vendors)
+          .where(eq(vendors.id, dm.vendorId))
+          .limit(1);
+        if (rows[0]) {
+          matched = { row: rows[0], score: null };
+          matchBasis = "domain";
+          matchedDomain = dm.domain;
+        }
+      }
+    }
+    if (!matched) {
+      // No owner: keep the sign's domain as the website, not in the name.
+      if (sd.cleanedName && sd.cleanedName !== businessName) businessName = sd.cleanedName;
+      if (!website && sd.domain && !sd.nonOwnable) website = `https://${sd.domain}`;
+    }
+  }
+
+  // 2b. Name dedup
+  if (!matched && dedupStrategy !== "skip") {
     if (dedupStrategy === "strict") {
       const strictRow = await findStrictMatch(db, businessName);
       if (strictRow) matched = { row: strictRow, score: 1 };
@@ -601,6 +926,7 @@ export async function createOrLinkVendor(
       const found = await findFuzzyMatch(db, businessName, vendorType);
       if (found) matched = { row: found.row, score: found.score };
     }
+    if (matched) matchBasis = "name";
 
     if (matched) {
       try {
@@ -675,112 +1001,33 @@ export async function createOrLinkVendor(
     vendorId = matched.row.id;
     vendorSlug = matched.row.slug;
   } else {
-    const baseSlug = createSlug(businessName);
-    if (!baseSlug) {
-      return { ok: false, error: "Could not generate a valid slug from the business name." };
-    }
-
-    let finalSlug: Slug = baseSlug;
-    let suffix = 0;
-    while (true) {
-      const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
-      const slugCheck = await db
-        .select({ id: vendors.id })
-        .from(vendors)
-        .where(eq(vendors.slug, candidate))
-        .limit(1);
-      if (slugCheck.length === 0) {
-        finalSlug = candidate;
-        break;
-      }
-      suffix++;
-      if (suffix > 20) {
-        return { ok: false, error: "Too many slug collisions. Try a more unique business name." };
-      }
-    }
-
-    // OPE-835 — the third construction site. The filed ticket named only
-    // the promoter one; a fix wired there alone would have left this and
-    // the vendor site in admin.ts still minting invalid addresses.
-    // OPE-1223 — a FREE address: a tombstone's owner row can still hold the
-    // one this slug would give (the slug was renamed on merge, the email not).
-    const placeholderEmail = await freePlaceholderEmail("pending+", finalSlug, async (email) => {
-      const taken = await db
-        .select({ id: users.id })
-        .from(users)
-        .where(eq(users.email, email))
-        .limit(1);
-      return taken.length > 0;
-    });
-    const userId = crypto.randomUUID();
-    await db.insert(users).values({
-      id: userId,
-      email: placeholderEmail,
-      // OPE-292 — a placeholder OWNER row, not a registration.
-      //
-      // ⚠️ This is the writer the original fix MISSED. `create_vendor` and
-      // `create_promoter` in mcp-server were both stamped in PR #900; this one
-      // lives in a shared package and was not, so it kept defaulting to
-      // `registration`. Between 2026-08-18 22:09 and 2026-08-20 00:20 it minted
-      // **389** mislabelled rows — enough that `origin='registration'` read 64%
-      // placeholder, making the column wrong in the exact way it was added to
-      // prevent.
-      //
-      // The audit that accompanied #900 enumerated `from(users)` sites across
-      // `src/` and `mcp-server/src/` and did not reach `packages/`. A fix wired
-      // into one of two parallel paths is this repo's most repeated defect;
-      // when stamping a field on creation, grep the WORKSPACE, not the app.
-      //
-      // The health-report invariant added alongside this makes a recurrence
-      // visible instead of silent.
-      origin: "ingestion",
-      role: "VENDOR",
-    });
-
-    // OPE-1094 — canonical city/state win; `location` remains as the alias so
-    // existing callers keep working. Resolved here rather than at the adapter
-    // so every runtime calling the core gets the same precedence.
-    const aliasLoc = input.location ? parseLocation(input.location) : { city: null, state: null };
-    const loc = {
-      city: input.city ?? aliasLoc.city,
-      state: input.state ?? aliasLoc.state,
-    };
-    createdLoc = loc;
-
-    vendorId = crypto.randomUUID();
-    await db.insert(vendors).values({
-      id: vendorId,
-      userId,
-      businessName,
-      slug: finalSlug,
-      vendorType,
-      sellsCategory: routed.values.sellsCategory ?? null,
-      businessSector: routed.values.businessSector ?? null,
-      vendorIdentity: routed.values.vendorIdentity ?? null,
-      description,
-      products: mergeProductsJson(
-        productsClean ? JSON.stringify(productsClean) : "[]",
-        routed.productsToAdd
-      ),
-      website: input.website ?? null,
-      contactEmail: input.contactEmail ?? null,
-      contactPhone: input.contactPhone ?? null,
-      logoUrl: input.logoUrl ?? null,
-      city: loc.city,
-      state: loc.state,
-    });
-
-    await deps.recomputeVendorCompleteness(db, vendorId);
-    await deps.logEnrichment(db, {
-      targetType: "vendor",
-      targetId: vendorId,
-      source: "mcp_create",
-      status: "success",
-      actorUserId: deps.actorUserId,
-      notes: "create_or_link_vendor (new vendor)",
-    });
-
-    vendorSlug = finalSlug;
+    const created = await createVendorRow(
+      db,
+      {
+        businessName,
+        vendorType,
+        sellsCategory: routed.values.sellsCategory ?? null,
+        businessSector: routed.values.businessSector ?? null,
+        vendorIdentity: routed.values.vendorIdentity ?? null,
+        description,
+        productsJson: mergeProductsJson(
+          productsClean ? JSON.stringify(productsClean) : "[]",
+          routed.productsToAdd
+        ),
+        website,
+        contactEmail: input.contactEmail ?? null,
+        contactPhone: input.contactPhone ?? null,
+        logoUrl: input.logoUrl ?? null,
+        city: input.city,
+        state: input.state,
+        location: input.location,
+      },
+      deps
+    );
+    if (!created.ok) return created;
+    vendorId = created.vendorId;
+    createdLoc = { city: created.city, state: created.state };
+    vendorSlug = created.vendorSlug;
     wasCreated = true;
   }
 
@@ -895,6 +1142,8 @@ export async function createOrLinkVendor(
       payment_status: paymentStatus,
       dedup_strategy: dedupStrategy,
       matched_existing: matchedExisting,
+      match_basis: matchBasis,
+      matched_domain: matchedDomain,
     }),
     createdAt: new Date(),
   });
@@ -910,12 +1159,23 @@ export async function createOrLinkVendor(
     wasAlreadyLinked,
     statusChanged,
     matchedExisting,
+    matchBasis,
+    matchedDomain,
     linkIsPublic: (wasLinked || statusChanged) && PUBLIC_VENDOR_SET.has(status),
     // OPE-1094 — only meaningful on a create; the match branch leaves the
     // existing row's location alone (see the scope-3 note on the ticket).
     ...(wasCreated && { createdCity: createdLoc.city, createdState: createdLoc.state }),
   };
 }
+
+export {
+  extractSignDomain,
+  normalizeSignDomain,
+  resolveVendorByDomain,
+  resolveVendorBySignDomain,
+  type DomainVendorMatch,
+  type SignDomain,
+} from "./sign-domain";
 
 export {
   CATEGORY_MAX_CHARS,

@@ -690,6 +690,8 @@ export function registerPublicTools(server: McpServer, db: Db) {
             imageUrl: events.imageUrl,
             status: events.status,
             commercialVendorsAllowed: events.commercialVendorsAllowed,
+            vendorEligibility: events.vendorEligibility,
+            vendorEligibilityOrg: events.vendorEligibilityOrg,
             venueId: events.venueId,
             venueName: venues.name,
             venueAddress: venues.address,
@@ -837,6 +839,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
             ticketUrl: event.ticketUrl,
             imageUrl: event.imageUrl || null,
             commercialVendorsAllowed: event.commercialVendorsAllowed,
+            // OPE-1564 — who may be a vendor (OPEN = no restriction recorded).
+            vendorEligibility: event.vendorEligibility,
+            vendorEligibilityOrg: event.vendorEligibilityOrg,
             vendorCount: vendorRows.length,
             status: event.status,
             schedule: days.length > 0 ? days : null,

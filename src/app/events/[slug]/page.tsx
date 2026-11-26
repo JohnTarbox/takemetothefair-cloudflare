@@ -59,11 +59,20 @@ import { EventDayImageStrip } from "@/components/events/EventDayImageStrip";
 import { parseJsonArray } from "@/types";
 import { filterPublicTags } from "@/lib/events/public-tags";
 import { publicAccessNotes } from "@/lib/events/public-access-notes";
+import {
+  vendorEligibilityLine,
+  eventDocumentProvenance,
+  eventDocumentTypeAndSize,
+} from "@takemetothefair/utils";
+import { getLiveEventDocuments } from "@/lib/event-documents";
 import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
+import { VendorsWantedCard } from "@/components/events/VendorsWantedCard";
+import { buildVendorCall } from "@/lib/events/vendor-call";
 import { VendorOrganizerCard } from "@/components/events/VendorOrganizerCard";
+import { ListEventCtaLink } from "@/components/list-your-event/list-event-cta";
 import {
   isPlaceholderPromoter,
   resolveOrganizerContact,
@@ -586,6 +595,13 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // OPE-1368 — stored URLs render through safeHref. An application link may
   // be a mailto: (two prod rows are), so that one also allows mailto.
   const applicationHref = safeHref(event.applicationUrl, { allowMailto: true });
+  // OPE-1512 item 4 — null unless the call is positively open and current.
+  const vendorCall = buildVendorCall(event.vendorCallRow, event, new Date());
+  const vendorEligibilityText = vendorEligibilityLine(
+    event.vendorEligibility,
+    event.vendorEligibilityOrg
+  );
+  const vendorForms = await getLiveEventDocuments(getCloudflareDb(), event.id);
   const promoterWebsiteHref = safeHref(event.promoter?.website);
   // OPE-986 (A2 + B2) — which vendor CTA this page shows. `claimed` and the
   // contact come from their own read: the lite projection lacks them.
@@ -718,10 +734,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
               url: `https://meetmeatthefair.com/vendors/${ev.displayTarget.slug}`,
               // Drives schema.org performer-vs-sponsor placement (drizzle/0071).
               participationType: ev.participationType as
-                | "EXHIBITOR"
-                | "SPONSOR_ONLY"
-                | "SPONSOR_AND_EXHIBITOR"
-                | undefined,
+                "EXHIBITOR" | "SPONSOR_ONLY" | "SPONSOR_AND_EXHIBITOR" | undefined,
               // K18 Phase 2 (2026-06-06): per-occurrence scoping. NULL = series-
               // wide -> appears in top-level performer/sponsor arrays. Non-NULL
               // = scoped to that occurrence -> EventSchema emits the vendor
@@ -1539,11 +1552,23 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
 
                 {(event.applicationDeadline ||
                   event.applicationUrl ||
-                  event.applicationInstructions) && (
+                  event.applicationInstructions ||
+                  vendorEligibilityText) && (
                   <div className="flex items-start gap-3">
                     <FileText className="w-5 h-5 text-amber-500 mt-0.5" />
                     <div>
                       <p className="text-sm text-muted-foreground">Vendor Applications</p>
+                      {/* OPE-1564 — who may be a vendor, one plain line. Null
+                          for OPEN (the default), so an event with no value set
+                          renders exactly as before. */}
+                      {vendorEligibilityText && (
+                        <p
+                          className="text-sm font-medium text-foreground"
+                          data-testid="event-vendor-eligibility"
+                        >
+                          {vendorEligibilityText}
+                        </p>
+                      )}
                       {event.applicationDeadline && (
                         <p
                           className={`text-sm font-medium ${new Date(event.applicationDeadline) < new Date() ? "text-destructive" : "text-foreground"}`}
@@ -1567,6 +1592,46 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                           Apply Now →
                         </OutboundEventLink>
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {/* OPE-1580 — blank forms a person posted, for organizers who only
+                    email their packet. Renders only while a form is live. */}
+                {vendorForms.length > 0 && (
+                  <div className="flex items-start gap-3" data-testid="event-vendor-forms">
+                    <FileText className="w-5 h-5 text-amber-500 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-sm text-muted-foreground">Vendor forms</p>
+                      <ul className="mt-1 space-y-1">
+                        {vendorForms.map((doc) => (
+                          <li key={doc.id} className="text-sm">
+                            <a
+                              href={`/api/event-documents/${doc.id}`}
+                              className="text-royal hover:underline"
+                            >
+                              {doc.displayName}
+                            </a>{" "}
+                            <span className="text-muted-foreground">
+                              ({eventDocumentTypeAndSize(doc.mimeType, doc.sizeBytes)})
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      {[
+                        ...new Set(
+                          vendorForms.map((d) =>
+                            eventDocumentProvenance(d.sourceOrganizer, d.receivedAt)
+                          )
+                        ),
+                      ].map((line) => (
+                        <p key={line} className="text-xs text-muted-foreground mt-1">
+                          {line}
+                        </p>
+                      ))}
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Send your completed form to the organizer, not to us.
+                      </p>
                     </div>
                   </div>
                 )}
@@ -1711,7 +1776,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                           "You've been invited to participate!"}
                       </p>
                     </div>
-                  ) : vendorInfo.vendor.commercial && !event.commercialVendorsAllowed ? (
+                  ) : vendorInfo.vendor.commercial && event.commercialVendorsAllowed === false ? (
                     <div className="text-center">
                       <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
                       <p className="text-sm text-muted-foreground">
@@ -1743,6 +1808,8 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                 </CardContent>
               </Card>
             )}
+
+            {vendorCall && <VendorsWantedCard call={vendorCall} eventSlug={event.slug} />}
 
             {(vendorCta.kind === "organizer_apply" || vendorCta.kind === "organizer_contact") && (
               <VendorOrganizerCard cta={vendorCta} eventName={event.name} eventSlug={event.slug} />
@@ -1933,6 +2000,12 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                 </CardContent>
               </Card>
             )}
+            {/* OPE-1559 (John, 2026-11-02) — contextual free-listing CTA. */}
+            <p className="mt-4 text-sm text-muted-foreground">
+              <ListEventCtaLink placement="event_page" className="text-royal hover:text-navy">
+                Organizing a fair or festival? List it free — no account needed.
+              </ListEventCtaLink>
+            </p>
           </aside>
         </div>
 

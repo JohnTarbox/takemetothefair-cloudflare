@@ -5,9 +5,9 @@ import { events } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import { getDetailsScraper } from "@/lib/scrapers/registry";
 import { like, and, isNotNull } from "drizzle-orm";
-import { eq } from "drizzle-orm";
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 
-export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   const url = new URL(request.url);
   const dryRun = url.searchParams.get("dryRun") === "true";
 
@@ -70,13 +70,17 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           details.description !== event.description &&
           !details.description.endsWith("...")
         ) {
-          await db
-            .update(events)
-            .set({
-              description: details.description,
-              updatedAt: new Date(),
-            })
-            .where(eq(events.id, event.id));
+          // OPE-1653 — the truncated description being replaced is exactly
+          // the value worth keeping a record of.
+          await updateWithFieldHistory(db, {
+            table: events,
+            entityType: "event",
+            entityId: event.id,
+            before: event,
+            patch: { description: details.description, updatedAt: new Date() },
+            actor: session.user.id,
+            source: "api:POST /api/admin/import/rescrape-descriptions",
+          });
           results.updated++;
         } else {
           results.skipped++;

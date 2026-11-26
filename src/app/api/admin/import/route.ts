@@ -11,6 +11,7 @@ import { withAuth } from "@/lib/api/with-auth";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { events, venues, promoters, eventDays } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import type { ScrapedEvent, ScrapedVenue } from "@/lib/scrapers/types";
 import type { Slug } from "@takemetothefair/utils";
 import { decodeHtmlEntities, sanitizeScrapedDescription } from "@/lib/scrapers/utils";
@@ -274,7 +275,7 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
 });
 
 // POST - Import selected events
-export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   try {
     const body = await request.json();
     const {
@@ -520,7 +521,18 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
             if (eventData.commercialVendorsAllowed !== undefined) {
               updateData.commercialVendorsAllowed = eventData.commercialVendorsAllowed;
             }
-            await db.update(events).set(updateData).where(eq(events.id, existing[0].id));
+            // OPE-1653 — a re-import overwrites name / description / dates /
+            // ticket link from the scrape; record what each one replaced.
+            await updateWithFieldHistory(db, {
+              table: events,
+              entityType: "event",
+              entityId: existing[0].id,
+              before: existing[0],
+              patch: updateData,
+              actor: session.user.id,
+              source: "api:POST /api/admin/import (update)",
+              ignore: ["lastSyncedAt"],
+            });
             // OPE-767 — recorded as a reason, so it can be discharged on its own.
             if (formerCheck.flagForReview) {
               await raiseEventReviewFlag(db, existing[0].id, "former_venue");
@@ -662,7 +674,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           sourceId: eventData.sourceId,
           syncEnabled: true,
           lastSyncedAt: new Date(),
-          commercialVendorsAllowed: eventData.commercialVendorsAllowed ?? true,
+          commercialVendorsAllowed: eventData.commercialVendorsAllowed ?? null,
         });
         // OPE-767 — recorded as a reason, so it can be discharged on its own.
         if (formerCheck.flagForReview) await raiseEventReviewFlag(db, newEventId, "former_venue");
@@ -768,7 +780,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
 });
 
 // PATCH - Sync existing events from their sources
-export const PATCH = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
+export const PATCH = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   try {
     // Get all events with sync enabled
     const syncableEvents = await db
@@ -866,7 +878,18 @@ export const PATCH = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
 
           if (Object.keys(updates).length > 2) {
             // More than just timestamps
-            await db.update(events).set(updates).where(eq(events.id, event.id));
+            // OPE-1653 — a sync replaces description / dates / image / ticket
+            // link from the source; record what each one replaced.
+            await updateWithFieldHistory(db, {
+              table: events,
+              entityType: "event",
+              entityId: event.id,
+              before: event,
+              patch: updates,
+              actor: session.user.id,
+              source: "api:PATCH /api/admin/import (sync)",
+              ignore: ["lastSyncedAt"],
+            });
             await recomputeEventCompleteness(db, event.id);
             results.synced++;
           } else {

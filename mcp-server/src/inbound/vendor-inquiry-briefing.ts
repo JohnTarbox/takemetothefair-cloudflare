@@ -34,6 +34,7 @@ import { isGenericEmailProvider, isBareGenericProviderAddress } from "@takemetot
 import type { Db } from "../db.js";
 import { resolveOwnEventUrl } from "./own-event-url.js";
 import { matchEventFromText } from "./text-event-match.js";
+import { linkKey } from "./link-key.js";
 
 /**
  * Brand key: lowercase, alphanumerics only.
@@ -327,12 +328,17 @@ export interface VendorInquiryBriefing {
     slug: string;
     name: string;
     url: string;
-    matchedOn: "own_event_url" | "source_url" | "text" | "subject";
+    /** `source_url` / `application_url` = the email's link names the same page
+     *  as that stored field, compared by `linkKey` (OPE-1571), not by string. */
+    matchedOn: "own_event_url" | "source_url" | "application_url" | "text" | "subject";
   } | null;
   /**
    * OPE-977 — what happened to `parsed_url`, stated rather than implied:
-   * absent · not-ours (another host) · ours-not-an-event-page · ours-unresolved
-   * · resolved (with how). The warnings below are derived from this.
+   * absent · not-ours (another host, and no listed event stores that page) ·
+   * linked-event (another host, and an event's source_url/application_url is
+   * the same page — OPE-1571; detail names the key and field) ·
+   * ours-not-an-event-page · ours-unresolved · resolved (with how). The
+   * warnings below are derived from this.
    */
   urlResolution: { status: string; detail?: string };
   confidence: EventConfidence | null;
@@ -503,18 +509,44 @@ export async function buildVendorInquiryBriefing(
     urlResolution = { status: "not-ours", detail: own.host };
   }
 
+  // OPE-1571 — the email's link against BOTH stored links, by page key rather
+  // than string: the same Cheddar Up collection is stored as
+  // `<slug>.cheddarup.com/` and arrives as `my.cheddarup.com/c/<slug>/items`,
+  // and vendor-registration links (application_url) are what people forward.
+  const receivedSec = Math.floor((inbound.receivedAt ?? new Date()).getTime() / 1000);
   if (!matched && inbound.parsedUrl) {
-    const [byUrl] = await db
-      .select({ id: events.id, slug: events.slug, name: events.name })
-      .from(events)
-      .where(and(eq(events.sourceUrl, inbound.parsedUrl), isNull(events.mergedInto)))
-      .limit(1);
-    if (byUrl) {
+    const lm = await matchEventByLink(db, inbound.parsedUrl, receivedSec);
+    if (lm.match) {
       matched = {
-        ...byUrl,
-        url: `https://meetmeatthefair.com/events/${byUrl.slug}`,
-        matchedOn: "source_url",
+        id: lm.match.id,
+        slug: lm.match.slug,
+        name: lm.match.name,
+        url: `https://meetmeatthefair.com/events/${lm.match.slug}`,
+        matchedOn: lm.match.field,
       };
+      urlResolution = {
+        status: "linked-event",
+        detail: `${lm.key} = ${lm.match.field}${lm.exact ? "" : " (same page, different spelling)"}`,
+      };
+      if (lm.others.length > 0) {
+        warnings.push(
+          `The link is also stored on ${lm.others.map((o) => `"${o.name}" (${o.startDate ?? "no date"})`).join(", ")}; chose "${lm.match.name}" as the soonest edition not yet over.`
+        );
+      }
+    }
+  }
+  // OPE-1571 — a link match outranks a text match, but the text match still
+  // runs so a disagreement is visible rather than silently resolved.
+  if (matched && (matched.matchedOn === "source_url" || matched.matchedOn === "application_url")) {
+    const tm = await matchEventFromText(db, {
+      subject: inbound.subject,
+      bodyText: inbound.bodyText ?? null,
+      receivedAt: receivedSec,
+    });
+    if (tm.outcome === "matched" && tm.matched && tm.matched.id !== matched.id) {
+      warnings.push(
+        `The email's TEXT points at a different event, "${tm.matched.name}" (${tm.matched.reasons.join(", ")}). The LINK match ("${matched.name}") was used; check which one the sender meant.`
+      );
     }
   }
   // OPE-1505 — the whole-name, date-and-place text match (text-event-match.ts),
@@ -525,7 +557,7 @@ export async function buildVendorInquiryBriefing(
     const tm = await matchEventFromText(db, {
       subject: inbound.subject,
       bodyText: inbound.bodyText ?? null,
-      receivedAt: Math.floor((inbound.receivedAt ?? new Date()).getTime() / 1000),
+      receivedAt: receivedSec,
     });
     const top = tm.candidates
       .map((c) => `"${c.name}"${c.startDate ? ` (${c.startDate})` : ""} ${c.score}`)
@@ -625,7 +657,7 @@ export async function buildVendorInquiryBriefing(
       own.status === "absent"
         ? "the email carries no URL"
         : own.status === "not-ours"
-          ? `its URL is on another site (${own.host}) and matches no event's source_url`
+          ? `its URL is on another site (${own.host}) and matches no event's source_url or application_url`
           : "its link to our site did not resolve";
     warnings.push(`No event matched: ${why}, and the subject did not identify a single event.`);
   }
@@ -733,5 +765,95 @@ export async function buildVendorInquiryBriefing(
       status: s.status,
     })),
     warnings,
+  };
+}
+
+/** Bounded pre-filter: rows whose stored link contains the key's needle. */
+const LINK_CANDIDATE_LIMIT = 200;
+
+export interface LinkMatchResult {
+  key: string | null;
+  match: {
+    id: string;
+    slug: string;
+    name: string;
+    field: "source_url" | "application_url";
+    startDate: string | null;
+  } | null;
+  /** Other events storing the same page (other editions), never silently dropped. */
+  others: { id: string; name: string; startDate: string | null }[];
+  /** True when the stored string equals the email's link exactly. */
+  exact: boolean;
+}
+
+/**
+ * OPE-1571 — which listed event stores the same page as `url`, in `source_url`
+ * or `application_url`. Several editions of a series often share one link, so
+ * the soonest edition not yet over wins (else the most recent), and the rest
+ * are returned so the caller can say so. Rejected and merged rows never match.
+ */
+export async function matchEventByLink(
+  db: Db,
+  url: string,
+  receivedSec: number
+): Promise<LinkMatchResult> {
+  const k = linkKey(url);
+  if (!k) return { key: null, match: null, others: [], exact: false };
+  const rows = await db
+    .select({
+      id: events.id,
+      slug: events.slug,
+      name: events.name,
+      sourceUrl: events.sourceUrl,
+      applicationUrl: events.applicationUrl,
+      startDate: events.startDate,
+      endDate: events.endDate,
+    })
+    .from(events)
+    .where(
+      and(
+        isNull(events.mergedInto),
+        sql`${events.status} NOT IN ('REJECTED', 'DRAFT')`,
+        sql`(instr(lower(coalesce(${events.sourceUrl}, '')), ${k.needle}) > 0 OR instr(lower(coalesce(${events.applicationUrl}, '')), ${k.needle}) > 0)`
+      )
+    )
+    .limit(LINK_CANDIDATE_LIMIT);
+
+  const hits = rows
+    .map((r) => {
+      const field: "source_url" | "application_url" | null =
+        linkKey(r.sourceUrl)?.key === k.key
+          ? "source_url"
+          : linkKey(r.applicationUrl)?.key === k.key
+            ? "application_url"
+            : null;
+      const start = r.startDate ? Math.floor(r.startDate.getTime() / 1000) : null;
+      const end = r.endDate ? Math.floor(r.endDate.getTime() / 1000) : start;
+      return { r, field, start, end };
+    })
+    .filter((h) => h.field !== null);
+  if (hits.length === 0) return { key: k.key, match: null, others: [], exact: false };
+
+  const notOver = hits.filter((h) => h.end != null && h.end >= receivedSec - 86_400);
+  const pick =
+    notOver.length > 0
+      ? notOver.sort((a, b) => (a.start ?? 0) - (b.start ?? 0))[0]
+      : hits.sort((a, b) => (b.start ?? 0) - (a.start ?? 0))[0];
+  const day = (s: number | null) =>
+    s != null ? new Date(s * 1000).toISOString().slice(0, 10) : null;
+  const storedValue = pick.field === "source_url" ? pick.r.sourceUrl : pick.r.applicationUrl;
+  return {
+    key: k.key,
+    match: {
+      id: pick.r.id,
+      slug: pick.r.slug,
+      name: pick.r.name,
+      field: pick.field!,
+      startDate: day(pick.start),
+    },
+    others: hits
+      .filter((h) => h.r.id !== pick.r.id)
+      .map((h) => ({ id: h.r.id, name: h.r.name, startDate: day(h.start) })),
+    exact: storedValue === url,
   };
 }

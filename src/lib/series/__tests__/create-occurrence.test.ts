@@ -4,6 +4,7 @@
  * extraction of the prior `/api/admin/occurrences/create` route body; the pure
  * field inheritance is covered by create-occurrence-core.test.ts.
  */
+import { FIELD_HISTORY_SQL, shimBatch } from "../../../../mcp-server/__tests__/setup-db";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -83,6 +84,9 @@ beforeEach(() => {
   raw = new Database(":memory:");
   raw.exec(SCHEMA_SQL);
   db = drizzle(raw, { schema });
+  // OPE-1653 — the writers under test now batch their field-history rows.
+  raw.exec(FIELD_HISTORY_SQL); // this harness hand-writes its DDL
+  shimBatch(db);
 });
 afterEach(() => raw.close());
 

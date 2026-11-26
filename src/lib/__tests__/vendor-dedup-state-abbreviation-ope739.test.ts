@@ -98,19 +98,16 @@ describe("the narrowing still reaches the candidate — verified, not assumed", 
     expect((await findStrictMatch(db, "NH Trappers Association"))?.id).toBe("target");
   });
 
-  it("is bounded by the SHARED 200-row cap, not by anything this fix introduced", async () => {
-    // Characterising a real limit rather than hiding it. Past 200 rows sharing a
-    // stem, the narrowing fetches an arbitrary 200 and the true match can fall
-    // outside — the OPE-715 mechanism, which applies to every stem and not just
-    // this one.
-    //
-    // Headroom today: 56 of 6,805 live vendors contain "association", so the
-    // stem is 3.5x under the cap. Pinned so that if "association" ever crosses
-    // 200 this test starts failing and names the reason, instead of the NH pairs
-    // quietly beginning to duplicate again.
+  it("survives a stem past the SHARED 200-row cap (OPE-1544 closed the limit)", async () => {
+    // This test used to pin the cap as a known limit: past 200 rows sharing a
+    // stem the narrowing fetched an arbitrary 200, and it asserted a MISS so a
+    // crossing would announce itself. A different stem crossed first — 350 live
+    // vendors contained "brewing" on 2026-10-30, and six breweries duplicated
+    // (OPE-1544). The ranked multi-token pass now orders by the tokens a row
+    // shares, so "trappers" lifts the target into the cap.
     for (let i = 0; i < 260; i++) seed(`noise-${i}`, `Barnstable Association ${i}`);
     seed("target", "New Hampshire Trappers Association", "Nonprofit");
-    expect(await findStrictMatch(db, "NH Trappers Association")).toBeNull();
+    expect((await findStrictMatch(db, "NH Trappers Association"))?.id).toBe("target");
   });
 });
 

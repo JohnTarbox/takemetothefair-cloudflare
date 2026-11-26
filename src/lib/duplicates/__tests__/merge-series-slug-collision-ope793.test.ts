@@ -198,6 +198,8 @@ const SCHEMA_SQL = `
     access_notes text,
     parking_notes text,
     accessibility_notes text,
+    vendor_eligibility text NOT NULL DEFAULT 'OPEN',
+    vendor_eligibility_org text,
     registration_required integer NOT NULL DEFAULT 0,
     created_at integer,
     updated_at integer,

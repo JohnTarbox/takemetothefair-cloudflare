@@ -26,7 +26,7 @@
  */
 
 /** The inbound facts a predicate may consult. Deliberately small. */
-import { isBlankAskAboutEventBody } from "@takemetothefair/utils";
+import { isAiAnswerLink, isBlankAskAboutEventBody } from "@takemetothefair/utils";
 
 export interface InboundFacts {
   /** `inbound_emails.parsed_url` — a URL we actually stored off the message. */
@@ -47,6 +47,8 @@ export interface InboundFacts {
   storedPhotoCount?: number | null;
   /** For `correction-applied`: did a write actually land? */
   correctionApplied?: boolean | null;
+  /** For `already-listed-link`: the listed event the copy is about to name. */
+  listedEventId?: string | null;
 }
 
 export interface TemplateAssertion {
@@ -161,6 +163,16 @@ export const TEMPLATE_ASSERTIONS: Record<string, TemplateAssertion[]> = {
           : null,
     },
   ],
+  // OPE-1615 — same copy as support-ack, so the same claim.
+  "ack-after-classifier-failure": [
+    {
+      claim: "this has not been read by a person yet",
+      falsifiedBy: (f) =>
+        typeof f.inReplyTo === "string" && f.inReplyTo.toLowerCase().includes(OWN_DOMAIN)
+          ? "in_reply_to names our own message-id — this is a reply to a human, mid-correspondence"
+          : null,
+    },
+  ],
   "correction-ack": [
     {
       claim: "this has not been read by a person yet",
@@ -210,6 +222,30 @@ export const TEMPLATE_ASSERTIONS: Record<string, TemplateAssertion[]> = {
           : null,
     },
   ],
+  // OPE-1316 reply A — "that event is already listed with us". False exactly
+  // when no listed event was resolved for the link; then the honest sibling is
+  // the couldn't-use-your-link reply.
+  "already-listed-link": [
+    {
+      claim: "that event is already listed with us",
+      falsifiedBy: (f) =>
+        f.listedEventId === null
+          ? "no listed event resolved for the link — there is nothing to point at"
+          : null,
+    },
+  ],
+  // OPE-1591 — false when we hold a different link and no AI answer link at all.
+  "ai-answer-link": [
+    {
+      claim: "that link is a Google AI answer",
+      falsifiedBy: (f) =>
+        typeof f.parsedUrl === "string" &&
+        !isAiAnswerLink(f.parsedUrl) &&
+        !(f.bodyText?.match(/\bhttps?:\/\/\S+/gi) ?? []).some((u) => isAiAnswerLink(u))
+          ? `parsed_url is ${f.parsedUrl} and the body has no AI answer link`
+          : null,
+    },
+  ],
   "already-exists": [
     {
       claim: "we already have this event",
@@ -250,6 +286,8 @@ export const TEMPLATE_ASSERTIONS: Record<string, TemplateAssertion[]> = {
   "ok-low-body-extract": [],
   "ok-medium-dup": [],
   "no-url-prose-failed": [],
+  "trusted-listing-match": [],
+  "trusted-no-match": [],
   "extract-failed": [],
   "submit-failed": [],
   "sweep-exceeded": [],
@@ -321,9 +359,14 @@ export const NEUTRAL_FALLBACK: Record<string, string> = {
   "no-url": "unfetchable-url",
   // And the inverse.
   "unfetchable-url": "no-url",
+  // OPE-1316 — nothing listed to point at ⇔ we just couldn't use the link.
+  "already-listed-link": "unfetchable-url",
+  // OPE-1591 — not an AI answer after all ⇔ an ordinary link we couldn't use.
+  "ai-answer-link": "unfetchable-url",
   // "hasn't been read by a person yet" is false ⇔ this is a reply to us
   // mid-thread. `thread-reply-ack` is the template for precisely that.
   "support-ack": "thread-reply-ack",
+  "ack-after-classifier-failure": "thread-reply-ack",
   "correction-ack": "thread-reply-ack",
   "press-ack": "thread-reply-ack",
   // OPE-1134 — both new acks carry the same claim, so the same fallback.

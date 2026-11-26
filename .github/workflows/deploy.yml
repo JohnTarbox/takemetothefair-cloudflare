@@ -56,6 +56,8 @@ jobs:
     outputs:
       decision: ${{ steps.decide.outputs.decision }}
       sha: ${{ steps.decide.outputs.sha }}
+      loud: ${{ steps.decide.outputs.loud }}
+      reason: ${{ steps.decide.outputs.reason }}
     steps:
       - name: Checkout main (trusted gate code)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -85,6 +87,40 @@ jobs:
         env:
           MAIN_HEAD_SHA: ${{ steps.head.outputs.sha }}
           MAIN_HEAD_CI_CONCLUSION: ${{ steps.headci.outputs.conclusion }}
+
+  # OPE-1655 — a skip on main's HEAD FAILS this run. A red main CI used to skip
+  # d1-migrate / deploy-worker / deploy-mcp-server and the run still read
+  # "success": prod sat on 00f6c96 from 11-13 to 11-16 with merged PRs undeployed
+  # and nothing alerted. deploy-gate.mjs decides which skips are loud — only this
+  # repo's push-to-main CI for main's CURRENT HEAD (or an unresolvable HEAD). A
+  # stale or superseded run stays quiet: the newer commit's run deploys or fails.
+  # The out-of-GitHub backstop is the MCP Worker's hourly deploy-lag watch.
+  skipped-deploy-alarm:
+    name: Deploy skipped on main's HEAD
+    needs: gate
+    if: needs.gate.outputs.decision == 'skip' && needs.gate.outputs.loud == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Report the skip and fail
+        env:
+          REASON: ${{ needs.gate.outputs.reason }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          mcp=$(curl -fsS --max-time 10 https://mcp.meetmeatthefair.com/version 2>/dev/null | jq -r '.gitSha // empty' 2>/dev/null || true)
+          app=$(curl -fsS --max-time 10 https://meetmeatthefair.com/api/health 2>/dev/null | jq -r '.gitSha // empty' 2>/dev/null || true)
+          msg="Deploy skipped: CI for ${SHA:0:8} was ${CONCLUSION:-unknown}; prod is still ${mcp:-unknown} (MCP Worker) / ${app:-unknown} (main app)"
+          echo "::error title=Deploy skipped::${msg}. Gate: ${REASON}"
+          {
+            echo "### 🚨 ${msg}"
+            echo ""
+            echo "Gate: ${REASON}"
+            echo ""
+            echo "Nothing deployed. Fix main's CI (or re-run it); a manual dispatch of this workflow bypasses the gate."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
   # D1 migrations must apply BEFORE either the Pages or MCP Worker deploy
   # so the new code never runs against an old schema. Added 2026-05-21
@@ -118,9 +154,9 @@ jobs:
           ref: ${{ needs.gate.outputs.sha }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
           scope: "@johntarbox"
@@ -165,9 +201,9 @@ jobs:
           ref: ${{ needs.gate.outputs.sha }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
           scope: "@johntarbox"
@@ -192,6 +228,14 @@ jobs:
           # NEXT_PUBLIC_TURNSTILE_SITE_KEY to be set (an empty/missing secret
           # inlines blank — same broken state, so also guarded client-side).
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
+
+      # OPE-1666 — refuse to deploy a build whose /vendor/profile bundle has lost
+      # the vendor's own logo upload control (OPE-1112). Reads this build's
+      # .next/app-build-manifest.json — the chunks that page actually ships — so
+      # it needs no login, no network and no browser, and cannot flake. The page
+      # is auth-gated, so a post-deploy curl could only ever see /login.
+      - name: Guard vendor logo upload control in the built bundle
+        run: npx tsx scripts/check-vendor-logo-control.ts
 
       # ── OPE-494 — keep the PREVIOUS build's chunks servable after a deploy ──
       #
@@ -265,12 +309,20 @@ jobs:
             exit 1
           fi
 
+      # OPE-1655 — stamp the build like the MCP Worker does, so /api/health names
+      # the SHA that is live and the deploy-lag watch can compare it with main.
+      - name: Compute build vars
+        id: vars
+        env:
+          FULL_SHA: ${{ needs.gate.outputs.sha }}
+        run: echo "git_sha=${FULL_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
       - name: Deploy Worker
-        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
+          command: deploy --var GIT_SHA:${{ steps.vars.outputs.git_sha }}
 
       # Advance the generation only after a successful deploy: if the deploy
       # failed, the build now live is still the one already cached, so leaving the
@@ -328,9 +380,9 @@ jobs:
           ref: ${{ needs.gate.outputs.sha }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
           scope: "@johntarbox"
@@ -355,7 +407,7 @@ jobs:
           echo "build_time=$RUN_STARTED" >> "$GITHUB_OUTPUT"
 
       - name: Deploy MCP Worker
-        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

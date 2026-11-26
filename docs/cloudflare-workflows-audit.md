@@ -21,8 +21,8 @@ the EMAIL_JOBS hop for replies, and reducing retention).
 | ---------------------- | -------------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `inbound-email`        | `mcp-server/src/workflows/inbound-email.ts`        | per inbound email | 4 steps for support/unsubscribe/unknown; 5 + waitForEvent for correction/press; 7 for submit (3 sub-steps for fetch/extract/submit) |
 | `schema-org-sync`      | `mcp-server/src/workflows/schema-org-sync.ts`      | admin POST        | per-event loop                                                                                                                      |
-| `recommendations-scan` | `mcp-server/src/workflows/recommendations-scan.ts` | cron `0 6 * * *`  | per-chunk loop                                                                                                                      |
-| `event-date-drift`     | `mcp-server/src/workflows/event-date-drift.ts`     | cron `0 6 * * *`  | per-chunk loop                                                                                                                      |
+| `recommendations-scan` | `mcp-server/src/workflows/recommendations-scan.ts` | cron `5 6 * * *`  | per-chunk loop                                                                                                                      |
+| `event-date-drift`     | `mcp-server/src/workflows/event-date-drift.ts`     | cron `5 6 * * *`  | per-chunk loop                                                                                                                      |
 
 Pages can't host workflows (`feedback_pages_cant_bind_to_workers.md`);
 all four live in the MCP Worker. Main app reaches `schema-org-sync` via

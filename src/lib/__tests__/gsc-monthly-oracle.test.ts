@@ -122,6 +122,42 @@ first impressions
 Your content achievements
 `;
 
+/** Real September 2026 body (OPE-1568), trimmed. "1.65M" is the first
+ *  million-scale headline value these emails have carried. */
+const SEPTEMBER_BODY = `Your September performance
+on Google Search
+
+meetmeatthefair.com
+
+27.9K
+
+Clicks (web)
+
+1.65M
+
+Impressions (web)
+
+1.68K
+
+Pages with
+first impressions
+(estimated)
+
+Your content achievements
+
+Top growing pages
+
+Compared to previous month
+
+Page
+
+Clicks (web)
+
+https://meetmeatthefair.com/events/the-big-e-2026-eastern-states-exposition
+
++1.22K
+`;
+
 describe("parseGscMonthlyOracleEmail — real emails", () => {
   it("parses the July 2026 email (the one that caught the 65% undercount)", () => {
     const r = parseGscMonthlyOracleEmail({
@@ -187,6 +223,26 @@ ${JULY_BODY}`;
       emailDate: "2026-07-07T13:45:09Z",
     });
     expect(r).toMatchObject({ month: "2026-06", clicks: 2550, impressions: 126000 });
+  });
+
+  // OPE-1568 — the first report with a value in MILLIONS. Real body (Gmail
+  // thread 1a11157f6b5fb825, received 2026-10-06T13:12:19Z), trimmed after the
+  // first repeated column header. Before the fix this returned null and the
+  // month was lost on every route, including the inbound-worker one.
+  it("parses the September 2026 email, whose impressions are in millions", () => {
+    const r = parseGscMonthlyOracleEmail({
+      subject: "Your September Search performance for meetmeatthefair.com",
+      body: SEPTEMBER_BODY,
+      emailDate: "2026-10-06T13:12:19Z",
+    });
+    expect(r).toEqual({
+      month: "2026-09",
+      clicks: 27_900,
+      impressions: 1_650_000,
+      pagesWithFirstImpressions: 1680,
+      raw: { clicks: "27.9K", impressions: "1.65M", pages: "1.68K" },
+      emailDate: "2026-10-06",
+    });
   });
 
   it("parses May 2026, where clicks carry NO K suffix", () => {

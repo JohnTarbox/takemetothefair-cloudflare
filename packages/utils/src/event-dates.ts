@@ -64,7 +64,15 @@ export function normalizeEventDate(input: string | Date | null | undefined): Dat
     s = s.slice(0, 10) + "T12:00:00Z";
   }
   const d = new Date(s);
-  return isNaN(d.getTime()) ? null : d;
+  if (isNaN(d.getTime())) return null;
+  // OPE-1685 — the three rewrites above are an allow-list of SHAPES, and any
+  // other shape that parses to exact midnight UTC used to pass through:
+  // "November 21, 2026", "11/21/2026", "2026-11-21T00:00", "2026-11-21 00:00:00",
+  // microsecond ISO. Workers run in UTC, so each of those stored as 00:00Z and
+  // rendered a day early (3 of 17 community suggestions, Oct–Nov 2026). The
+  // invariant is about the RESULT, not the input, so finish through the Date
+  // branch: exact midnight UTC is a date-only value and anchors at noon.
+  return normalizeEventDate(d);
 }
 
 /**

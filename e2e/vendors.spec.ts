@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { gotoAndWaitForHeading } from "./helpers";
 
 test.describe("Vendors Page", () => {
@@ -9,7 +9,9 @@ test.describe("Vendors Page", () => {
   test("displays search functionality", async ({ page }) => {
     await gotoAndWaitForHeading(page, "/vendors", "Vendor Directory");
 
-    const searchInput = page.locator('input[type="search"], input[name="query"], input[placeholder*="search" i]');
+    const searchInput = page.locator(
+      'input[type="search"], input[name="query"], input[placeholder*="search" i]'
+    );
     await expect(searchInput).toBeVisible();
   });
 
@@ -17,9 +19,19 @@ test.describe("Vendors Page", () => {
     await gotoAndWaitForHeading(page, "/vendors", "Vendor Directory");
 
     // Check for vendor content (seeded data) or empty state
-    const hasVendors = await page.locator('text=/Artisan Crafts/i').isVisible().catch(() => false);
-    const hasGrid = await page.locator('[class*="grid"]').first().isVisible().catch(() => false);
-    const hasEmptyState = await page.locator('text=/no vendors/i').isVisible().catch(() => false);
+    const hasVendors = await page
+      .locator("text=/Artisan Crafts/i")
+      .isVisible()
+      .catch(() => false);
+    const hasGrid = await page
+      .locator('[class*="grid"]')
+      .first()
+      .isVisible()
+      .catch(() => false);
+    const hasEmptyState = await page
+      .locator("text=/no vendors/i")
+      .isVisible()
+      .catch(() => false);
 
     expect(hasVendors || hasGrid || hasEmptyState).toBeTruthy();
   });
@@ -37,9 +49,7 @@ test.describe("Vendors Page - Navigation", () => {
   test("can navigate to vendors page from home", async ({ page }) => {
     await page.goto("/");
 
-    const vendorsLink = page
-      .locator('header a[href="/vendors"], nav a[href="/vendors"]')
-      .first();
+    const vendorsLink = page.locator('header a[href="/vendors"], nav a[href="/vendors"]').first();
     await expect(vendorsLink).toBeVisible();
     await vendorsLink.click();
     await expect(page).toHaveURL(/\/vendors/, { timeout: 15000 });

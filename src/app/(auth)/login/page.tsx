@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { trackLogin } from "@/lib/analytics";
 import { safeCallbackUrl } from "@/lib/auth/safe-callback-url";
@@ -85,9 +86,9 @@ function LoginForm() {
             required
           />
 
-          <Input
+          <PasswordInput
             label="Password"
-            type="password"
+            autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Enter your password"

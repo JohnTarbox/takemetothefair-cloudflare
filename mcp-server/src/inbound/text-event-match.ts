@@ -50,6 +50,73 @@ export const UPCOMING_WINDOW_DAYS = 120;
 
 const DAY = 86_400;
 
+/**
+ * OPE-1571 — name words that are not generic enough to drop from search, but
+ * too common to identify a show on their own. "Holiday Craft & Vendor Fair"
+ * reduces to {holiday, vendor}; a Cheddar Up link whose slug read
+ * "holiday-market-vendor-registration" contained both, scored 100%, and the
+ * briefing named a Waterville fair for a Vassalboro market. When EVERY shared
+ * name token is one of these, the match also needs the event's town or
+ * promoter in the email — otherwise it is a candidate, never the match.
+ */
+export const WEAK_NAME_WORDS = new Set([
+  "holiday",
+  "holidays",
+  "christmas",
+  "winter",
+  "summer",
+  "spring",
+  "autumn",
+  "harvest",
+  "festive",
+  "seasonal",
+  "vendor",
+  "vendors",
+  "crafter",
+  "crafters",
+  "maker",
+  "makers",
+  "artisan",
+  "artisans",
+  "handmade",
+  "bazaar",
+  "community",
+  "local",
+  "registration",
+  // A school's name is the identifying part, and it is often under 4 letters
+  // ("CVU") so the tokenizer drops it, leaving only these two.
+  "high",
+  "middle",
+  "elementary",
+  "school",
+]);
+
+/**
+ * OPE-1571 — the state a sender put in the SUBJECT, as a two-letter code. The
+ * subject only: a body carries signature blocks and forwarded addresses, which
+ * say where the sender is, not where the event is. Two-letter codes need a
+ * comma ("Gardiner, ME"), because a bare uppercase "ME" is also a word.
+ */
+const STATE_NAMES: ReadonlyArray<[string, string]> = [
+  ["maine", "ME"],
+  ["new hampshire", "NH"],
+  ["vermont", "VT"],
+  ["massachusetts", "MA"],
+  ["connecticut", "CT"],
+  ["rhode island", "RI"],
+  ["new york", "NY"],
+];
+
+export function statesNamedInSubject(subject: string | null): Set<string> {
+  const out = new Set<string>();
+  const padded = ` ${norm(subject ?? "")} `;
+  for (const [name, code] of STATE_NAMES) {
+    if (padded.includes(` ${name} `)) out.add(code);
+  }
+  for (const m of (subject ?? "").matchAll(/,\s*(ME|NH|VT|MA|CT|RI|NY)\b/g)) out.add(m[1]);
+  return out;
+}
+
 export type TextMatchOutcome =
   | "matched"
   | "ambiguous" // two or more candidates pass, none clearly leads
@@ -67,6 +134,8 @@ export interface TextMatchCandidateInput {
   startDate: number | null;
   endDate: number | null;
   city: string | null;
+  /** The venue's two-letter state. Absent = unknown, never a disagreement. */
+  state?: string | null;
   promoterName: string | null;
 }
 
@@ -184,16 +253,19 @@ export function scoreCandidates(
   const monthDays = mentionedMonthDays(text);
   const years = mentionedYears(text);
   const lowerText = ` ${norm(text)} `;
+  const subjectStates = statesNamedInSubject(input.subject);
 
   return candidates.map((c) => {
     const reasons: string[] = [];
     let best = 0;
     let bestMatched = 0;
     let bestName = c.name;
+    let bestHits: string[] = [];
     for (const n of [c.name, ...c.variants]) {
       const toks = nameTokens(n);
       if (toks.length === 0) continue;
-      const hit = toks.filter((t) => textWords.has(t)).length;
+      const hits = toks.filter((t) => textWords.has(t));
+      const hit = hits.length;
       let containment = hit / toks.length;
       // A one-token name ("Fryeburg Fair") counts only when its WHOLE phrase
       // is in the text — the single token alone is one shared word.
@@ -205,12 +277,32 @@ export function scoreCandidates(
         best = containment;
         bestMatched = hit;
         bestName = n;
+        bestHits = hits;
       }
     }
-    const eligible = best >= MIN_NAME_CONTAINMENT;
+    const townNamed = !!c.city && lowerText.includes(` ${norm(c.city)} `);
+    const promoterNorm = c.promoterName ? norm(c.promoterName) : "";
+    const promoterNamed = promoterNorm.length >= 6 && lowerText.includes(` ${promoterNorm} `);
+    // OPE-1571 — only weak words shared: the name alone does not identify it.
+    const weakOnly = bestHits.length > 0 && bestHits.every((t) => WEAK_NAME_WORDS.has(t));
+    // OPE-1571 — the subject names a state and this event is somewhere else.
+    // Naming the event's own town overrides it: "Maine Made Crafts at Topsfield"
+    // uses "Maine" as part of a business name.
+    const stateConflict =
+      subjectStates.size > 0 && !!c.state && !subjectStates.has(c.state) && !townNamed;
+    const eligible =
+      best >= MIN_NAME_CONTAINMENT && (!weakOnly || townNamed || promoterNamed) && !stateConflict;
     reasons.push(
       `name ${Math.round(best * 100)}% (${bestMatched} token${bestMatched === 1 ? "" : "s"}${bestName !== c.name ? `, via variant "${bestName}"` : ""})`
     );
+    if (weakOnly && best >= MIN_NAME_CONTAINMENT && !eligible) {
+      reasons.push(
+        `only common words shared (${bestHits.join(", ")}) and neither town nor promoter named`
+      );
+    }
+    if (stateConflict) {
+      reasons.push(`subject names ${[...subjectStates].join("/")}, event is in ${c.state}`);
+    }
 
     let score = best;
     if (c.startDate != null) {
@@ -242,16 +334,13 @@ export function scoreCandidates(
         reasons.push(`upcoming within ${UPCOMING_WINDOW_DAYS}d`);
       }
     }
-    if (c.city && lowerText.includes(` ${norm(c.city)} `)) {
+    if (townNamed) {
       score += 0.3;
       reasons.push(`town "${c.city}" named`);
     }
-    if (c.promoterName) {
-      const p = norm(c.promoterName);
-      if (p.length >= 6 && lowerText.includes(` ${p} `)) {
-        score += 0.3;
-        reasons.push(`promoter "${c.promoterName}" named`);
-      }
+    if (promoterNamed) {
+      score += 0.3;
+      reasons.push(`promoter "${c.promoterName}" named`);
     }
     return {
       id: c.id,
@@ -347,6 +436,7 @@ export async function matchEventFromText(
         startDate: events.startDate,
         endDate: events.endDate,
         city: venues.city,
+        state: venues.state,
         promoterName: promoters.companyName,
       })
       .from(events)
@@ -366,6 +456,7 @@ export async function matchEventFromText(
         startDate: e.startDate ? Math.floor(e.startDate.getTime() / 1000) : null,
         endDate: e.endDate ? Math.floor(e.endDate.getTime() / 1000) : null,
         city: e.city,
+        state: e.state,
         promoterName: e.promoterName,
       });
     }

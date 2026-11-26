@@ -16,12 +16,14 @@ export const dynamic = "force-dynamic";
  * defeats CDN caching when the admin replaces a logo.
  */
 
+import { updateWithFieldHistory } from "@takemetothefair/db-schema/field-history";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { describeRefusedDeclaredType, validateImageBytes } from "@/lib/upload-image-pipeline";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 
 const MAX_BYTES = 2 * 1024 * 1024; // 2 MB
@@ -92,9 +94,17 @@ export const POST = withAuth<{ id: string }>(
     const contentType = file.type || "application/octet-stream";
     if (!ALLOWED_TYPES.has(contentType)) {
       return NextResponse.json(
-        { error: `Unsupported content type "${contentType}". Allowed: jpg/png/webp/svg.` },
+        { error: describeRefusedDeclaredType(contentType) },
         { status: 400 }
       );
+    }
+
+    // OPE-1550 — check the BYTES, not just the browser's label. A JPEG XL file
+    // renamed .jpg arrives typed image/jpeg and used to be stored as one.
+    const body = await file.arrayBuffer();
+    const byteError = validateImageBytes(new Uint8Array(body), contentType);
+    if (byteError) {
+      return NextResponse.json({ error: byteError }, { status: 400 });
     }
 
     const ext = extensionFor(contentType);
@@ -116,7 +126,6 @@ export const POST = withAuth<{ id: string }>(
     const key = `vendors/${id}/logo-${Date.now()}.${ext}`;
 
     try {
-      const body = await file.arrayBuffer();
       await bucket.put(key, body, {
         httpMetadata: { contentType },
         customMetadata: { uploadedBy: session.user.id, originalName: file.name },
@@ -137,7 +146,15 @@ export const POST = withAuth<{ id: string }>(
     // (rather than expecting the client to PATCH separately) keeps the upload
     // atomic from the admin's perspective: one click → R2 + DB consistent.
     try {
-      await db.update(vendors).set({ logoUrl: url }).where(eq(vendors.id, id));
+      // OPE-1653 — record the logo this upload replaced.
+      await updateWithFieldHistory(db, {
+        table: vendors,
+        entityType: "vendor",
+        entityId: id,
+        patch: { logoUrl: url },
+        actor: session.user.id,
+        source: "api:POST /api/admin/vendors/[id]/upload-logo",
+      });
       await recomputeVendorCompleteness(db, id);
     } catch (e) {
       await logError(db, {

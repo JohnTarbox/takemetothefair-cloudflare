@@ -10,6 +10,11 @@
  *   ENRICHMENT_DRY_RUN     inverted — `env.ENRICHMENT_DRY_RUN !== "false"`
  *                          (enrichment/select-candidates.ts, promoter-select.ts),
  *                          so UNSET means dry-run is ON, i.e. dark.
+ *   PROMOTER_ENRICHMENT_DRY_RUN  inverted the same way (OPE-1712,
+ *                          promoter-select.ts promoterCronDryRun). When unset
+ *                          the cron falls back to ENRICHMENT_DRY_RUN; read by
+ *                          name alone, unset reports dark, which is correct
+ *                          while ENRICHMENT_DRY_RUN is "true".
  *   AUTO_REPLY_ENABLED     default-open — `env.AUTO_REPLY_ENABLED !== "false"`
  *                          (mcp-server/src/email-gates.ts), so only the exact
  *                          string "false" holds the acks (OPE-1394).
@@ -21,7 +26,7 @@
  */
 export function isCapabilityFlagDark(name: string, value: string | null | undefined): boolean {
   const v = value ?? null;
-  if (name === "ENRICHMENT_DRY_RUN") return v !== "false";
+  if (name === "ENRICHMENT_DRY_RUN" || name === "PROMOTER_ENRICHMENT_DRY_RUN") return v !== "false";
   if (name === "AUTO_REPLY_ENABLED") return v === "false";
   if (name === "FAQ_PILOT_EVENT_SLUGS") {
     return (v ?? "").split(",").every((s) => s.trim().length === 0);

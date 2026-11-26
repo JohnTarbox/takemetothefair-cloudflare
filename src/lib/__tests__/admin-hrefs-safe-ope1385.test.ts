@@ -40,8 +40,20 @@ const SCAN_DIRS = [join(ROOT, "src", "app", "admin"), join(ROOT, "src", "compone
  * equivalent http(s)-only guard — never a stored, user-supplied URL.
  */
 const EXEMPT: Record<string, { count: number; why: string }> = {
-  "src/app/admin/page.tsx::stat.href": { count: 1, why: "static dashboard tiles, internal routes" },
+  "src/components/admin/admin-paged-table.tsx::`${endpoint}?${csvParams.toString()}`": {
+    count: 1,
+    why: "CSV export of an internal API path; callers pass /api/admin/… literals",
+  },
+  "src/app/admin/page.tsx::tile.href": { count: 1, why: "queue tiles, internal routes from code" },
   "src/app/admin/layout.tsx::item.href": { count: 1, why: "static nav config, internal routes" },
+  "src/app/admin/admin-section-tabs.tsx::tab.href": {
+    count: 1,
+    why: "static section config (admin-sections.ts), internal routes",
+  },
+  "src/app/admin/duplicates/duplicates-tabs.tsx::tab.href": {
+    count: 1,
+    why: "two-entry TABS constant, internal routes",
+  },
   "src/app/admin/ideas/page.tsx::href": {
     count: 1,
     why: "Chip prop; callers pass /admin/ideas?… literals",
@@ -121,6 +133,21 @@ const EXEMPT: Record<string, { count: number; why: string }> = {
   "src/app/admin/analytics/page.tsx::filterUrl({ limit: n })": {
     count: 1,
     why: "/admin/analytics?tab=indexnow&… via URLSearchParams",
+  },
+  // OPE-1574 — Recommendations "View all" / Previous / Next. ruleHref() is a
+  // fixed /admin/analytics?tab=recommendations&rule=<encodeURIComponent(id)>
+  // path plus an integer page; it can never carry a stored URL.
+  "src/app/admin/analytics/page.tsx::ruleHref(1)": {
+    count: 1,
+    why: "OPE-1574 fixed recommendations path + encoded rule id",
+  },
+  "src/app/admin/analytics/page.tsx::ruleHref(win.page - 1)": {
+    count: 1,
+    why: "OPE-1574 fixed recommendations path + encoded rule id + integer page",
+  },
+  "src/app/admin/analytics/page.tsx::ruleHref(win.page + 1)": {
+    count: 1,
+    why: "OPE-1574 fixed recommendations path + encoded rule id + integer page",
   },
   "src/app/admin/analytics/page.tsx::p.href": {
     count: 1,

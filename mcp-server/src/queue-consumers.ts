@@ -12,13 +12,18 @@
  * import that file here because it would drag in main-app-only deps.
  */
 
-import { lt } from "drizzle-orm";
+import { eq, lt } from "drizzle-orm";
 import { getDb, type Db } from "./db.js";
-import { indexnowSubmissions, emailSendLedger } from "./schema.js";
+import { indexnowSubmissions, emailSendLedger, operatorOutboundDrafts } from "./schema.js";
+import { loadJobAttachments, type JobAttachment } from "./email-attachments.js";
 import { ledgerEmailSend, wasEmailSent } from "./mailer.js";
 import { logError } from "./logger.js";
 import {
   closeObligationsAnsweredBy,
+  closeContactObligationsByAddress,
+  closeNoteForDraftSend,
+  recipientAddresses,
+  shouldCloseByAddressOnSend,
   closeNoteForSend,
   shouldCloseOnSend,
 } from "./support-obligations-close.js";
@@ -98,6 +103,10 @@ type EmailJobMessage = {
    *  their next reply lands back correlated. */
   inReplyTo?: string;
   references?: string;
+  /** OPE-1605 — the draft this send delivers; its sent_message_id is written here. */
+  operatorDraftId?: string;
+  /** OPE-1579 — references to stored files; the bytes are read at send time. */
+  attachments?: JobAttachment[];
   /**
    * OPE-385 — RFC 8058 one-click unsubscribe headers.
    *
@@ -143,6 +152,8 @@ type ConsumerEnv = {
    *  TypeScript can't distinguish dev (where the binding may be absent)
    *  from prod — at runtime in prod it is always present. */
   EMAIL?: SendEmail;
+  /** OPE-1579 — where a job's attachments are read from. */
+  VENDOR_ASSETS?: R2Bucket;
   INDEXNOW_KEY?: string;
   /** OPE-163 — authoritative customer-facing reply gate. When not "true", any
    *  `reply:*`-source message is NOT sent (recorded as a visible 'stubbed'
@@ -163,9 +174,16 @@ const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
  */
 export async function sendViaCfEmail(
   msg: EmailJobMessage,
-  binding: SendEmail
+  binding: SendEmail,
+  bucket?: R2Bucket
 ): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
   try {
+    let attachments: EmailAttachment[] | undefined;
+    if (msg.attachments?.length) {
+      const loaded = await loadJobAttachments(bucket, msg.attachments);
+      if (!loaded.ok) return loaded;
+      attachments = loaded.files;
+    }
     // OPE-163 — RFC 5322 threading headers when this is a reply to an inbound.
     const headers: Record<string, string> = {};
     if (msg.inReplyTo) headers["In-Reply-To"] = msg.inReplyTo;
@@ -206,6 +224,7 @@ export async function sendViaCfEmail(
       html: msg.html,
       text: msg.text,
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(attachments ? { attachments } : {}),
     });
     return { ok: true, messageId: res.messageId };
   } catch (err) {
@@ -234,6 +253,8 @@ export async function sendViaCfEmail(
  * outcome that was decided on the first attempt.
  */
 const PERMANENT_SEND_ERRORS: RegExp[] = [
+  // OPE-1579 — our own refusal: the stored file is gone, and a retry can't help.
+  /^attachment unavailable: /,
   /has been suppressed due to repeated bounces/i,
   /^Invalid email address\b/i,
   /^no valid recipient in `to`$/,
@@ -319,13 +340,14 @@ export async function handleEmailBatch(
         inboundEmailId: m.body.inboundEmailId ?? null,
         bodyHtml: m.body.html,
         bodyText: m.body.text,
+        attachmentsJson: m.body.attachments?.length ? JSON.stringify(m.body.attachments) : null,
       });
       m.ack();
       console.warn(`[queue:email] reply held (disabled) id=${m.id} → ${maskEmails(m.body.to)}`);
       continue;
     }
 
-    const result = await sendViaCfEmail(m.body, env.EMAIL);
+    const result = await sendViaCfEmail(m.body, env.EMAIL, env.VENDOR_ASSETS);
     if (result.ok) {
       // Record BEFORE ack so a crash in the send→ack window still leaves the
       // sent marker for the redelivery. Upsert (same id overwrites a prior
@@ -343,7 +365,26 @@ export async function handleEmailBatch(
         inboundEmailId: m.body.inboundEmailId ?? null,
         bodyHtml: m.body.html,
         bodyText: m.body.text,
+        attachmentsJson: m.body.attachments?.length ? JSON.stringify(m.body.attachments) : null,
       });
+      // OPE-1605 — the draft records which ledger row delivered it. Never fails
+      // the send: the mail has already gone.
+      if (m.body.operatorDraftId) {
+        try {
+          await db
+            .update(operatorOutboundDrafts)
+            .set({ sentMessageId: m.id })
+            .where(eq(operatorOutboundDrafts.id, m.body.operatorDraftId));
+        } catch (err) {
+          await logError(env.DB, {
+            source: "mcp:email-queue",
+            message: `sent_message_id write failed for draft ${m.body.operatorDraftId}`,
+            sessionId,
+            error: err,
+            context: { id: m.id },
+          });
+        }
+      }
       // OPE-1252 — a manual reply closes the person's obligation only now that
       // the provider accepted it and the `sent` row exists. Before the ack, so a
       // crash leaves the redelivery to close it (the close is idempotent: it
@@ -353,7 +394,7 @@ export async function handleEmailBatch(
           await closeObligationsAnsweredBy(
             db,
             m.body.inboundEmailId!,
-            closeNoteForSend(m.id, result.messageId)
+            closeNoteForSend(m.id, result.messageId, m.body.source)
           );
         } catch (err) {
           await logError(env.DB, {
@@ -362,6 +403,27 @@ export async function handleEmailBatch(
             sessionId,
             error: err,
             context: { id: m.id, inboundEmailId: m.body.inboundEmailId },
+          });
+        }
+      }
+      // OPE-1683 — a hand-composed draft has no inbound to close against; it
+      // answers its recipient's open contact obligation instead. Same timing
+      // and same never-fail rule as the block above.
+      if (shouldCloseByAddressOnSend(m.body)) {
+        try {
+          await closeContactObligationsByAddress(
+            db,
+            recipientAddresses(m.body.to),
+            new Date(),
+            closeNoteForDraftSend(m.body.operatorDraftId!, m.id, result.messageId)
+          );
+        } catch (err) {
+          await logError(env.DB, {
+            source: "mcp:email-queue",
+            message: `contact obligation close-by-address failed for draft ${m.body.operatorDraftId}`,
+            sessionId,
+            error: err,
+            context: { id: m.id, operatorDraftId: m.body.operatorDraftId },
           });
         }
       }
@@ -386,6 +448,7 @@ export async function handleEmailBatch(
         inboundEmailId: m.body.inboundEmailId ?? null,
         bodyHtml: m.body.html,
         bodyText: m.body.text,
+        attachmentsJson: m.body.attachments?.length ? JSON.stringify(m.body.attachments) : null,
       });
       // OPE-1172 — a permanent rejection is decided on the first attempt.
       // Ack it (no retry, no DLQ) and say so once, at warn, instead of four

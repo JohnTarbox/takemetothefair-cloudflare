@@ -109,6 +109,31 @@ describe("rolloverEventIfRecurring — happy path", () => {
     expect(rolled.completenessScore).toBeGreaterThan(0);
   });
 
+  it("OPE-1680 — drops last year's vendor fee and fee notes, like the deadline", async () => {
+    const sourceId = seedAnnual({
+      vendorFeeMinCents: 7500,
+      vendorFeeMaxCents: 15000,
+      vendorFeeNotes: "$75 per 10x10 booth",
+      applicationDeadline: new Date(Date.UTC(2026, 7, 1, 12, 0, 0)),
+      applicationUrl: "https://example.org/apply",
+    });
+    const res = await rolloverEventIfRecurring(db, sourceId, {
+      via: "cron",
+      actorUserId: null,
+      now: NOW,
+    });
+    expect(res.created).toBe(true);
+    const [rolled] = db.select().from(events).where(eq(events.id, res.newEventId!)).all();
+    expect(rolled.vendorFeeMinCents).toBeNull();
+    expect(rolled.vendorFeeMaxCents).toBeNull();
+    expect(rolled.vendorFeeNotes).toBeNull();
+    expect(rolled.applicationDeadline).toBeNull();
+    // Positive landmark: the standing portal URL still carries over, so the
+    // nulls above are the fee rule, not a rollover that copied nothing.
+    expect(rolled.applicationUrl).toBe("https://example.org/apply");
+    expect(rolled.description).toBe("A big agricultural fair.");
+  });
+
   it("inherits the source's series_id so the rolled edition is series-linked (P3.5)", async () => {
     const sourceId = seedAnnual({
       id: "evt-series-2026",
@@ -223,6 +248,25 @@ describe("rolloverEventIfRecurring — happy path", () => {
     expect(res.newSlug).toBe("fryeburg-fair-2027");
     const [rolled] = db.select().from(events).where(eq(events.id, res.newEventId!)).all();
     expect(rolled.name).toBe("Fryeburg Fair");
+  });
+
+  // OPE-1543 — a display line in the source name must not ride into next year
+  // with this year's dates ("… 2027 — Aug 27–30 in Cummington, MA").
+  it("strips a date-range display suffix instead of year-swapping it forward", async () => {
+    const sourceId = seedAnnual({
+      id: "evt-display",
+      name: "Cummington Fair 2026 — Aug 27–30 in Cummington, MA",
+      slug: unsafeSlug("cummington-fair-2026"),
+    });
+    const res = await rolloverEventIfRecurring(db, sourceId, {
+      via: "cron",
+      actorUserId: null,
+      now: NOW,
+    });
+    expect(res.created).toBe(true);
+    expect(res.newSlug).toBe("cummington-fair-2027");
+    const [rolled] = db.select().from(events).where(eq(events.id, res.newEventId!)).all();
+    expect(rolled.name).toBe("Cummington Fair 2027");
   });
 });
 

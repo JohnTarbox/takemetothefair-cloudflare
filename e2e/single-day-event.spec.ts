@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 // These tests run in the chromium-authenticated project with storageState
 test.describe("Single-Day Event Creation", () => {
@@ -101,7 +101,8 @@ test.describe("Single-Day Event Creation", () => {
     const promoterSelect = page.locator("#promoterId");
     // Wait for at least 2 options (including the "Select a promoter" placeholder)
     await page.waitForFunction(
-      (selector: string) => (document.querySelector(selector)?.querySelectorAll("option").length ?? 0) >= 2,
+      (selector: string) =>
+        (document.querySelector(selector)?.querySelectorAll("option").length ?? 0) >= 2,
       "#promoterId",
       { timeout: 15000 }
     );

@@ -29,6 +29,7 @@
  */
 
 import { extractJsonObject, extractJsonValue } from "../model-json.js";
+import { isGenericSignName, isProductEcho } from "./sign-words.js";
 
 /**
  * Vision model. Kept as a constant (not inlined) so it is swappable in one
@@ -68,7 +69,15 @@ const MAX_PRODUCTS = 8;
  *               sponsor sign) — recorded, never a proposal
  *  - unclear    the model declined
  */
-export type PhotoKind = "booth" | "performer" | "scenery" | "signage" | "unclear";
+export type PhotoKind =
+  | "booth"
+  | "performer"
+  | "scenery"
+  | "signage"
+  /** OPE-1705 — a vendor's business card is the subject. Its fields are read by
+   *  a second call (business-card.ts); the image is never published. */
+  | "business_card"
+  | "unclear";
 /** @deprecated the pre-OPE-969 name; kept so imports do not churn. */
 export type BoothKind = PhotoKind;
 
@@ -133,6 +142,14 @@ export interface BoothIdentification {
    * written, gallery-attached, or linked to a performer without a person.
    */
   salvaged?: "markdown" | "truncated-json";
+  /**
+   * OPE-1709 — the answer to the separate main-subject check
+   * (`checkCardSubject`). Set only on a photo the check was asked of (see
+   * `needsCardCheck`); `null` there means the check was asked and not answered.
+   */
+  cardCheck?: CardSubject | null;
+  /** OPE-1709 — the main prompt's kind, when the card check overrode it. */
+  reclassifiedFrom?: PhotoKind;
 }
 
 /** A total failure to identify. Callers stage/skip rather than write. */
@@ -204,18 +221,19 @@ Rules — follow exactly:
 3. kind = "scenery" for rides, bounce houses, crowds, animals, pens, grounds.
 4. kind = "signage" if the only legible sign belongs to someone who is NOT the
    subject (a banner behind a different booth, a sponsor sign).
-5. If you cannot tell, kind = "unclear".
-6. name: EXACTLY as printed on the subject's OWN sign, banner, board or truck.
+5. kind = "business_card" if a printed business card (or a few) fills the photo.
+6. If you cannot tell, kind = "unclear".
+7. name: EXACTLY as printed on the subject's OWN sign, banner, board or truck.
    Never a description. If none is legible, null.
-7. website: ONLY if a web address is legibly printed. Otherwise null.
-8. products: at most 8 short lowercase words, booths only, ONLY if visible.
-9. confidence: 0.0-1.0. LOW (<0.5) if the sign is obscured, blurry or angled.
-10. NEVER invent a name, URL, phone number, or town.
-11. identifiable_minor: true if ANY child or teenager appears anywhere in the
+8. website: ONLY if a web address is legibly printed. Otherwise null.
+9. products: at most 8 short lowercase words, booths only, ONLY if visible.
+10. confidence: 0.0-1.0. LOW (<0.5) if the sign is obscured, blurry or angled.
+11. NEVER invent a name, URL, phone number, or town.
+12. identifiable_minor: true if ANY child or teenager appears anywhere in the
     photo. false only if you are sure none does. When unsure, answer true.
 
 Reply with ONLY a JSON object, no prose, no markdown fence:
-{"kind":"booth|performer|scenery|signage|unclear","name":string|null,"website":string|null,"products":[string],"confidence":number,"rationale":string,"identifiable_minor":boolean}`;
+{"kind":"booth|performer|scenery|signage|business_card|unclear","name":string|null,"website":string|null,"products":[string],"confidence":number,"rationale":string,"identifiable_minor":boolean}`;
 
 /**
  * OPE-969 — Workers AI JSON mode. Constrains `kind` to the enum and removes
@@ -227,7 +245,10 @@ export const VISION_RESPONSE_FORMAT = {
   json_schema: {
     type: "object",
     properties: {
-      kind: { type: "string", enum: ["booth", "performer", "scenery", "signage", "unclear"] },
+      kind: {
+        type: "string",
+        enum: ["booth", "performer", "scenery", "signage", "business_card", "unclear"],
+      },
       name: { type: ["string", "null"] },
       website: { type: ["string", "null"] },
       products: { type: "array", items: { type: "string" }, maxItems: MAX_PRODUCTS },
@@ -306,6 +327,8 @@ function fromParsedObject(obj: Record<string, unknown>): BoothIdentification {
         // or a model that echoes the old vocabulary, still lands in the gallery.
         general: "scenery",
         signage: "signage",
+        business_card: "business_card",
+        "business card": "business_card",
       } as Record<string, PhotoKind>
     )[rawKind] ?? "unclear";
 
@@ -326,7 +349,9 @@ function fromParsedObject(obj: Record<string, unknown>): BoothIdentification {
     // Each name is kept ONLY for its own kind. A scenery shot can never carry a
     // vendor into the write path, and a performer photo never carries a
     // business name (the cheer squad's "products" were its uniforms).
-    businessName: kind === "booth" ? name : null,
+    // OPE-1705 — a card's printed business name is kept too; business-card.ts
+    // re-reads it with its own confidence before anything matches on it.
+    businessName: kind === "booth" || kind === "business_card" ? name : null,
     performerName: kind === "performer" ? name : null,
     signText: kind === "signage" ? name : null,
     website: kind === "booth" ? website : null,
@@ -384,7 +409,8 @@ export function salvageReply(text: string): BoothIdentification | null {
     }
   }
   const kind = typeof found.kind === "string" ? found.kind.toLowerCase().trim() : "";
-  if (!["booth", "performer", "scenery", "general", "signage"].includes(kind)) return null;
+  if (!["booth", "performer", "scenery", "general", "signage", "business_card"].includes(kind))
+    return null;
   return {
     ...fromParsedObject(found),
     salvaged: viaJson ? "truncated-json" : "markdown",
@@ -600,6 +626,23 @@ export type StageKind =
   | "booth_identifiable_minor"
   | "booth_roster_check_failed"
   | "booth_not_at_a_stall"
+  /** OPE-1695 — the "name" is only sign words ("Welcome", "Cash Only"). */
+  | "booth_name_generic"
+  /** OPE-1695 — the products list just repeats the name (["Welcome","Welcome"]). */
+  | "booth_name_echo"
+  /** OPE-1695 — a brand-new vendor with nothing beyond its name to back it. */
+  | "booth_new_vendor_uncorroborated"
+  /** OPE-1695 — the existing-vendor name lookup threw; not written unchecked. */
+  | "booth_vendor_check_failed"
+  /** OPE-1694 — the sign's domain is on more than one vendor; a person picks. */
+  | "booth_domain_ambiguous"
+  /** OPE-1694 — the domain lookup threw; never written on the strength of an unrun check. */
+  | "booth_domain_check_failed"
+  /**
+   * OPE-1697 — would have auto-written, but the upload's location is near more
+   * than one same-day fair and nobody PICKED this one. Staged for a person.
+   */
+  | "event_choice_ambiguous"
   | "performer_unnamed"
   | "performer_unmatched"
   | "performer_not_on_roster"
@@ -613,7 +656,9 @@ export type Disposition =
   /** A named act — resolved against the performer table and the event roster by the pipeline. */
   | { action: "performer"; identification: BoothIdentification }
   /** Signage ≠ presence — recorded, nothing written. */
-  | { action: "record"; identification: BoothIdentification; reason: string };
+  | { action: "record"; identification: BoothIdentification; reason: string }
+  /** OPE-1705 — a business card: read its fields, match a vendor, never publish the image. */
+  | { action: "card"; identification: BoothIdentification };
 
 /**
  * Decide what to do with one identified photo. Pure — the whole auto-write-vs-
@@ -637,6 +682,10 @@ export function disposition(id: BoothIdentification): Disposition {
   if (id.kind === "scenery") {
     return { action: "skip", identification: id, reason: "fair scenery — gallery" };
   }
+  // OPE-1705 — after the salvage check (a salvaged "card" still stages), before
+  // anything that could treat it as a booth: a card is never a hero or a write
+  // through the booth tail.
+  if (id.kind === "business_card") return { action: "card", identification: id };
   if (id.kind === "signage") {
     return {
       action: "record",
@@ -669,6 +718,24 @@ export function disposition(id: BoothIdentification): Disposition {
       identification: id,
       reason: "a booth, but its name is not legible",
       stageKind: "booth_name_unreadable",
+    };
+  }
+  // OPE-1695 — is what the model READ a business name at all? Confidence
+  // cannot answer that: "Welcome" was read correctly, at 1.0.
+  if (isGenericSignName(id.businessName)) {
+    return {
+      action: "stage",
+      identification: id,
+      reason: `generic sign text, not a business name: "${id.businessName}"`,
+      stageKind: "booth_name_generic",
+    };
+  }
+  if (isProductEcho(id.businessName, id.products)) {
+    return {
+      action: "stage",
+      identification: id,
+      reason: `the products list only repeats the name "${id.businessName}" — likely sign text`,
+      stageKind: "booth_name_echo",
     };
   }
   if (id.confidence < AUTO_WRITE_CONFIDENCE) {
@@ -762,6 +829,104 @@ export async function checkBoothPresence(
   } catch {
     return null;
   }
+}
+
+/**
+ * OPE-1709 — is the photo's main subject a business card?
+ *
+ * The main prompt calls a card a booth. Measured 2026-11-25 on the first real
+ * Snap card (OPE-1709), with the production prompt: `booth` 6 of 6, at
+ * confidence 0.8–1.0, upright AND sideways — so the rotation was not the cause.
+ * Rule 1 ("an exhibitor's … sign") wins over rule 5 for a card that names a
+ * business. An earlier fair snap of a card was the same: a card,
+ * proposed as a booth. Worse, the OPE-240 presence check answered
+ * `vendor_table_or_tent` 9 of 9 for the card, so at a fair a card would clear
+ * the auto-write gate and be published as a booth with the card as its hero.
+ *
+ * Asked on its own, about the MAIN SUBJECT (not "what is the name printed on",
+ * which a booth with a stack of cards on its table answered `business_card` 3
+ * of 3), this was right 57 of 57: `business_card` on
+ * all 12 card runs (one card upright and both sideways turns, a second card), not a card
+ * on all 45 runs over 15 real named booth photos (3 runs each).
+ * n = 2 cards, 15 booths. Revisit against `card_check` in the photo/classify
+ * workflow steps.
+ */
+export const CARD_SUBJECTS = [
+  "business_card",
+  "booth_or_table",
+  "banner_or_sign",
+  "other",
+] as const;
+export type CardSubject = (typeof CARD_SUBJECTS)[number];
+
+export const CARD_SUBJECT_PROMPT =
+  `What is the MAIN SUBJECT of this photo? Choose exactly one: ` +
+  `"business_card" (one printed wallet-size card that fills most of the photo, at any angle or rotation), ` +
+  `"booth_or_table" (a vendor stall, table, tent or display of goods, even if small cards lie on it), ` +
+  `"banner_or_sign", "other". Reply ONLY with JSON: {"main_subject":string}`;
+
+/** Parse the card-subject reply. Anything that is not exactly one of CARD_SUBJECTS is null. */
+export function parseCardSubjectReply(raw: unknown): CardSubject | null {
+  const resp = (raw as { response?: unknown })?.response ?? raw;
+  let obj: unknown = resp;
+  if (typeof resp === "string") obj = extractJsonObject(resp);
+  const v = (obj as { main_subject?: unknown } | null)?.main_subject;
+  return typeof v === "string" && (CARD_SUBJECTS as readonly string[]).includes(v)
+    ? (v as CardSubject)
+    : null;
+}
+
+/** Ask the card-subject question once. Never throws — a failure is `null`, which changes nothing. */
+export async function checkCardSubject(
+  ai: VisionAi,
+  bytes: Uint8Array
+): Promise<CardSubject | null> {
+  try {
+    const raw = await ai.run(VISION_MODEL, {
+      image: Array.from(bytes),
+      prompt: CARD_SUBJECT_PROMPT,
+      max_tokens: 60,
+    });
+    return parseCardSubjectReply(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The kinds a card has been (or could plausibly be) misread as. Performer and
+ * scenery are not asked: neither has a card's shape, and each check is a model
+ * call. A salvaged read is not asked either — `disposition()` stages it first.
+ */
+const CARD_CHECK_KINDS: ReadonlySet<PhotoKind> = new Set(["booth", "signage", "unclear"]);
+
+export function needsCardCheck(id: BoothIdentification): boolean {
+  return !id.salvaged && CARD_CHECK_KINDS.has(id.kind);
+}
+
+/**
+ * OPE-1709 — apply the card-subject answer. Pure. Only an answer of exactly
+ * `business_card` changes anything: the photo becomes a card, keeping the name
+ * the main prompt read (business-card.ts re-reads every field before anything
+ * matches on it). Any other answer, or none, leaves the kind as it was — so an
+ * unanswered check can only ever cost a card, never turn a booth into one.
+ */
+export function applyCardCheck(
+  id: BoothIdentification,
+  subject: CardSubject | null
+): BoothIdentification {
+  if (subject !== "business_card") return { ...id, cardCheck: subject };
+  return {
+    ...id,
+    kind: "business_card",
+    businessName: id.businessName ?? id.signText,
+    performerName: null,
+    signText: null,
+    website: null,
+    products: [],
+    cardCheck: subject,
+    reclassifiedFrom: id.kind,
+  };
 }
 
 /**

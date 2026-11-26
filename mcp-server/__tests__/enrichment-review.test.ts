@@ -8,6 +8,8 @@ import { eq } from "drizzle-orm";
 import { CapturingMcpServer, createTestDb, mockIndexNowFetch, type TestDb } from "./setup-db.js";
 import { registerAdminTools } from "../src/tools/admin.js";
 import { users, vendors, vendorEnrichmentCandidates, pendingSearchPings } from "../src/schema.js";
+import { REVIEW_APPLICABLE_FIELDS } from "../src/tools/admin-enrichment-review.js";
+import { CARD_COLUMNS } from "../src/photo/business-card.js";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const };
 const ENV = { MAIN_APP_URL: "https://meetmeatthefair.com", INTERNAL_API_KEY: "test-key" };
@@ -258,6 +260,62 @@ describe("review_enrichment_candidate — approve", () => {
     const { isError, payload } = await review({ candidate_id: id, action: "approve" });
     expect(isError).toBe(true);
     expect(payload.error).toBe("field_not_applicable");
+  });
+});
+
+// OPE-1709 rework — the business-card lane stages contact_name (always), and
+// website / zip (low confidence, auto-write off, or a conflict). None was
+// approvable: John's first live card (2026-11-26) hit field_not_applicable on
+// contact_name and had to be applied by hand with update_vendor.
+describe("review_enrichment_candidate — business-card fields (OPE-1709)", () => {
+  const cases = [
+    { field: "contact_name", value: "Pat Example", col: "contactName" },
+    { field: "website", value: "https://maplegrain.example", col: "website" },
+    { field: "zip", value: "00000", col: "zip" },
+  ] as const;
+
+  for (const c of cases) {
+    it(`applies a card-staged ${c.field} into an empty vendor field`, async () => {
+      seedVendor({ id: "v1", slug: `card-${c.field}` });
+      const id = seedCandidate({
+        vendorId: "v1",
+        proposedField: c.field,
+        proposedValue: c.value,
+        extractionMethod: "business_card",
+        flags: '["business_card"]',
+      });
+      const { isError, payload } = await review({ candidate_id: id, action: "approve" });
+      expect(isError).toBe(false);
+      expect(payload.applied).toBe(true);
+      const [v] = db.select().from(vendors).where(eq(vendors.id, "v1")).all();
+      expect(v[c.col]).toBe(c.value);
+    });
+
+    // The OPE-714 trap: liveValue is read off the SELECTed vendor row, so an
+    // unselected column reads undefined → "empty" → approve silently clobbers.
+    it(`does NOT clobber a populated ${c.field} (the column is actually selected)`, async () => {
+      seedVendor({ id: "v1", slug: `kept-${c.field}`, [c.col]: "already-there" });
+      const id = seedCandidate({ vendorId: "v1", proposedField: c.field, proposedValue: c.value });
+      const { payload } = await review({ candidate_id: id, action: "approve" });
+      expect(payload.applied).toBe(false);
+      expect(payload.reason).toBe("field_already_populated");
+      const [v] = db.select().from(vendors).where(eq(vendors.id, "v1")).all();
+      expect(v[c.col]).toBe("already-there");
+    });
+  }
+
+  it("every column the card lane can stage is approvable in review", () => {
+    // Positive landmark: the card lane has nine columns today. If this list
+    // empties (a refactor drops the export), the check below would be vacuous.
+    expect(CARD_COLUMNS.length).toBeGreaterThanOrEqual(9);
+    const unreviewable = CARD_COLUMNS.filter((c) => !REVIEW_APPLICABLE_FIELDS.has(c));
+    expect(unreviewable).toEqual([]);
+  });
+
+  it("list_enrichment_candidates can filter on contact_name", async () => {
+    seedVendor({ id: "v1", slug: "filter-name" });
+    seedCandidate({ vendorId: "v1", proposedField: "contact_name", proposedValue: "A Person" });
+    expect((await list({ field: "contact_name" })).count).toBe(1);
   });
 });
 

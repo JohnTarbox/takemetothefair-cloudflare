@@ -1,15 +1,10 @@
 import type { Metadata } from "next";
-import { containsCI } from "@/lib/db/contains-ci";
 import Link from "next/link";
+import { notFound } from "next/navigation";
+import { parseListingPage } from "@/lib/listing-page-param";
 import { EventsView } from "@/components/events/events-view";
-import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
-import { eq, and, count, inArray, desc } from "drizzle-orm";
-import { pastEndPredicate } from "@/lib/event-dates";
-import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
-import { isPublicEventStatus } from "@/lib/event-status";
-import { attachEventDayDates } from "@/lib/event-days-attach";
-import { eventJoinProjection } from "@/lib/db/event-join-projection";
+import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { loadPastEventsCached } from "@/lib/events/listing-family-cache";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
@@ -35,114 +30,20 @@ interface SearchParams {
   category?: string;
 }
 
-async function getPastEvents(searchParams: SearchParams) {
-  const page = parseInt(searchParams.page || "1");
+/**
+ * OPE-1668 — a page reads only its own rows by id from ONE cached ordered-id
+ * index per (state, category) (src/lib/events/listing-family-cache.ts); the
+ * total is the index length. The scan + count(*) run once per key per TTL.
+ */
+async function getPastEvents(searchParams: SearchParams, page: number) {
   const limit = 30;
   const offset = (page - 1) * limit;
-
-  const db = getCloudflareDb();
-
-  const conditions = [isPublicEventStatus(), pastEndPredicate(new Date())];
-
-  if (searchParams.state) {
-    conditions.push(eq(venues.state, searchParams.state) as ReturnType<typeof eq>);
-  }
-
-  if (searchParams.category) {
-    // OPE-565 — instr() via containsCI. Found by the new CI guard, not by the
-    // manual sweep or the ticket: /events/past takes the same `?category=`
-    // query string as the main listing and had the same unguarded pattern.
-    conditions.push(containsCI(events.categories, searchParams.category) as ReturnType<typeof eq>);
-  }
-
-  // Narrow projection — D1's 100-col result-row cap; see
-  // eventJoinProjection. The count query stays unchanged: it only
-  // selects COUNT(*) so it doesn't trip the column cap.
-  const [results, totalResult] = await Promise.all([
-    db
-      .select(eventJoinProjection)
-      .from(events)
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(and(...conditions))
-      .orderBy(desc(events.endDate))
-      .limit(limit)
-      .offset(offset),
-    db
-      .select({ count: count() })
-      .from(events)
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      .where(and(...conditions)),
-  ]);
-
-  const total = totalResult[0]?.count ?? 0;
-
-  // Batch-fetch vendors
-  const eventIds = results.map((r) => r.events.id);
-  const allEventVendors: {
-    eventId: string;
-    vendorId: string;
-    businessName: string;
-    displayName: string | null;
-    slug: string;
-    logoUrl: string | null;
-    vendorType: string | null;
-  }[] = [];
-
-  if (eventIds.length > 0) {
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < eventIds.length; i += BATCH_SIZE) {
-      const batch = eventIds.slice(i, i + BATCH_SIZE);
-      const batchResults = await db
-        .select({
-          eventId: eventVendors.eventId,
-          vendorId: vendors.id,
-          businessName: vendors.businessName,
-          // EH2.1 — brand display_name override on past-events vendor tiles.
-          displayName: vendors.displayName,
-          slug: vendors.slug,
-          logoUrl: vendors.logoUrl,
-          vendorType: vendors.vendorType,
-        })
-        .from(eventVendors)
-        .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-        .where(and(inArray(eventVendors.eventId, batch), isPubliclyVisibleVendorLink()));
-      allEventVendors.push(...batchResults);
-    }
-  }
-
-  const vendorsByEvent = new Map<string, typeof allEventVendors>();
-  for (const ev of allEventVendors) {
-    const existing = vendorsByEvent.get(ev.eventId) || [];
-    existing.push(ev);
-    vendorsByEvent.set(ev.eventId, existing);
-  }
-
-  // Cast the lite projection back to schema row types so EventsView's
-  // `Venue | null` / `Promoter | null` props compile. See
-  // eventJoinProjection for the audit + maintenance contract.
-  type FullVenue = typeof venues.$inferSelect;
-  type FullPromoter = typeof promoters.$inferSelect;
-  // EventRow derived from results so projection changes flow through.
-  type EventRow = (typeof results)[number];
-  const eventsBase = results.map((r: EventRow) => ({
-    ...r.events,
-    venue: r.venue as FullVenue | null,
-    promoter: r.promoter as FullPromoter | null,
-    vendors: (vendorsByEvent.get(r.events.id) || []).map((ev) => ({
-      id: ev.vendorId,
-      businessName: ev.businessName,
-      displayName: ev.displayName,
-      slug: ev.slug,
-      logoUrl: ev.logoUrl,
-      vendorType: ev.vendorType,
-    })),
-  }));
-  // Cohort 7 follow-up (2026-06-01) — past-events listings show the
-  // last-occurrence date instead of the series start when event_days
-  // are populated. Same helper as the upcoming-events sweep.
-  const eventsWithVendors = await attachEventDayDates(db, eventsBase);
-
+  const { events: eventsWithVendors, total } = await loadPastEventsCached(
+    getCloudflareDb(),
+    getCloudflareRateLimitKv(),
+    { state: searchParams.state, category: searchParams.category },
+    { limit, offset }
+  );
   return { events: eventsWithVendors, total, page, limit };
 }
 
@@ -154,7 +55,10 @@ export default async function PastEventsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  const { events: eventsList, total, page, limit } = await getPastEvents(params);
+  // OPE-1573 — a malformed ?page= 404s here, before any D1 query (see helper).
+  const requestedPage = parseListingPage(params.page);
+  if (requestedPage === null) notFound();
+  const { events: eventsList, total, page, limit } = await getPastEvents(params, requestedPage);
   const totalPages = Math.ceil(total / limit);
 
   const stateLabel = params.state

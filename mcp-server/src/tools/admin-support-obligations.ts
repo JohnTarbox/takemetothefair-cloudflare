@@ -15,9 +15,11 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, asc, eq, gte, inArray, isNull, like, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, like, or, sql } from "drizzle-orm";
+import { OPERATOR_DRAFT_SOURCE } from "../support-obligations-close.js";
 import {
   supportObligations,
+  SUPPORT_OBLIGATION_KIND,
   SUPPORT_OBLIGATION_STATUS,
   emailSendLedger,
   inboundEmails,
@@ -52,16 +54,28 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
     ].join(" "),
     {
       status: z
-        .enum(["open", "answered", "not_an_obligation", "duplicate", "all"])
+        .enum(["open", "answered", "not_an_obligation", "duplicate", "not_needed", "all"])
         .optional()
         .default("open"),
+      kind: z
+        .enum(["support", "contact", "all"])
+        .optional()
+        .default("all")
+        .describe(
+          "OPE-1510 — 'contact' = a known contact wrote in and a reply is owed by target_at."
+        ),
       limit: z.number().int().min(1).max(200).optional().default(50),
     },
-    async ({ status, limit }) => {
+    async ({ status, kind, limit }) => {
       const rows = await db
         .select()
         .from(supportObligations)
-        .where(status === "all" ? undefined : eq(supportObligations.status, status))
+        .where(
+          and(
+            status === "all" ? undefined : eq(supportObligations.status, status),
+            !kind || kind === "all" ? undefined : eq(supportObligations.kind, kind)
+          )
+        )
         .orderBy(asc(supportObligations.openedAt))
         .limit(limit);
 
@@ -81,7 +95,16 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
       // 100 bind parameters; an unchunked inArray here throws
       // `too many SQL variables` on the first real call, which is exactly how
       // OPE-384 stage 2 failed in prod.
-      const addresses = [...new Set(rows.map((r) => r.fromAddress).filter(Boolean))];
+      // OPE-1683 — an approved operator draft is a reply by a person too.
+      const answerSource = or(
+        like(emailSendLedger.source, "reply:manual%"),
+        eq(emailSendLedger.source, OPERATOR_DRAFT_SOURCE)
+      );
+      const bare = (a: string | null | undefined) =>
+        a ? extractEmailAddress(a).trim().toLowerCase() : "";
+      const addresses = [
+        ...new Set(rows.flatMap((r) => [r.fromAddress, bare(r.fromAddress)]).filter(Boolean)),
+      ];
       const inboundIds = [...new Set(rows.map((r) => r.inboundEmailId).filter(Boolean))];
       const ledgerRows: {
         recipient: string | null;
@@ -100,12 +123,7 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
                 sentAt: emailSendLedger.sentAt,
               })
               .from(emailSendLedger)
-              .where(
-                and(
-                  inArray(emailSendLedger.recipient, chunk),
-                  like(emailSendLedger.source, "reply:manual%")
-                )
-              ))
+              .where(and(inArray(emailSendLedger.recipient, chunk), answerSource)))
           );
         }
         for (const chunk of chunkIds(inboundIds)) {
@@ -118,12 +136,7 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
                 sentAt: emailSendLedger.sentAt,
               })
               .from(emailSendLedger)
-              .where(
-                and(
-                  inArray(emailSendLedger.inboundEmailId, chunk),
-                  like(emailSendLedger.source, "reply:manual%")
-                )
-              ))
+              .where(and(inArray(emailSendLedger.inboundEmailId, chunk), answerSource)))
           );
         }
       } catch {
@@ -180,6 +193,21 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
         // Grouping is a convenience; the list itself must still return.
       }
 
+      // OPE-1510 — contact obligations stay countable apart from support ones.
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const [contactWaiting] = await db
+        .select({
+          open: sql<number>`count(*)`,
+          pastTarget: sql<number>`sum(CASE WHEN ${supportObligations.targetAt} < ${nowSeconds} THEN 1 ELSE 0 END)`,
+        })
+        .from(supportObligations)
+        .where(
+          and(
+            eq(supportObligations.status, SUPPORT_OBLIGATION_STATUS.OPEN),
+            eq(supportObligations.kind, SUPPORT_OBLIGATION_KIND.CONTACT)
+          )
+        );
+
       const [oldest] = await db
         .select({ openedAt: supportObligations.openedAt })
         .from(supportObligations)
@@ -197,6 +225,10 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
               open_rows: Number(waiting?.openRows ?? 0),
               note: "people_waiting = distinct sender address across OPEN obligations; conversations_waiting = distinct thread (a pre-threading row counts as its own). open_rows - people_waiting = envelopes the per-row count double-counts.",
             },
+            contact: {
+              open: Number(contactWaiting?.open ?? 0),
+              past_target: Number(contactWaiting?.pastTarget ?? 0),
+            },
             oldestOpenAt: oldest?.openedAt ?? null,
             oldestOpenAgeHours: oldest?.openedAt
               ? Math.floor((Date.now() - oldest.openedAt.getTime()) / 3_600_000)
@@ -208,7 +240,7 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
             // undercount is exactly the manual replies this field cares about.
             // Do not present it as evidence of silence.
             answerSignalCaveat:
-              "answerSignal='no_ledger_row' means no matching reply:manual* row was found, NOT that nobody answered — replies sent outside the app (e.g. from Gmail) never reach email_send_ledger. Nothing here auto-closes an obligation.",
+              "answerSignal='no_ledger_row' means no matching reply:manual* or operator:outbound (approved draft) row was found, NOT that nobody answered — replies sent outside the app (e.g. from Gmail) never reach email_send_ledger. Nothing here auto-closes an obligation.",
             obligations: rows.map((r) => {
               // Newest qualifying send wins. A send before the obligation opened
               // cannot have answered it.
@@ -216,7 +248,7 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
                 .filter(
                   (l) =>
                     (l.inboundEmailId && l.inboundEmailId === r.inboundEmailId) ||
-                    (l.recipient && r.fromAddress && l.recipient === r.fromAddress)
+                    (l.recipient && r.fromAddress && bare(l.recipient) === bare(r.fromAddress))
                 )
                 .filter((l) => l.sentAt.getTime() >= r.openedAt.getTime())
                 .sort((a, b) => b.sentAt.getTime() - a.sentAt.getTime())[0];
@@ -258,16 +290,26 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
       "",
       "These stay distinct deliberately. Collapsing them into 'closed' makes a drained",
       "queue and an ignored queue look identical, which is the failure already sitting in",
-      "inbound_exceptions. Admin only.",
+      "inbound_exceptions.",
+      "",
+      "A 'contact' obligation (OPE-1510) closes only when a reply is sent, or here as",
+      "not_needed with a note. A reply sent from Gmail never reaches us, so record that",
+      "as not_needed with a note saying so. Admin only.",
     ].join(" "),
     {
       id: z.string().min(8).describe("Obligation id from list_support_obligations."),
-      status: z.enum(["answered", "not_an_obligation", "duplicate"]),
+      status: z.enum(["answered", "not_an_obligation", "duplicate", "not_needed"]),
       note: z.string().max(1000).optional().describe("Recorded on the row."),
     },
     async ({ id, status, note }) => {
       const [row] = await db
-        .select({ id: supportObligations.id, status: supportObligations.status })
+        .select({
+          id: supportObligations.id,
+          status: supportObligations.status,
+          kind: supportObligations.kind,
+          fromAddress: supportObligations.fromAddress,
+          openedAt: supportObligations.openedAt,
+        })
         .from(supportObligations)
         .where(eq(supportObligations.id, id))
         .limit(1);
@@ -290,13 +332,41 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
         };
       }
 
+      const isContact = row.kind === SUPPORT_OBLIGATION_KIND.CONTACT;
+      // OPE-1683 — a sent operator draft to this contact, after the obligation
+      // opened, IS the sent reply. The send path closes it automatically; this
+      // covers a send that predates that hook or whose close failed.
+      const draftAnswered =
+        isContact && status === SUPPORT_OBLIGATION_STATUS.ANSWERED
+          ? await sentDraftAnswering(db, row.fromAddress, row.openedAt)
+          : null;
+      const refusal =
+        isContact && status !== SUPPORT_OBLIGATION_STATUS.NOT_NEEDED && !draftAnswered
+          ? "A contact obligation closes only on a sent reply, or as not_needed with a note."
+          : status === SUPPORT_OBLIGATION_STATUS.NOT_NEEDED && !isContact
+            ? "not_needed applies only to a contact obligation."
+            : status === SUPPORT_OBLIGATION_STATUS.NOT_NEEDED && !note?.trim()
+              ? "not_needed requires a note saying why no reply is owed."
+              : null;
+      if (refusal) {
+        return {
+          content: [jsonContent({ ok: false, error: "refused", id, message: refusal })],
+          isError: true,
+        };
+      }
+
       await db
         .update(supportObligations)
         .set({
           status,
           closedAt: new Date(),
           closedBy: auth.userId ?? "admin",
-          closeNote: note ?? null,
+          closeNote: draftAnswered
+            ? [note?.trim(), `Answered by sent operator draft (ledger ${draftAnswered.messageId}).`]
+                .filter(Boolean)
+                .join(" ")
+            : (note ?? null),
+          ...(draftAnswered ? { closedAt: draftAnswered.sentAt } : {}),
         })
         .where(
           and(
@@ -434,4 +504,31 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
       };
     }
   );
+}
+
+/** OPE-1683 — the newest `sent` operator draft to this address at or after `openedAt`. */
+async function sentDraftAnswering(
+  db: Db,
+  fromAddress: string,
+  openedAt: Date
+): Promise<{ messageId: string; sentAt: Date } | null> {
+  const addr = extractEmailAddress(fromAddress).trim().toLowerCase();
+  if (!addr.includes("@")) return null;
+  const [hit] = await db
+    .select({ messageId: emailSendLedger.messageId, sentAt: emailSendLedger.sentAt })
+    .from(emailSendLedger)
+    .where(
+      and(
+        eq(emailSendLedger.source, OPERATOR_DRAFT_SOURCE),
+        eq(emailSendLedger.status, "sent"),
+        gte(emailSendLedger.sentAt, openedAt),
+        or(
+          eq(sql`lower(${emailSendLedger.recipient})`, addr),
+          like(sql`lower(${emailSendLedger.recipient})`, `%${addr}%`)
+        )
+      )
+    )
+    .orderBy(sql`${emailSendLedger.sentAt} desc`)
+    .limit(1);
+  return hit ?? null;
 }

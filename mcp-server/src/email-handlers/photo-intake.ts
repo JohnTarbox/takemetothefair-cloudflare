@@ -36,11 +36,13 @@
 import { events, eventDays, venues, inboundEmails } from "../schema.js";
 import { getDb, type Db } from "../db.js";
 import { and, eq, inArray, isNull, isNotNull, gte, lte, or, sql } from "drizzle-orm";
-import type { HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
+import type { HandlerCtx, HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
 import type { InboundEmail } from "@takemetothefair/db-schema";
 import { parsePlusSegment } from "../email-intents.js";
 import { logError } from "../logger.js";
-import { chunkedInArray, createSlug } from "@takemetothefair/utils";
+import { recordWorkflowStep } from "../workflow-run-log.js";
+import { isOperatorAddress } from "../test-addresses.js";
+import { chunkedInArray, createSlug, snapAmbiguityRadiusMiles } from "@takemetothefair/utils";
 import { PUBLIC_EVENT_STATUSES } from "@takemetothefair/constants";
 import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
 import { classifyPosterText, type PosterClassification } from "../photo/poster-classify.js";
@@ -48,12 +50,18 @@ import { mainAppFetch } from "../main-app-fetch.js";
 import { submitCheckDuplicate, submitEvent, submitExtract } from "./submit.js";
 import { attachPosterEvidence, type PosterEvidenceResult } from "../photo/poster-evidence.js";
 import { parseExif, type ExifData } from "../photo/exif.js";
-import { isSnapRow, parseCaptureMeta, captureMetaAsExif } from "../photo/snap-intake.js";
+import {
+  isSnapRow,
+  parseCaptureMeta,
+  captureMetaAsExif,
+  type CaptureMeta,
+} from "../photo/snap-intake.js";
 import { recordGpsMissSignal } from "../photo/gps-miss-signal.js";
 import {
   resolveOccurrence,
   expandEventDates,
   VENUE_RADIUS_MILES,
+  venuesWithinRadius,
   type VenueCandidate,
   type EventCandidate,
   type Resolution,
@@ -64,6 +72,8 @@ export interface AttachmentRef {
   name: string;
   mimeType: string;
   size: number;
+  /** OPE-1578 — stored but past the count cap; see email-handler.ts. */
+  ocrSkipped?: boolean;
 }
 
 /** Miles per degree of latitude — for the bounding-box pre-filter only. */
@@ -90,7 +100,11 @@ export function parseRefs(attachmentRefs: string | null): AttachmentRef[] {
 
 export function imageRefs(refs: AttachmentRef[]): AttachmentRef[] {
   return refs.filter(
-    (r) => typeof r?.mimeType === "string" && r.mimeType.toLowerCase().startsWith("image/")
+    (r) =>
+      typeof r?.mimeType === "string" &&
+      r.mimeType.toLowerCase().startsWith("image/") &&
+      // OPE-1578 — past the count cap: kept for retrieval, not processed.
+      !r.ocrSkipped
   );
 }
 
@@ -347,13 +361,14 @@ export async function readExif(env: HandlerEnv, refs: AttachmentRef[]): Promise<
  *  Box first (indexable, cheap), exact haversine second (in the resolver). */
 async function loadNearbyVenues(
   db: Db,
-  gps: { latitude: number; longitude: number }
+  gps: { latitude: number; longitude: number },
+  radiusMiles: number = VENUE_RADIUS_MILES
 ): Promise<VenueCandidate[]> {
-  const dLat = VENUE_RADIUS_MILES / MILES_PER_DEG_LAT;
+  const dLat = radiusMiles / MILES_PER_DEG_LAT;
   // Longitude degrees shrink toward the poles. Clamp cos() so a near-polar
   // photo widens the box instead of dividing by ~0.
   const cos = Math.max(0.01, Math.cos((gps.latitude * Math.PI) / 180));
-  const dLon = VENUE_RADIUS_MILES / (MILES_PER_DEG_LAT * cos);
+  const dLon = radiusMiles / (MILES_PER_DEG_LAT * cos);
 
   const rows = await db
     .select({
@@ -476,6 +491,66 @@ async function loadCandidateEvents(
       localDate
     ),
   }));
+}
+
+/**
+ * OPE-1697 — is a snap's fair a GUESS between several?
+ *
+ * On 2026-11-21 the capture page auto-pinned the nearest of two same-day fairs
+ * ~350 m apart and sent it as the `photos+<slug>@` override. An override skips
+ * every GPS check (resolveOccurrence step 1), so 11 vendor links were
+ * auto-written to the wrong roster with nothing on the server able to object.
+ *
+ * This runs AFTER resolution, on snap rows only, and answers one question:
+ * did a person pick this fair, and if not, is the upload's location near more
+ * than one public event running that day? "Near" is `snapAmbiguityRadiusMiles`
+ * — the same function the page uses to decide whether to auto-select, so the
+ * page and this guard cannot disagree about what ambiguous means.
+ *
+ *  - `picked` → trusted, never ambiguous (the person named the fair).
+ *  - no location / no date → not ambiguous: there is no evidence of a second
+ *    fair, and the resolver's own hold rules already covered the no-GPS case.
+ *  - otherwise (auto_single, server, or NULL from a page build older than the
+ *    field) → ambiguous iff > 1 distinct same-day event is in radius.
+ */
+export async function snapChoiceAmbiguity(
+  db: Db,
+  meta: CaptureMeta | null
+): Promise<{
+  ambiguous: boolean;
+  radiusMiles: number;
+  candidates: Array<{ id: string; name: string; distanceMiles: number }>;
+}> {
+  const radiusMiles = snapAmbiguityRadiusMiles(meta?.location?.accuracy_m ?? null);
+  const none = { ambiguous: false, radiusMiles, candidates: [] };
+  if (!meta || meta.event_choice_basis === "picked") return none;
+  if (!meta.location || !meta.taken_on_local_date) return none;
+  const near = venuesWithinRadius(
+    meta.location,
+    await loadNearbyVenues(db, meta.location, radiusMiles),
+    radiusMiles
+  );
+  if (near.length === 0) return none;
+  const nearById = new Map(near.map((v) => [v.id, v]));
+  const events = await loadCandidateEvents(
+    db,
+    near.map((v) => v.id),
+    meta.taken_on_local_date
+  );
+  const seen = new Set<string>();
+  const candidates: Array<{ id: string; name: string; distanceMiles: number }> = [];
+  for (const e of events) {
+    const v = e.venueId ? nearById.get(e.venueId) : undefined;
+    if (!v || seen.has(e.id) || !e.dates.includes(meta.taken_on_local_date)) continue;
+    seen.add(e.id);
+    candidates.push({
+      id: e.id,
+      name: e.name,
+      distanceMiles: Math.round(v.distanceMiles * 100) / 100,
+    });
+  }
+  candidates.sort((a, b) => a.distanceMiles - b.distanceMiles);
+  return { ambiguous: candidates.length > 1, radiusMiles, candidates };
 }
 
 /** Look up an explicitly-named event (plus-address or subject slug). */
@@ -991,7 +1066,13 @@ export function describePhotoStorage(
   // Without them a batch of only signage would read as an unstored-photo defect.
   const performerStaged = booths?.performerStaged ?? 0;
   const signageRecorded = booths?.signageRecorded ?? 0;
-  const accountedFor = stored + staged + autoWritten + performerStaged + signageRecorded;
+  // OPE-1705 slice 3 — a business card always gets a decision row (applied,
+  // created or proposed) and is never meant for the gallery. Uncounted, a lone
+  // card snap at a fair read as "landed nowhere", was flagged, and the OPE-403
+  // sweep (photos_stored = 0 with an event) kept re-trying it.
+  const cardsHandled = booths?.cardsHandled ?? 0;
+  const accountedFor =
+    stored + staged + autoWritten + performerStaged + signageRecorded + cardsHandled;
 
   // No images on the mail, or the photos went somewhere: nothing to explain.
   if (offered === 0 || accountedFor > 0) {
@@ -1007,9 +1088,11 @@ export function describePhotoStorage(
       : (booths.disabledReason ??
         (visionFailures.length > 0
           ? `vision produced nothing usable — ${visionFailures[0]}`
-          : booths.galleryFailed > 0
-            ? `${booths.galleryFailed} photo upload${booths.galleryFailed === 1 ? "" : "s"} failed`
-            : "the attach path ran, stored nothing, and reported no reason"));
+          : (booths.galleryHeld ?? 0) > 0
+            ? `${booths.galleryHeld} gallery photo${booths.galleryHeld === 1 ? "" : "s"} held: more than one fair nearby and none was picked`
+            : booths.galleryFailed > 0
+              ? `${booths.galleryFailed} photo upload${booths.galleryFailed === 1 ? "" : "s"} failed`
+              : "the attach path ran, stored nothing, and reported no reason"));
 
   return { offered, stored, accountedFor, blockedReason };
 }
@@ -1102,6 +1185,32 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   }
 
   const db = getDb(env.DB);
+
+  // OPE-1705 slice 3 — what the photographer said about a card (Snap only; an
+  // emailed card has no checkbox, so it is the unticked default).
+  const snapMeta = snap ? parseCaptureMeta(row.captureMeta) : null;
+  const cardIntent = {
+    addAsVendor: snapMeta?.add_as_vendor === true,
+    metAtEventId: snapMeta?.met_at_event_id ?? null,
+  };
+  let cardsOnlyTried = false;
+  const tryCardsOnly = async (pass: "no-fair" | "before-hold"): Promise<HandlerResult | null> => {
+    cardsOnlyTried = true;
+    const cards = await runCardsOnly(env, db, row.id, imageRefs(refs), cardIntent, {
+      instanceId: ctx.sessionId,
+      pass,
+    });
+    return cards ? cardOnlyAck(row, photoCount, eventHint, ctx, cards) : null;
+  };
+
+  // OPE-1705 slice 3 — "No fair: vendor card only". The fair resolver is
+  // skipped: a card shot at home must not be pinned to whatever fair the GPS is
+  // near, nor held asking "which fair?". A shot that is NOT a card falls through
+  // to the ordinary resolution below, so the mode can never lose a booth photo.
+  if (snapMeta?.no_fair) {
+    const done = await tryCardsOnly("no-fair");
+    if (done) return done;
+  }
 
   // Explicit override — plus-address first, then a slug or pasted /events/<slug>
   // URL in the subject. The fair NAMED in prose is handled inside
@@ -1214,9 +1323,66 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
     // OPE-204 Milestone A — identify the booths and STAGE them for review.
     // No vendor/event/hero writes here; gated OFF by default and fail-soft, so
     // a vision outage can never cost us the (already-correct) fair match.
+    // OPE-1697 — a snap whose fair nobody PICKED, taken near more than one
+    // same-day fair, is a guess. It still resolves (the photos are kept and
+    // proposed against the guessed fair, where the re-point tool can move
+    // them), but nothing auto-writes: no vendor links, no gallery attach.
+    let holdAutoWriteReason: string | null = null;
+    if (snap) {
+      const meta = parseCaptureMeta(row.captureMeta);
+      try {
+        const amb = await snapChoiceAmbiguity(db, meta);
+        if (amb.ambiguous && meta) {
+          holdAutoWriteReason =
+            `fair not picked on the phone, and ${amb.candidates.length} same-day fairs are within ` +
+            `${Math.round(amb.radiusMiles * 100) / 100} mi: ${amb.candidates.map((c) => `${c.name} (${c.distanceMiles} mi)`).join(", ")}`.slice(
+              0,
+              400
+            );
+          await db
+            .update(inboundEmails)
+            .set({
+              captureMeta: JSON.stringify({
+                ...meta,
+                event_choice_basis: "auto_nearest_ambiguous",
+                event_choice_candidates: amb.candidates.slice(0, 10),
+              } satisfies CaptureMeta),
+              flaggedForReview: 1,
+            })
+            .where(eq(inboundEmails.id, row.id));
+          await logError(env.DB, {
+            level: "warn",
+            source: "mcp:photo-intake:snap-choice-ambiguous",
+            message: `snap auto-write held: ${holdAutoWriteReason}`.slice(0, 500),
+            context: {
+              messageRowId: row.id,
+              eventId: resolution.eventId,
+              basis: meta.event_choice_basis ?? null,
+              candidates: amb.candidates.slice(0, 10),
+            },
+          });
+        }
+      } catch (e) {
+        // Fail CLOSED: an ambiguity check that could not run is not evidence
+        // the fair is unambiguous (the OPE-1694 domain-check precedent).
+        if (meta?.event_choice_basis !== "picked") {
+          holdAutoWriteReason = "the nearby-fair check failed, so nothing was auto-written";
+        }
+        await logError(env.DB, {
+          message: "snap ambiguity check failed",
+          error: e,
+          source: "email-handlers/photo-intake.ts:snapChoiceAmbiguity",
+          context: { messageRowId: row.id },
+        });
+      }
+    }
+
     let booths: BoothPipelineResult | null = null;
     try {
-      booths = await runBoothPipeline(env, db, row.id, resolution.eventId, imageRefs(refs));
+      booths = await runBoothPipeline(env, db, row.id, resolution.eventId, imageRefs(refs), {
+        holdAutoWriteReason,
+        cardIntent,
+      });
     } catch (e) {
       await logError(env.DB, {
         message: "Booth pipeline failed (fair match unaffected)",
@@ -1224,6 +1390,10 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
         source: "email-handlers/photo-intake.ts:runBoothPipeline",
       });
     }
+    await recordClassifyStep(db, ctx.sessionId, row.id, PHOTO_CLASSIFY_STEP, booths, {
+      pass: "fair",
+      eventId: resolution.eventId,
+    });
 
     // OPE-403 — record what actually reached `event_photos`, and make the row
     // drainable when the answer is "nothing".
@@ -1347,6 +1517,15 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   // PENDING is the whole point: OPE-204's "no public writes from an unmeasured
   // classifier" holds, because PENDING is not public. Nothing this classifier
   // decides reaches a visitor without a human approving it.
+  // OPE-1705 slice 3 — the "which fair?" hold does not apply to business
+  // cards. Before holding (and before the poster branch, which would read a
+  // card's lettering as an announcement), ask whether every photo is a card; if
+  // so the cards are matched/created/kept with no event, like "No fair" mode.
+  if (!cardsOnlyTried) {
+    const done = await tryCardsOnly("before-hold");
+    if (done) return done;
+  }
+
   // Already classified above on the hold path — do not OCR the image twice.
   if (poster && poster.classification.verdict === "POSTER") {
     const staged = await stagePosterAsPendingEvent(env, poster.text, row, imageRefs(refs)[0]);
@@ -1385,6 +1564,9 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
 
   // Held: name the reason and tell John exactly how to fix it. Never guess.
   return {
+    // OPE-1584 — the operator knows he sent these. The row stays classified and
+    // reachable; the line in the operator-queue digest replaces the email.
+    ...(isOperatorAddress(row.fromAddress) ? { suppressReply: true } : {}),
     replyKind: "photo-intake-unresolved",
     replyParams: {
       subject: row.subject ?? "",
@@ -1400,3 +1582,110 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
     status: "replied",
   };
 };
+
+/**
+ * OPE-1705 slice 3 — run the photo lane with NO event. Returns the result only
+ * when every photo was a business card and each got its decision row; null
+ * means "not (only) cards, or vision is off" and the caller carries on.
+ * Fail-soft: a fault here must not cost the photo its ordinary path.
+ */
+async function runCardsOnly(
+  env: HandlerEnv,
+  db: ReturnType<typeof getDb>,
+  rowId: string,
+  photos: ReturnType<typeof imageRefs>,
+  cardIntent: { addAsVendor: boolean; metAtEventId: string | null },
+  step: { instanceId: string; pass: "no-fair" | "before-hold" }
+): Promise<BoothPipelineResult | null> {
+  if (photos.length === 0) return null;
+  let r: BoothPipelineResult | null = null;
+  try {
+    r = await runBoothPipeline(env, db, rowId, null, photos, { cardIntent });
+  } catch (e) {
+    await logError(env.DB, {
+      message: "card-only pass failed; taking the ordinary path",
+      error: e,
+      source: "email-handlers/photo-intake.ts:runCardsOnly",
+      context: { messageRowId: rowId },
+    });
+  }
+  // OPE-1709 — recorded whatever the outcome: the first real card snap took the
+  // hold path here and left no trace of why.
+  await recordClassifyStep(db, step.instanceId, rowId, CARDS_ONLY_STEP, r, { pass: step.pass });
+  if (!r || r.disabledReason || (r.notCards ?? 0) > 0 || (r.cardsHandled ?? 0) === 0) return null;
+  await db.update(inboundEmails).set({ photosStored: 0 }).where(eq(inboundEmails.id, rowId));
+  return r;
+}
+
+/** OPE-1709 — workflow step names for the photo lane's vision passes. */
+export const CARDS_ONLY_STEP = "photo/cards-only";
+export const PHOTO_CLASSIFY_STEP = "photo/classify";
+
+/**
+ * OPE-1709 — record one vision pass as a workflow step: what each photo was
+ * read as (kind, the card check's answer, the action taken). `skipped` when
+ * vision is off, `failed` when the pipeline threw. Fail-soft by contract
+ * (recordWorkflowStep never throws).
+ */
+export async function recordClassifyStep(
+  db: Db,
+  instanceId: string,
+  rowId: string,
+  stepName: string,
+  r: BoothPipelineResult | null,
+  extra: Record<string, unknown>
+): Promise<void> {
+  const verdict = !r
+    ? "pipeline-threw"
+    : r.disabledReason
+      ? "vision-off"
+      : stepName === CARDS_ONLY_STEP
+        ? (r.notCards ?? 0) > 0 || (r.cardsHandled ?? 0) === 0
+          ? "not-only-cards"
+          : "all-cards"
+        : "classified";
+  await recordWorkflowStep(db, {
+    instanceId,
+    workflowName: "inbound-email",
+    inboundEmailId: rowId,
+    stepName,
+    status: !r ? "failed" : r.disabledReason ? "skipped" : "ok",
+    detail: {
+      ...extra,
+      verdict,
+      examined: r?.examined ?? 0,
+      notCards: r?.notCards ?? null,
+      cardsHandled: r?.cardsHandled ?? null,
+      disabledReason: r?.disabledReason ?? null,
+      photos: r?.classifications ?? [],
+    },
+  });
+}
+
+/** OPE-1705 slice 3 — the ack for a batch that was only business cards, with no fair. */
+function cardOnlyAck(
+  row: { subject: string | null },
+  photoCount: number,
+  eventHint: string | null | undefined,
+  ctx: Pick<HandlerCtx, "emailAuth" | "senderTrust">,
+  cards: BoothPipelineResult
+): HandlerResult {
+  const applied = cards.cards?.applied ?? [];
+  return {
+    replyKind: "photo-intake-ack",
+    replyParams: {
+      subject: row.subject ?? "",
+      photoCount,
+      eventHint: eventHint ?? null,
+      authVerdict: ctx.emailAuth,
+      trust: ctx.senderTrust,
+      cardsOnly: true,
+      cardsMatched: applied.filter((a) => a.matchBasis !== "created").length,
+      cardsCreated: applied.filter((a) => a.matchBasis === "created").length,
+      cardsProposed: (cards.cards?.proposed ?? []).length,
+      cardVendorNames: applied.map((a) => a.vendorName),
+    },
+    resultingEventId: null,
+    status: "replied",
+  };
+}

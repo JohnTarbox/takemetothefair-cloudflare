@@ -22,6 +22,11 @@ export const SNAP_DECISION_ACTIONS = {
   performerConfirmed: "performer.photo_confirmed",
   galleryAttached: "photo.gallery_attached",
   signageRecorded: "photo.signage_not_presence",
+  // OPE-1705 — business cards.
+  cardApplied: "vendor.card_applied",
+  cardProposed: "vendor.card_proposed",
+  // OPE-1705 slice 2 — a card paired with the booth shot before it.
+  cardPaired: "vendor.card_paired",
 } as const;
 
 export type SnapPhase =
@@ -45,6 +50,16 @@ export interface SnapStatus {
     performer: number;
     gallery: number;
     signage: number;
+    /** OPE-1705 — cards matched to a vendor, and the vendor each matched. */
+    cardApplied?: number;
+    cardVendorName?: string | null;
+    /** OPE-1705 — cards staged for review. */
+    cardProposed?: number;
+    /** OPE-1705 slice 2 — the booth this card was paired with, and how. */
+    cardPairedWith?: string | null;
+    cardPairing?: string | null;
+    /** OPE-1705 slice 3 — the card created its vendor ("Add as vendor"). */
+    cardCreated?: boolean;
   };
 }
 
@@ -72,10 +87,13 @@ export function describeSnap(
   outcome: SnapStatus["outcome"] = EMPTY_OUTCOME
 ): SnapStatus {
   let locationSource: string | null = null;
+  let choiceBasis: string | null = null;
   try {
-    locationSource = row.captureMeta
-      ? ((JSON.parse(row.captureMeta) as { location_source?: string }).location_source ?? null)
+    const cm = row.captureMeta
+      ? (JSON.parse(row.captureMeta) as { location_source?: string; event_choice_basis?: string })
       : null;
+    locationSource = cm?.location_source ?? null;
+    choiceBasis = cm?.event_choice_basis ?? null;
   } catch {
     locationSource = null;
   }
@@ -90,6 +108,15 @@ export function describeSnap(
   if (row.replyKind === "photo-intake-poster") {
     return { ...base, phase: "poster", label: "Read as a poster — staged as a pending event" };
   }
+  // OPE-1697 — the server held auto-write: the fair was a guess between
+  // several. Say so on the phone, where the photographer can still fix it.
+  if (row.replyKind === "photo-intake-ack" && choiceBasis === "auto_nearest_ambiguous") {
+    return {
+      ...base,
+      phase: "held",
+      label: `Not written — more than one fair is close by and none was picked (guessed ${eventName ?? "a fair"}). Pick the fair; this one is in review.`,
+    };
+  }
   if (row.replyKind === "photo-intake-ack" && row.resultingEventId) {
     const parts: string[] = [];
     if (outcome.boothAutowritten) parts.push(`${outcome.boothAutowritten} vendor added`);
@@ -97,13 +124,50 @@ export function describeSnap(
     if (outcome.performer) parts.push(`${outcome.performer} performer`);
     if (outcome.gallery) parts.push(`${outcome.gallery} to gallery`);
     if (outcome.signage) parts.push("sign recorded");
+    const paired = cardPairedLabel(outcome);
+    if (paired) parts.push(paired);
+    else if (outcome.cardApplied)
+      parts.push(
+        outcome.cardApplied === 1 && outcome.cardVendorName
+          ? `Business card → ${outcome.cardCreated ? "new vendor " : ""}${outcome.cardVendorName}`
+          : `${outcome.cardApplied} business card${outcome.cardApplied === 1 ? "" : "s"} matched`
+      );
+    if (outcome.cardProposed && !paired)
+      parts.push(`${outcome.cardProposed} card only — for review`);
     const what = parts.length ? parts.join(", ") : "matched";
     return { ...base, phase: "matched", label: `${eventName ?? "Matched"} — ${what}` };
+  }
+  // OPE-1705 slice 3 — business cards handled with NO fair ("No fair" mode, or
+  // a card the hold path recognised): an ack with no resulting event.
+  if (row.replyKind === "photo-intake-ack" && !row.resultingEventId) {
+    const label = cardNoFairLabel(outcome);
+    if (label) return { ...base, phase: "matched", label };
   }
   // photo-intake-unresolved (and -held, which a snap should never reach).
   const why =
     locationSource === "none" ? "no location and no pinned fair" : "no fair found here today";
   return { ...base, phase: "held", label: `Held — ${why}. Pin the fair and re-snap.` };
+}
+
+/** OPE-1705 slice 3 — the line for a card handled with no fair, else null. */
+export function cardNoFairLabel(outcome: SnapStatus["outcome"]): string | null {
+  const name = outcome.cardVendorName;
+  if (outcome.cardApplied) {
+    if (outcome.cardCreated) return `Business card → new vendor${name ? ` ${name}` : ""} (no fair)`;
+    return `Business card → ${name ?? "an existing vendor"} (no fair)`;
+  }
+  if (outcome.cardProposed) return "Business card — card only, kept for review (no fair)";
+  return null;
+}
+
+/** OPE-1705 slice 2 — the card's line once it is paired with a booth, else null. */
+export function cardPairedLabel(outcome: SnapStatus["outcome"]): string | null {
+  if (!outcome.cardPairing) return null;
+  const booth = outcome.cardPairedWith ?? "the booth before it";
+  if (outcome.cardPairing === "confirmed") return `Business card → paired with ${booth}`;
+  if (outcome.cardPairing === "unreadable_booth")
+    return "Business card → named the unreadable booth before it — for review";
+  return `Business card → after ${booth}, names differ — for review`;
 }
 
 /** Load statuses for the given snap row ids (≤ 50, snap rows only). */
@@ -138,11 +202,15 @@ export async function loadSnapStatuses(db: Db, ids: string[]): Promise<SnapStatu
   const counts = new Map<string, SnapStatus["outcome"]>();
   const actions = Object.values(SNAP_DECISION_ACTIONS);
   for (const a of await db
-    .select({ targetId: adminActions.targetId, action: adminActions.action })
+    .select({
+      targetId: adminActions.targetId,
+      action: adminActions.action,
+      payloadJson: adminActions.payloadJson,
+    })
     .from(adminActions)
     .where(and(inArray(adminActions.targetId, wanted), inArray(adminActions.action, actions)))) {
     if (!a.targetId) continue;
-    const c = { ...(counts.get(a.targetId) ?? EMPTY_OUTCOME) };
+    const c: SnapStatus["outcome"] = { ...(counts.get(a.targetId) ?? EMPTY_OUTCOME) };
     if (a.action === SNAP_DECISION_ACTIONS.boothProposed) c.boothProposals++;
     else if (a.action === SNAP_DECISION_ACTIONS.boothAutowritten) c.boothAutowritten++;
     else if (
@@ -152,6 +220,32 @@ export async function loadSnapStatuses(db: Db, ids: string[]): Promise<SnapStatu
       c.performer++;
     else if (a.action === SNAP_DECISION_ACTIONS.galleryAttached) c.gallery++;
     else if (a.action === SNAP_DECISION_ACTIONS.signageRecorded) c.signage++;
+    else if (a.action === SNAP_DECISION_ACTIONS.cardApplied) {
+      c.cardApplied = (c.cardApplied ?? 0) + 1;
+      try {
+        const p = JSON.parse(a.payloadJson ?? "{}") as {
+          vendor_name?: unknown;
+          match_basis?: unknown;
+        };
+        c.cardVendorName = typeof p.vendor_name === "string" ? p.vendor_name : null;
+        c.cardCreated = p.match_basis === "created";
+      } catch {
+        c.cardVendorName = null;
+      }
+    } else if (a.action === SNAP_DECISION_ACTIONS.cardProposed)
+      c.cardProposed = (c.cardProposed ?? 0) + 1;
+    else if (a.action === SNAP_DECISION_ACTIONS.cardPaired) {
+      try {
+        const p = JSON.parse(a.payloadJson ?? "{}") as {
+          pairing?: unknown;
+          booth_business_name?: unknown;
+        };
+        c.cardPairing = typeof p.pairing === "string" ? p.pairing : null;
+        c.cardPairedWith = typeof p.booth_business_name === "string" ? p.booth_business_name : null;
+      } catch {
+        c.cardPairing = null;
+      }
+    }
     counts.set(a.targetId, c);
   }
 

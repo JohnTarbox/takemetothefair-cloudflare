@@ -678,6 +678,8 @@ export * from "./describe-error";
 export * from "./field-grounding";
 // OPE-1061 — the four-state pet_friendly field: write gate + display rules.
 export * from "./pet-policy";
+export * from "./vendor-eligibility";
+export * from "./event-documents";
 export * from "./gsc-export-row-query";
 // OPE-38/249/1295 — rule agreement + the promotable gate (dashboard AND live auto-apply).
 export * from "./promoter-rule-agreement";
@@ -699,3 +701,9 @@ export * from "./email-subject";
 export * from "./vendor-application-rules";
 // OPE-1393 — an operator edit to a scraper-synced field turns sync off (app + MCP).
 export * from "./scraper-sync-lock";
+// OPE-1512 — "vendors wanted" call: category-list normalizer + is-current rule (app + MCP).
+export * from "./vendor-call";
+// OPE-1550 — name a refused image format (JPEG XL first) so no refusal is anonymous.
+export * from "./unsupported-image-format";
+// OPE-1697 — Snap: when more than one same-day fair is close by, never auto-pick (page + MCP guard).
+export * from "./snap-event-choice";

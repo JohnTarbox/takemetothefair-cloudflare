@@ -77,18 +77,36 @@ function domainOfAddress(addr: string | null | undefined): string | null {
  */
 export function decidePromoterContactDomain(
   facts: InboundAuthFacts,
-  promoterWebsite: string | null | undefined
+  /**
+   * The promoter's website, OR (OPE-1614) its matchable domain list from
+   * `matchableDomainsFor` — active, ownable, unshared. With a list, the
+   * sender qualifies when its aligned domain is ANY of them.
+   */
+  promoterDomains: string | readonly string[] | null | undefined
 ): DomainVerdict {
   const fromDomain = domainOfAddress(facts.fromAddress);
   const headerFrom = dmarcHeaderFrom(facts.authResultsRaw);
   const authDomain = headerFrom ?? fromDomain;
   const authOrg = organizationalDomain(authDomain);
-  const siteOrg = organizationalDomain(promoterWebsite);
+  const siteOrgs = (
+    typeof promoterDomains === "string" ? [promoterDomains] : (promoterDomains ?? [])
+  )
+    .map((d) => organizationalDomain(d))
+    .filter((d): d is string => !!d);
+  const ownableSites = siteOrgs.filter((d) => !isNonOwnableDomain(d));
+  // The org domain compared against, for the reason text: the matching one
+  // when there is a match, else the first.
+  const siteOrg =
+    (authOrg && ownableSites.includes(authOrg) ? authOrg : null) ?? siteOrgs[0] ?? null;
 
   let matchesPromoter: boolean | null;
-  if (!authOrg || !siteOrg) matchesPromoter = null;
-  else if (isNonOwnableDomain(authOrg) || isNonOwnableDomain(siteOrg)) matchesPromoter = false;
-  else matchesPromoter = authOrg === siteOrg;
+  // A non-ownable sender (gmail.com) is known NOT to be the promoter's own
+  // domain, whatever the list holds — 0, not unknown.
+  if (!authOrg) matchesPromoter = null;
+  else if (isNonOwnableDomain(authOrg)) matchesPromoter = false;
+  else if (!siteOrg) matchesPromoter = null;
+  else if (ownableSites.length === 0) matchesPromoter = false;
+  else matchesPromoter = ownableSites.includes(authOrg);
 
   const dmarc = (facts.dmarcResult ?? "").toLowerCase();
   const fail = (reason: string): DomainVerdict => ({
@@ -102,8 +120,9 @@ export function decidePromoterContactDomain(
   if (!siteOrg) return fail("promoter has no website to compare against");
   if (!authOrg) return fail("no parseable sender domain");
   if (isNonOwnableDomain(authOrg)) return fail(`${authOrg} is a shared or free-mail domain`);
-  if (isNonOwnableDomain(siteOrg)) return fail(`website ${siteOrg} is a shared host`);
-  if (authOrg !== siteOrg) return fail(`sender ${authOrg} ≠ website ${siteOrg}`);
+  if (ownableSites.length === 0) return fail(`website ${siteOrg} is a shared host`);
+  if (!ownableSites.includes(authOrg))
+    return fail(`sender ${authOrg} ≠ website ${ownableSites.join(" / ")}`);
   if (headerFrom && fromDomain && organizationalDomain(fromDomain) !== authOrg)
     return fail(`DMARC header.from ${headerFrom} ≠ From ${fromDomain}`);
   if (facts.originalSenderAuth !== "not_forwarded")

@@ -9,12 +9,23 @@ import { createSlug } from "@/lib/utils";
 import { getVendorsWithCounts } from "@/lib/queries";
 import { vendorCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { vendorList } from "@/lib/admin-list/lists";
+import { isPagedRequest, parseListParams } from "@/lib/admin-list/params";
+import { respondWithList } from "@/lib/admin-list/respond";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   try {
+    // OPE-1595 — the list page asks for one page; bare calls still get every row.
+    const searchParams = request.nextUrl.searchParams;
+    if (isPagedRequest(searchParams)) {
+      return await respondWithList(
+        vendorList(db, searchParams, parseListParams(searchParams)),
+        searchParams
+      );
+    }
     const vendorsWithCounts = await getVendorsWithCounts(db);
     return NextResponse.json(vendorsWithCounts);
   } catch (error) {

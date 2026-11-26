@@ -2,9 +2,60 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   dateLooksImplausible,
   evaluateGates,
+  nameDateSuffix,
   nameMatchesAdminFlag,
   sourceCredibilityTier,
+  stripNameDateSuffix,
 } from "./event-date-gates";
+
+describe("OPE-1543 — name_date_range_suffix: a display line written into the name", () => {
+  // Shapes from the 22 prod rows OPE-1542 renamed.
+  const DEFECTS = [
+    "Foo Fair 2026 — Aug 27–30 in Foo, MA",
+    "Cummington Fair 2026 — Aug 27–30 in Cummington, MA",
+    "Marlborough Gun Show 2026 — Sep 12–13 in Marlborough, MA",
+    "UMF Chester Greenwood Craft Fair 2026 — Dec 5 in Farmington, ME",
+    "Haddam Neck Fair 2026 — Aug 28–31 in East Haddam, CT",
+    "Foo Fair 2026 &#8212; Aug 27&#8211;30 in Foo, MA",
+  ];
+  it.each(DEFECTS)("flags %s and routes it to review", (name) => {
+    expect(nameMatchesAdminFlag(name).reasons).toContain("name_date_range_suffix");
+    const gate = evaluateGates({ name, startDate: null, endDate: null });
+    expect(gate.route).toBe("PENDING_REVIEW");
+    expect(gate.reasons).toContain("name_date_range_suffix");
+  });
+
+  // Live em-dash names in prod on 2026-10-30 that carry ONE half of the shape —
+  // a month-day, or a town/state — and are legitimate qualifiers (OPE-1032).
+  const LEGIT = [
+    "Thompson's Point Maker's Market — December 19-20 2026",
+    "Brimfield Antique Flea Market — September 2026 (Sep 8-13)",
+    "America 250 Brass Band Concert — June 29",
+    "WaterFire Providence — Full Lighting (October 24, 2026)",
+    "Sip, Sail, Celebrate — Truro Vineyard Tasting on Schooner Hindu (July 9) 2026",
+    "Quahog Week — May 17th Market 2026",
+    "VSRPA Gun Show — Derby, VT",
+    "Rock N Roll Nashville Christmas — West Kingston RI",
+    "Geeky Bridal Show — Waterbury CT (February 2027)",
+    "Bristol 4th of July Parade 2026 — 250th Anniversary",
+    "Maker Battle 2026 — Round 1",
+    "Rutland Downtown Summer Farmers Market — 2026-05-09",
+    "Cummington Fair 2026",
+  ];
+  it.each(LEGIT)("does not flag %s", (name) => {
+    expect(nameDateSuffix(name)).toBeNull();
+    expect(nameMatchesAdminFlag(name).reasons).not.toContain("name_date_range_suffix");
+  });
+  it("LANDMARK: the negative set is non-empty and the positive set fires on every row", () => {
+    expect(LEGIT.length).toBeGreaterThanOrEqual(13);
+    expect(DEFECTS.filter((n) => nameDateSuffix(n) !== null)).toHaveLength(DEFECTS.length);
+  });
+
+  it("stripNameDateSuffix returns the plain edition name, and leaves others untouched", () => {
+    expect(stripNameDateSuffix("Foo Fair 2026 — Aug 27–30 in Foo, MA")).toBe("Foo Fair 2026");
+    expect(stripNameDateSuffix("VSRPA Gun Show — Derby, VT")).toBe("VSRPA Gun Show — Derby, VT");
+  });
+});
 
 describe("nameMatchesAdminFlag — analyst spec 2026-05-22", () => {
   it("flags 'CALL FOR' wording", () => {

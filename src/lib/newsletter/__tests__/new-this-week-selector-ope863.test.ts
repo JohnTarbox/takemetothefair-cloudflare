@@ -31,6 +31,7 @@ const SCHEMA_SQL = `
     start_date INTEGER, end_date INTEGER, dates_confirmed INTEGER,
     categories TEXT, commercial_vendors_allowed INTEGER,
     estimated_attendance INTEGER, event_scale TEXT, indoor_outdoor TEXT,
+    vendor_eligibility TEXT NOT NULL DEFAULT 'OPEN', vendor_eligibility_org TEXT,
     application_url TEXT, source_url TEXT,
     promoter_id TEXT, possible_duplicate_of TEXT, merged_into TEXT,
     created_at INTEGER, updated_at INTEGER
