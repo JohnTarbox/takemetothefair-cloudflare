@@ -8,6 +8,7 @@
  *    replaces a stored ticket link.
  *  - Both paths still skip a row whose sync was turned off by an operator edit.
  */
+import { shimBatch } from "../../../../../../mcp-server/__tests__/setup-db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -31,9 +32,13 @@ function ddlFor(table: Parameters<typeof getTableConfig>[0]): string {
 
 vi.mock("@/lib/api/with-auth", () => ({
   withAuth:
-    (_opts: unknown, handler: (ctx: { request: Request; db: unknown }) => Promise<Response>) =>
+    (
+      _opts: unknown,
+      handler: (ctx: { request: Request; db: unknown; session: unknown }) => Promise<Response>
+    ) =>
     async (request: Request) =>
-      handler({ request, db }),
+      // OPE-1653 — the route attributes its field-history rows to the session user.
+      handler({ request, db, session: { user: { id: "u-admin", role: "ADMIN" } } }),
 }));
 vi.mock("@/lib/logger", () => ({ logError: vi.fn() }));
 vi.mock("@/lib/cloudflare", () => ({ getCloudflareEnv: () => ({}), getCloudflareDb: () => db }));
@@ -76,6 +81,8 @@ beforeEach(() => {
     if (is(t, SQLiteTable)) raw.exec(ddlFor(t as never));
   }
   db = drizzle(raw, { schema });
+  // OPE-1653 — the writers under test now batch their field-history rows.
+  shimBatch(db);
   db.insert(schema.promoters)
     .values({ id: "p1", companyName: "P", slug: "p" } as never)
     .run();

@@ -2009,7 +2009,7 @@ const FEED_REVIEW_SQL = (() => {
 
 // OPE-1651 — entity_field_history, loaded from the migration itself (DDL only:
 // the heartbeat_probes seed row is cut off, as for 0406).
-const FIELD_HISTORY_SQL = (() => {
+export const FIELD_HISTORY_SQL = (() => {
   const sql = readFileSync(
     join(__dirname, "../../drizzle/0420_ope1651_entity_field_history.sql"),
     "utf8"
@@ -2050,13 +2050,22 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   raw["exec"](FIELD_HISTORY_SQL);
   raw["exec"](FEED_HEALTH_SQL);
   const db = drizzle(raw, { schema });
-  // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.
-  // Shim it so code paths that batch — e.g. SYN1's outbox-row + version-bump
-  // written alongside the entity UPDATE — run under test. better-sqlite3 is
-  // synchronous, so sequential execution is effectively atomic per test.
-  (db as unknown as { batch: (stmts: unknown[]) => Promise<unknown[]> }).batch = async (
-    statements
-  ) => {
+  shimBatch(db);
+  return { db, raw };
+}
+
+/**
+ * D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.
+ * Shim it so code paths that batch — e.g. SYN1's outbox-row + version-bump
+ * written alongside the entity UPDATE — run under test. better-sqlite3 is
+ * synchronous, so sequential execution is effectively atomic per test.
+ *
+ * Exported (OPE-1653) for the app-side harnesses that build their own
+ * better-sqlite3 db, so every unattended writer that now batches its field
+ * history runs under them without a sixth hand copy of this shim.
+ */
+export function shimBatch(db: unknown): void {
+  (db as { batch: (stmts: unknown[]) => Promise<unknown[]> }).batch = async (statements) => {
     const results: unknown[] = [];
     for (const stmt of statements) {
       const s = stmt as { run?: () => unknown };
@@ -2064,7 +2073,6 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
     }
     return results;
   };
-  return { db, raw };
 }
 
 /**
