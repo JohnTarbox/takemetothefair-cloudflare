@@ -14,9 +14,12 @@
  *   `VendorLogoManager.tsx` and still be gone from the page if the import was
  *   dropped or the render branch made unreachable.
  * - **This reads the build `deploy.yml` is about to upload.** It uses the
- *   `.next/app-build-manifest.json` written by the OpenNext build step: the
- *   chunk list for `/vendor/profile/page`, which is exactly what a browser loads
- *   for that route. It needs no network, no timing and no browser, so it gives
+ *   page's client reference manifest written by the OpenNext build step
+ *   (`.next/server/app/vendor/profile/page_client-reference-manifest.js`): the
+ *   route's entry chunks plus every client-component chunk it references, which
+ *   is exactly what a browser loads for that route. (OPE-1403: Next 16's
+ *   Turbopack build writes no `app-build-manifest.json`, the webpack-era file
+ *   this guard first read.) It needs no network, no timing and no browser, so it gives
  *   the same answer for the same build every time. It cannot become the next
  *   flake.
  *
@@ -95,26 +98,50 @@ export function checkBundle(chunkTexts: string[]): Result {
   };
 }
 
+/** Where Next writes the client reference manifest for an app route page. */
+export function manifestPathFor(nextDir: string): string {
+  return join(nextDir, "server", "app", `${PAGE_KEY}_client-reference-manifest.js`);
+}
+
+interface ClientReferenceManifest {
+  clientModules?: Record<string, { chunks?: string[] }>;
+  entryJSFiles?: Record<string, string[]>;
+}
+
 /** Load the chunk texts `/vendor/profile` ships, from a Next build directory. */
 export function loadPageChunks(nextDir: string): string[] {
-  const manifestPath = join(nextDir, "app-build-manifest.json");
+  const manifestPath = manifestPathFor(nextDir);
   if (!existsSync(manifestPath)) {
     throw new Error(
       `${manifestPath} not found — run this after the build. A guard with no build ` +
         `to read has measured nothing, so this is a failure, not a skip.`
     );
   }
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-    pages?: Record<string, string[]>;
+  // The file is a script that assigns into globalThis.__RSC_MANIFEST. Run it in
+  // a throwaway scope rather than require() it, so nothing leaks into ours.
+  const sandbox: { __RSC_MANIFEST: Record<string, ClientReferenceManifest> } = {
+    __RSC_MANIFEST: {},
   };
-  const files = manifest.pages?.[PAGE_KEY];
-  if (!files || files.length === 0) {
+  new Function("globalThis", readFileSync(manifestPath, "utf8"))(sandbox);
+  const manifest = sandbox.__RSC_MANIFEST[PAGE_KEY];
+  if (!manifest) {
     throw new Error(
       `${PAGE_KEY} is not in ${manifestPath}. Either the route moved (update PAGE_KEY) ` +
         `or the vendor profile page is no longer built.`
     );
   }
-  return files.filter((f) => f.endsWith(".js")).map((f) => readFileSync(join(nextDir, f), "utf8"));
+  const files = new Set<string>();
+  for (const list of Object.values(manifest.entryJSFiles ?? {})) for (const f of list) files.add(f);
+  for (const mod of Object.values(manifest.clientModules ?? {}))
+    for (const f of mod.chunks ?? []) files.add(f);
+  // Chunk paths come as "static/chunks/x.js" or "/_next/static/chunks/x.js".
+  const rel = [...files]
+    .map((f) => f.replace(/^\/_next\//, "").replace(/^\//, ""))
+    .filter((f) => f.endsWith(".js"));
+  if (rel.length === 0) {
+    throw new Error(`${manifestPath} lists no JS chunks for ${PAGE_KEY}.`);
+  }
+  return [...new Set(rel)].map((f) => readFileSync(join(nextDir, f), "utf8"));
 }
 
 function main(): void {

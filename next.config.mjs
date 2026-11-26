@@ -5,12 +5,12 @@ const nextConfig = {
   // OPE-909 — no `x-powered-by: Next.js` on responses.
   poweredByHeader: false,
   // OPE-1669 — the E2E job's `next build` (E2E_BUILD=1) skips Next's own
-  // ESLint + tsc pass. The Lint job already gates on both (`npm run lint`,
-  // `typecheck:all`), and Next's in-build type-check worker has no heap flag and
+  // tsc pass (Next 16's build no longer runs ESLint at all, OPE-1403). The
+  // Lint job already gates on both (`npm run lint`, `typecheck:all`), and Next's in-build type-check worker has no heap flag and
   // OOMs at its 4 GB default on this codebase. Every other build — the deploy's
   // OpenNext build and local `npm run build` — still runs both.
   ...(process.env.E2E_BUILD === "1"
-    ? { eslint: { ignoreDuringBuilds: true }, typescript: { ignoreBuildErrors: true } }
+    ? { typescript: { ignoreBuildErrors: true } }
     : {}),
   // MIG1 (2026-06-11) — force metadata to render BLOCKING, in the <head>, for
   // every client.
@@ -52,45 +52,25 @@ const nextConfig = {
   crossOrigin: "anonymous",
   // OPE-1565 — keep Apache ECharts OUT of the Worker server bundle. It is only
   // ever loaded in the browser (a dynamic import inside a useEffect in
-  // src/components/admin/charts/EChart.tsx), but webpack still compiles a
+  // src/components/admin/charts/EChart.tsx), but the bundler still compiles a
   // dynamic-import target into the server build: measured +508 KB raw in
-  // .open-next/server-functions before this alias. Aliasing the packages to
-  // `false` on the server compiles them to an empty module; the import is
-  // never executed there, so nothing observable changes. The alias key is a
-  // prefix match, so it covers echarts/core, echarts/charts, etc.
-  webpack(config, { isServer }) {
-    if (isServer) {
-      config.resolve.alias = { ...(config.resolve.alias ?? {}), echarts: false, zrender: false };
-    }
-    return config;
-  },
-  images: {
-    // IMG1 (2026-06-07) — wired Cloudflare URL-based Image Resizing as
-    // a custom Next/Image loader. Drops `unoptimized: true` (which
-    // dormant'd Next's responsive srcSet) and routes every <Image src>
-    // through src/lib/image-loader.ts → cdn-cgi/image/<params>/<src>.
-    // Same-zone proxy, no new binding required (the upload pipeline at
-    // src/lib/image-optim.ts already uses the same cf.image API in prod).
-    //
-    // Pre-IMG1 `hostname: "**"` was a CSRF/SSRF surface — any HTTPS host
-    // could be rendered via Next/Image. Tightened to the four hosts
-    // that actually appear in render-time `<Image src=...>` paths:
-    //   - cdn.meetmeatthefair.com — events/vendors/venues hero + logo
-    //     assets (the only column-backed image source).
-    //   - meetmeatthefair.com — same-zone og-default fallback used by
-    //     generateMetadata when an entity has no own image.
-    //   - lh3.googleusercontent.com — Google OAuth avatar (today rendered
-    //     via bare <img> at header.tsx:121, but allowlisted defensively
-    //     in case a future surface uses <Image>).
-    //   - graph.facebook.com — Facebook OAuth avatar, same rationale.
-    loader: "custom",
-    loaderFile: "./src/lib/image-loader.ts",
-    remotePatterns: [
-      { protocol: "https", hostname: "cdn.meetmeatthefair.com" },
-      { protocol: "https", hostname: "meetmeatthefair.com" },
-      { protocol: "https", hostname: "lh3.googleusercontent.com" },
-      { protocol: "https", hostname: "graph.facebook.com" },
-    ],
+  // .open-next/server-functions before this alias. On the server the entry
+  // points resolve to an empty module; the import is never executed there, so
+  // nothing observable changes.
+  //
+  // OPE-1403: Next 16 builds with Turbopack, which ignores webpack() and
+  // refuses to build while one is set, so this is a Turbopack resolveAlias.
+  // Every condition gets the empty stub except `browser`, which gets the real
+  // file by path (an alias to the bare specifier would alias itself). These
+  // five subpaths are the only echarts imports (src/components/admin/charts/
+  // echarts-core.ts); zrender is reached only through them.
+  turbopack: {
+    resolveAlias: Object.fromEntries(
+      ["core", "charts", "components", "features", "renderers"].map((sub) => [
+        `echarts/${sub}`,
+        { browser: `./node_modules/echarts/${sub}.js`, default: "./src/lib/empty-module.ts" },
+      ]),
+    ),
   },
   async redirects() {
     return [

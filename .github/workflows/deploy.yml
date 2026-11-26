@@ -216,12 +216,8 @@ jobs:
       # NEXT_PUBLIC_* are inlined at build time (Next.js). Same GitHub-secrets
       # source as the former Pages build (see git history for the 2026-04-27
       # GA4-outage lesson).
-      # OPE-1516 — @opennextjs/aws hard-exits (process.exit 1) on a Next major
-      # more than two years past its release; Next 15's cutoff was
-      # 2026-10-21T00:00Z. Stop-gap until the Next 16 upgrade — remove the flag
-      # with that upgrade. It only skips the date check; the build is unchanged.
       - name: Build with OpenNext adapter
-        run: npx opennextjs-cloudflare build --dangerously-use-unsupported-next-version
+        run: npx opennextjs-cloudflare build
         env:
           NEXT_PUBLIC_GA_ID: ${{ secrets.NEXT_PUBLIC_GA_ID }}
           NEXT_PUBLIC_CF_BEACON_TOKEN: ${{ secrets.NEXT_PUBLIC_CF_BEACON_TOKEN }}
@@ -235,7 +231,7 @@ jobs:
 
       # OPE-1666 — refuse to deploy a build whose /vendor/profile bundle has lost
       # the vendor's own logo upload control (OPE-1112). Reads this build's
-      # .next/app-build-manifest.json — the chunks that page actually ships — so
+      # client reference manifest for that page — the chunks that page actually ships — so
       # it needs no login, no network and no browser, and cannot flake. The page
       # is auth-gated, so a post-deploy curl could only ever see /login.
       - name: Guard vendor logo upload control in the built bundle
