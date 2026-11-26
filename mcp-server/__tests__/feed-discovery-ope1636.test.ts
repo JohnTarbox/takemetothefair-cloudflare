@@ -175,6 +175,14 @@ describe("probeDomain", () => {
     expect(r.outcome).toBe("blocked");
     expect(w.requested).toEqual(["https://blocked.example/"]);
   });
+  it("a 403 AFTER a find stops probing but keeps the find (outcome found, 403 in detail)", async () => {
+    const w = fakeWeb({ ...WEB, "https://tec.example/events/?ical=1": [403, "Forbidden"] });
+    const r = await probeDomain("tec.example", { now: NOW, fetchImpl: w.fetchImpl });
+    expect(r.outcome).toBe("found");
+    expect(r.candidates.map((c) => c.kind)).toEqual(["tec_rest"]);
+    expect(r.detail).toBe("403 on https://tec.example/events/?ical=1; not probed further");
+    expect(w.requested.at(-1)).toBe("https://tec.example/events/?ical=1");
+  });
   it("a site with no feed is 'none', and nothing it links is fetched off its host", async () => {
     const w = fakeWeb(WEB);
     expect((await probeDomain("plain.example", { now: NOW, fetchImpl: w.fetchImpl })).outcome).toBe(

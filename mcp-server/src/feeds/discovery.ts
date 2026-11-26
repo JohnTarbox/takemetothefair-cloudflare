@@ -178,35 +178,39 @@ export async function probeDomain(
     // 2. The Events Calendar's REST API, then its iCal URL.
     const tecUrl = `${origin}/wp-json/tribe/events/v1/events`;
     const tecBody = await get(`${tecUrl}?per_page=50`, "application/json");
+    // Parse in its own try: only "not JSON" is swallowed here. The iCal GET
+    // below must stay OUTSIDE it, or a 403 there (Blocked) would be swallowed
+    // too and probing would carry on past a block.
+    let tec: { events?: unknown; total?: unknown } | null = null;
     if (tecBody != null) {
       try {
-        const json = JSON.parse(tecBody) as { events?: unknown; total?: unknown };
-        if (Array.isArray(json.events)) {
-          const page = parseTecPage(json);
-          candidates.push({
-            kind: "tec_rest",
-            feed_url: tecUrl,
-            found_via: "tec_rest_api",
-            item_count: typeof json.total === "number" ? json.total : page.events.length,
-            sample_titles: titles(page.events),
-            provider_hosted: false,
-          });
-          const icalUrl = `${origin}/events/?ical=1`;
-          const ics = await get(icalUrl, "text/calendar");
-          const parsed = ics ? countIcs(ics) : null;
-          if (parsed) {
-            candidates.push({
-              kind: "ical",
-              feed_url: icalUrl,
-              found_via: "tec_ical",
-              item_count: parsed.events.length,
-              sample_titles: titles(parsed.events),
-              provider_hosted: false,
-            });
-          }
-        }
+        tec = JSON.parse(tecBody) as { events?: unknown; total?: unknown };
       } catch {
-        // not JSON: no plugin API here
+        tec = null; // not JSON: no plugin API here
+      }
+    }
+    if (tec && Array.isArray(tec.events)) {
+      const page = parseTecPage(tec);
+      candidates.push({
+        kind: "tec_rest",
+        feed_url: tecUrl,
+        found_via: "tec_rest_api",
+        item_count: typeof tec.total === "number" ? tec.total : page.events.length,
+        sample_titles: titles(page.events),
+        provider_hosted: false,
+      });
+      const icalUrl = `${origin}/events/?ical=1`;
+      const ics = await get(icalUrl, "text/calendar");
+      const parsed = ics ? countIcs(ics) : null;
+      if (parsed) {
+        candidates.push({
+          kind: "ical",
+          feed_url: icalUrl,
+          found_via: "tec_ical",
+          item_count: parsed.events.length,
+          sample_titles: titles(parsed.events),
+          provider_hosted: false,
+        });
       }
     }
 
@@ -257,9 +261,11 @@ export async function probeDomain(
     }
   } catch (err) {
     if (err instanceof Blocked) {
+      // A 403 stops the probe either way; what was already found still counts
+      // (MOFGA 2026-11-26: the REST API answered, then an iCal link 403'd).
       return {
         domain,
-        outcome: "blocked",
+        outcome: candidates.length ? "found" : "blocked",
         candidates,
         requests,
         detail: `403 on ${err.message}; not probed further`,
