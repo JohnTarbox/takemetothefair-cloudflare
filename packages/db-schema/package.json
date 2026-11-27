@@ -12,7 +12,8 @@
     "./field-history": "./src/field-history.ts",
     "./feed-quality": "./src/feed-quality.ts",
     "./feed-backtest": "./src/feed-backtest.ts",
-    "./feed-fault-families": "./src/feed-fault-families.ts"
+    "./feed-fault-families": "./src/feed-fault-families.ts",
+    "./email-job-body": "./src/email-job-body.ts"
   },
   "scripts": {
     "test": "vitest --run --passWithNoTests"

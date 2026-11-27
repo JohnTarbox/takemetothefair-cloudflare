@@ -14,6 +14,13 @@ export type EmailJobMessage = {
   subject: string;
   html: string;
   text: string;
+  /**
+   * OPE-1719 — set when the body would push the message past Queues' 128 KB
+   * limit: `html`/`text` are then empty here and live in `email_job_bodies`
+   * under this id. Set ONLY by `spillEmailJobBody` (@takemetothefair/db-schema);
+   * the consumer resolves it before sending.
+   */
+  bodyRef?: string;
   /** Override the From line (defaults to support@meetmeatthefair.com). */
   from?: string;
   /** Free-form label for audit logs ("registration", "password-reset", etc.). */

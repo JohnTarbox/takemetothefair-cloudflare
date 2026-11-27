@@ -29,6 +29,12 @@ import {
 } from "./support-obligations-close.js";
 import { captureDiscrepancy, type FieldClass, type DetectedBy } from "./goodwill/capture.js";
 import { formatRecipientsForLedger, maskEmails, normalizeRecipients } from "@takemetothefair/utils";
+import {
+  EmailJobBodyMissingError,
+  deleteEmailJobBody,
+  pruneEmailJobBodies,
+  resolveEmailJobBody,
+} from "@takemetothefair/db-schema/email-job-body";
 
 const HOST = "meetmeatthefair.com";
 const REPORT_API_BASE = "https://api.indexnow.org/IndexNow";
@@ -40,6 +46,28 @@ const REPORT_API_BASE = "https://api.indexnow.org/IndexNow";
  * needs much longer). Volume is a few sends/day, so a year stays small.
  */
 const EMAIL_LEDGER_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+/**
+ * OPE-1719 — spilled bodies a crash or a permanent rejection left behind. Far
+ * longer than a message can live in the queue (3 retries, ≤60s backoff) or sit
+ * in the DLQ awaiting a manual replay, so an in-flight row is never reaped.
+ */
+const EMAIL_JOB_BODY_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** OPE-1719 — drop a spilled body once its ledger row holds the copy. Never fails the send. */
+async function releaseSpilledBody(db: Db, env: ConsumerEnv, msg: EmailJobMessage): Promise<void> {
+  if (!msg.bodyRef) return;
+  try {
+    await deleteEmailJobBody(db, msg.bodyRef);
+  } catch (err) {
+    await logError(env.DB, {
+      level: "warn",
+      source: "mcp:email-queue",
+      message: "spilled email body delete failed; the 14-day prune will reap it",
+      error: err,
+      context: { bodyRef: msg.bodyRef },
+    });
+  }
+}
 
 // OPE-151 — the ledger choke point lives in ./mailer.js now. Re-exported here
 // for the existing importers (email-idempotency.test.ts). wasEmailSent returns
@@ -119,6 +147,12 @@ type EmailJobMessage = {
    */
   listUnsubscribe?: string;
   listUnsubscribePost?: string;
+  /**
+   * OPE-1719 — the body lives in `email_job_bodies` under this id because it
+   * would have pushed the message past Queues' 128 KB limit; `html`/`text` are
+   * empty in the message. Resolved before anything reads the body.
+   */
+  bodyRef?: string;
 };
 
 type IndexNowMessage = {
@@ -298,6 +332,11 @@ export async function handleEmailBatch(
   } catch {
     /* prune is non-critical */
   }
+  try {
+    await pruneEmailJobBodies(db, EMAIL_JOB_BODY_TTL_MS, Date.now());
+  } catch {
+    /* prune is non-critical */
+  }
 
   for (const m of batch.messages) {
     // Idempotency (Cloudflare Queues are at-least-once): a redelivered message
@@ -321,6 +360,40 @@ export async function handleEmailBatch(
       });
     }
 
+    // OPE-1719 — a spilled body is read back BEFORE anything below touches
+    // html/text (the reply-gate ledger row, the send, the sent/failed rows).
+    // After the dedup check on purpose: a redelivery of an already-sent message
+    // is skipped above, and its body row is already gone. A missing row is
+    // retried and then DLQs — never sent as an empty email.
+    if (m.body.bodyRef) {
+      try {
+        const resolved = await resolveEmailJobBody(db, m.body);
+        m.body.html = resolved.html;
+        m.body.text = resolved.text;
+      } catch (e) {
+        const delaySeconds = backoffSeconds(m.attempts, 10, 60);
+        await logError(env.DB, {
+          level: "error",
+          source: "mcp:email-queue",
+          message:
+            e instanceof EmailJobBodyMissingError
+              ? "spilled email body not found; will retry, then DLQ"
+              : "spilled email body read failed; will retry, then DLQ",
+          sessionId,
+          error: e,
+          context: {
+            id: m.id,
+            bodyRef: m.body.bodyRef,
+            messageSource: m.body.source,
+            attempts: m.attempts,
+            delaySeconds,
+          },
+        });
+        m.retry({ delaySeconds });
+        continue;
+      }
+    }
+
     // OPE-163 — authoritative reply gate. A customer-facing reply (source
     // `reply:*`) is only delivered when EMAIL_REPLY_ENABLED === "true". While
     // off, record a visible 'stubbed' ledger row (so the operator sees it was
@@ -342,6 +415,7 @@ export async function handleEmailBatch(
         bodyText: m.body.text,
         attachmentsJson: m.body.attachments?.length ? JSON.stringify(m.body.attachments) : null,
       });
+      await releaseSpilledBody(db, env, m.body);
       m.ack();
       console.warn(`[queue:email] reply held (disabled) id=${m.id} → ${maskEmails(m.body.to)}`);
       continue;
@@ -367,6 +441,7 @@ export async function handleEmailBatch(
         bodyText: m.body.text,
         attachmentsJson: m.body.attachments?.length ? JSON.stringify(m.body.attachments) : null,
       });
+      await releaseSpilledBody(db, env, m.body);
       // OPE-1605 — the draft records which ledger row delivered it. Never fails
       // the send: the mail has already gone.
       if (m.body.operatorDraftId) {
@@ -468,6 +543,7 @@ export async function handleEmailBatch(
             error: result.error,
           },
         });
+        await releaseSpilledBody(db, env, m.body);
         m.ack();
         continue;
       }

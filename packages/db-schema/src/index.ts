@@ -3885,6 +3885,22 @@ export const emailSendLedger = sqliteTable(
   ]
 );
 
+// OPE-1719 (drizzle/0442) — "claim check" for an `email-jobs` message whose
+// body would push it over Cloudflare Queues' 128 KB per-message limit. The
+// producer writes the body here and enqueues `bodyRef`; the consumer reads it
+// back, sends, ledgers (the ledger keeps its own copy) and deletes the row.
+// Helpers + reasoning: ./email-job-body.ts.
+export const emailJobBodies = sqliteTable(
+  "email_job_bodies",
+  {
+    id: text("id").primaryKey(),
+    html: text("html").notNull(),
+    text: text("text").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [index("idx_email_job_bodies_created_at").on(table.createdAt)]
+);
+
 // OPE-177 — raw Cloudflare Email Sending lifecycle events, one row per event,
 // stored BEFORE any attempt to match them to a ledger row.
 //
@@ -8220,3 +8236,7 @@ export * from "./slug-rename";
 // browser-floor guard), and they are server-only writers/readers. Import them
 // from the subpaths "@takemetothefair/db-schema/intent-feedback" and
 // "@takemetothefair/db-schema/email-suppression" (package.json `exports`).
+// OPE-1719 — the email-jobs body spill helpers are imported by SUBPATH only
+// (`@takemetothefair/db-schema/email-job-body`), never re-exported here: this
+// index reaches "use client" modules, and the helper uses crypto.randomUUID(),
+// which is above the browser support floor (scripts/check-browser-api-floor.ts).

@@ -2071,6 +2071,17 @@ const FEED_DISCOVERY_SQL = (() => {
   return sql.slice(0, end);
 })();
 
+// OPE-1719 — the email-jobs body spill table, straight from its migration.
+const EMAIL_JOB_BODIES_SQL = (() => {
+  const sql = readFileSync(
+    join(__dirname, "../../drizzle/0442_ope1719_email_job_bodies.sql"),
+    "utf8"
+  );
+  if (!sql.includes("CREATE TABLE IF NOT EXISTS email_job_bodies"))
+    throw new Error("0442 shape changed — the loader is reading the wrong file");
+  return sql;
+})();
+
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
   const raw = new Database(":memory:");
   raw.pragma("foreign_keys = ON");
@@ -2093,6 +2104,7 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   raw["exec"](FEED_QUALITY_SQL);
   raw["exec"](FEED_REPLAY_SQL);
   raw["exec"](FEED_DISCOVERY_SQL);
+  raw["exec"](EMAIL_JOB_BODIES_SQL);
   const db = drizzle(raw, { schema });
   shimBatch(db);
   return { db, raw };
