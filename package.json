@@ -110,7 +110,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "@vitest/coverage-v8": "^5.0.5",
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "^13.2.0",
     "drizzle-kit": "^0.31.10",
     "eslint": "^10.15.0",
     "eslint-config-next": "^16.4.6",

@@ -32,7 +32,7 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.8.5",
     "@types/better-sqlite3": "^7.6.13",
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "^13.2.0",
     "typescript": "^6.0.3",
     "vitest": "^5.0.5",
     "wrangler": "^4.165.0"
