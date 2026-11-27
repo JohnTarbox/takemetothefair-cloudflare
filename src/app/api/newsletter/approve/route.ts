@@ -32,9 +32,11 @@ import { resolveUnsubscribeSecret } from "@/lib/email/newsletter-unsubscribe-tok
 import { resolveApproveSecret, verifyApproveToken } from "@/lib/email/newsletter-approve-token";
 import {
   enqueueNewsletterDigest,
+  NewsletterEnqueueError,
   parseNewsletterList,
   selectBroadcastRecipients,
 } from "@/lib/email/newsletter-broadcast";
+import { recordNewsletterBroadcast } from "@/lib/audit/record-newsletter-broadcast";
 import { newsletterNameForAudience } from "@/lib/newsletter-masthead";
 
 /** All outcomes redirect to the confirm/result page with a status. Zero sends
@@ -134,19 +136,42 @@ export async function POST(request: NextRequest) {
     // is logged, consistent with the existing broadcast path's best-effort send.
     const recipients = await selectBroadcastRecipients(db, audience);
     const siteUrl = getSiteUrl();
-    const queued = await enqueueNewsletterDigest({
-      recipients,
-      audience,
-      subject: issue.subject,
-      contentHtml: issue.html,
-      viewInBrowserUrl: `${siteUrl}/newsletter/${slug}`,
-      siteUrl,
-      secret,
-      mailingAddress: env.MAILING_ADDRESS,
-      // No approveUrl — a broadcast never carries the approve button.
-      // OPE-795 / OPE-711 §2 — masthead + footer follow the issue's audience.
-      wordmark: newsletterNameForAudience(audience),
-    });
+    // OPE-1722 — the audit row for this broadcast. Token-authenticated, so there
+    // is no user id; `via: approve_token` is the "who". Written on the failure
+    // branch too: a partial broadcast still mailed people.
+    const audit = (queued: number, enqueueFailed: boolean) =>
+      recordNewsletterBroadcast(db, {
+        route: "approve",
+        via: "approve_token",
+        actorUserId: null,
+        slug,
+        audience,
+        subject: issue.subject,
+        total: recipients.length,
+        queued,
+        enqueueFailed,
+        now,
+      });
+    let queued: number;
+    try {
+      queued = await enqueueNewsletterDigest({
+        recipients,
+        audience,
+        subject: issue.subject,
+        contentHtml: issue.html,
+        viewInBrowserUrl: `${siteUrl}/newsletter/${slug}`,
+        siteUrl,
+        secret,
+        mailingAddress: env.MAILING_ADDRESS,
+        // No approveUrl — a broadcast never carries the approve button.
+        // OPE-795 / OPE-711 §2 — masthead + footer follow the issue's audience.
+        wordmark: newsletterNameForAudience(audience),
+      });
+    } catch (err) {
+      await audit(err instanceof NewsletterEnqueueError ? err.queued : 0, true);
+      throw err;
+    }
+    await audit(queued, false);
 
     return redirect("sent", { count: String(queued) });
   } catch (err) {

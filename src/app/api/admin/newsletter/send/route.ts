@@ -44,6 +44,7 @@ import {
   selectBroadcastRecipients,
 } from "@/lib/email/newsletter-broadcast";
 import { newsletterNameForAudience } from "@/lib/newsletter-masthead";
+import { recordNewsletterBroadcast } from "@/lib/audit/record-newsletter-broadcast";
 import { getSiteUrl } from "@/lib/email/send";
 import { createSlug, sanitizeEmailSubject, sanitizeNewsletterHtml } from "@takemetothefair/utils";
 
@@ -60,7 +61,7 @@ type Body = {
   audience?: unknown;
 };
 
-export const POST = withAuthorized(async ({ request, db }) => {
+export const POST = withAuthorized(async ({ request, db, userId }) => {
   let body: Body;
   try {
     body = (await request.json()) as Body;
@@ -230,6 +231,25 @@ export const POST = withAuthorized(async ({ request, db }) => {
     }
   }
 
+  // OPE-1722 — a BROADCAST (never a test send) leaves an admin_actions row
+  // naming who sent it. A POST cannot use the read-only Bearer, so a null
+  // userId here means X-Internal-Key — the MCP send_newsletter_broadcast tool.
+  const auditBroadcast = (queuedCount: number, enqueueFailed: boolean) =>
+    isBroadcast
+      ? recordNewsletterBroadcast(db, {
+          route: "admin_send",
+          via: userId ? "admin_session" : "internal_key",
+          actorUserId: userId,
+          slug,
+          audience,
+          subject,
+          total: recipients.length,
+          queued: queuedCount,
+          enqueueFailed,
+          now,
+        })
+      : Promise.resolve(false);
+
   let queued: number;
   try {
     queued = await enqueueNewsletterDigest({
@@ -259,6 +279,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
     // with no way to tell whether anyone had been mailed.
     const partial = err instanceof NewsletterEnqueueError ? err : null;
     const queuedSoFar = partial?.queued ?? 0;
+    await auditBroadcast(queuedSoFar, true);
     // sent_at was stamped by the upsert above. If nothing at all was enqueued
     // the issue did NOT go out, so the archive must not list it as sent. A
     // partial send keeps it: those recipients will be mailed.
@@ -302,6 +323,8 @@ export const POST = withAuthorized(async ({ request, db }) => {
       { status: 502 }
     );
   }
+
+  await auditBroadcast(queued, false);
 
   return NextResponse.json({
     success: true,
