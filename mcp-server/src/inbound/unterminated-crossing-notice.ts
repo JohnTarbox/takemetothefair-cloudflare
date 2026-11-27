@@ -42,6 +42,7 @@ import {
   findUnterminatedCrossings,
   type UnterminatedCrossing,
 } from "./unterminated-crossings.js";
+import { sendEmailJob } from "../email-jobs.js";
 
 const SOURCE = "mcp:schedule:unterminated-crossing-notice";
 const NOTICE_KEY = "unterminated_crossing_notice";
@@ -144,7 +145,12 @@ export async function runUnterminatedCrossingNotice(
     } else {
       const { subject, text } = buildUnterminatedNotice(decision, crossings.length, ageHours);
       try {
-        await env.EMAIL_JOBS.send({ to, subject, text, source: "unterminated-crossing-notice" });
+        await sendEmailJob(env.EMAIL_JOBS, env.DB, {
+          to,
+          subject,
+          text,
+          source: "unterminated-crossing-notice",
+        });
         notified = true;
       } catch (error) {
         await logError(env.DB, {

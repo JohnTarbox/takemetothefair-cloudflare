@@ -58,6 +58,7 @@ import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
 import { listBalance } from "./newsletter-list-balance.js";
 import { isRealAddressSql } from "./test-addresses.js";
+import { sendEmailJob } from "./email-jobs.js";
 
 const SOURCE = "mcp:schedule:newsletter-list-balance";
 
@@ -247,7 +248,7 @@ export async function checkNewsletterListBalance(
   const alertEmail = env.ALERT_EMAIL_TECHNICAL;
   if (alertEmail && env.EMAIL_JOBS) {
     try {
-      await env.EMAIL_JOBS.send({
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, {
         to: alertEmail,
         subject,
         text: textBody,

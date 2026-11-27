@@ -33,6 +33,7 @@
  * cron delivery or the main-app route is broken, this still fires.
  */
 import { logError } from "./logger.js";
+import { sendEmailJob } from "./email-jobs.js";
 
 /**
  * How stale the newest snapshot may get before we alarm.
@@ -130,7 +131,7 @@ export async function runScheduledCpiScanWatchdog(
       `<a href="https://meetmeatthefair.com/admin/analytics">Open admin analytics</a></p>`;
 
     if (env.ALERT_EMAIL_TECHNICAL && env.EMAIL_JOBS) {
-      await env.EMAIL_JOBS.send({
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, {
         to: env.ALERT_EMAIL_TECHNICAL,
         subject,
         text,

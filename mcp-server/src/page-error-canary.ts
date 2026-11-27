@@ -69,6 +69,7 @@ import type { Db } from "./db.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
 import { getErrorLogsBurstWindow } from "./error-logs-burst.js";
+import { sendEmailJob } from "./email-jobs.js";
 
 const SLACK_BUDGET_MS = 5_000;
 
@@ -490,7 +491,7 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
 
     if (alertEmail && env.EMAIL_JOBS) {
       try {
-        await env.EMAIL_JOBS.send({
+        await sendEmailJob(env.EMAIL_JOBS, env.DB, {
           to: alertEmail,
           subject: alert.subject,
           text: alert.textBody,

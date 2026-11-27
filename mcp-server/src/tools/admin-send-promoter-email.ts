@@ -57,6 +57,7 @@ import { jsonContent, decodeHtmlEntities } from "../helpers.js";
 import { isEmailSuppressed } from "./admin-send-vendor-email.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { sendEmailJob } from "../email-jobs.js";
 
 /** Replies must land back in the inbound queue, so we write from a monitored box. */
 const FROM = "hello@meetmeatthefair.com";
@@ -67,6 +68,8 @@ const SIGN_OFF = "— The Meet Me at the Fair team\nhttps://meetmeatthefair.com"
 export interface SendPromoterEmailEnv {
   EMAIL_JOBS?: { send: (msg: unknown) => Promise<unknown> };
   PROMOTER_OUTREACH_ENABLED?: string;
+  /** OPE-1721 — lets sendEmailJob spill an oversized body. */
+  DB?: D1Database;
 }
 
 /** Minimal HTML rendering, matching the vendor path's paragraph treatment. */
@@ -387,7 +390,7 @@ export function registerSendPromoterEmailTool(
         };
       }
 
-      await env.EMAIL_JOBS.send({
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, {
         to: promoter.contactEmail,
         subject: composed.subject.slice(0, 200),
         text: composed.body,
@@ -575,7 +578,7 @@ async function sendQueuedAttempt(
   }
 
   const body = a.bodyText ?? "";
-  await env.EMAIL_JOBS.send({
+  await sendEmailJob(env.EMAIL_JOBS, env.DB, {
     to: a.toAddress,
     subject: a.subject,
     text: body,

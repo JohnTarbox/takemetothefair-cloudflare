@@ -45,6 +45,7 @@ import type { Env } from "./index.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
 import { recordDigestSent, shouldSendDigest, type DigestSnapshot } from "./digest-change-gate.js";
+import { sendEmailJob } from "./email-jobs.js";
 
 /** Surface this canary monitors. Events is the original tenant; venues +
  *  promoters joined in B/DQ1 (2026-06-06). */
@@ -400,7 +401,7 @@ export async function runScheduledDedupSweepCanary(
       `<ul>${snapshot.bodyLines.map((l) => `<li>${l}</li>`).join("")}</ul>` +
       `<p><a href="https://meetmeatthefair.com${cfg.adminPath}">Open admin/duplicates</a></p>`;
     try {
-      await env.EMAIL_JOBS.send({
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, {
         to: alertEmail,
         subject,
         text: textBody,

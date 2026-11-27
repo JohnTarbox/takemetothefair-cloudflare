@@ -16,6 +16,7 @@
  */
 
 import { logError } from "../logger.js";
+import { sendEmailJob } from "../email-jobs.js";
 
 const SOURCE = "mcp:problem-reports:dispatch-alert";
 const SLACK_BUDGET_MS = 5_000;
@@ -124,7 +125,7 @@ export async function dispatchHighProblemReportAlert(
         : "") +
       `<p><a href="${adminLink}">Open report</a></p>`;
     try {
-      await env.EMAIL_JOBS.send({
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, {
         to: alertEmail,
         subject,
         text: textBody,

@@ -30,6 +30,7 @@ import { promoters, promoterEnrichmentNoticeState } from "@takemetothefair/db-sc
 import type { Env } from "./index.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
+import { sendEmailJob } from "./email-jobs.js";
 
 const SOURCE = "mcp:schedule:promoter-enrichment-notice";
 
@@ -232,7 +233,7 @@ export async function runPromoterEnrichmentNotice(env: Env): Promise<void> {
   const alertEmail = env.ALERT_EMAIL_TECHNICAL;
   if (alertEmail && env.EMAIL_JOBS) {
     try {
-      await env.EMAIL_JOBS.send({
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, {
         to: alertEmail,
         subject,
         text: textBody,

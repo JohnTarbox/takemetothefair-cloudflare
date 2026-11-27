@@ -240,6 +240,7 @@ import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
 import { issueCorrectionToken } from "../correction-tokens.js";
 import { seedDiscoveryCandidate } from "../goodwill/seed-discovery.js";
+import { sendEmailJob } from "../email-jobs.js";
 
 export type InboundEmailParams = {
   messageRowId: string;
@@ -2305,7 +2306,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             const notice = buildOwedHumanNotice(messageRowId, intent, verdict, {
               ackSuppressed: threadAckSuppressed,
             });
-            await this.env.EMAIL_JOBS.send({
+            await sendEmailJob(this.env.EMAIL_JOBS, this.env.DB, {
               to,
               subject: notice.subject,
               text: notice.text,

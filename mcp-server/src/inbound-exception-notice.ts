@@ -106,6 +106,7 @@ import {
   AWAITING_SUBMITTER_REPLY_KINDS,
   AWAITING_SUBMITTER_EXPIRY_DAYS,
 } from "@takemetothefair/constants";
+import { sendEmailJob } from "./email-jobs.js";
 const DISPOSED_STATUSES = DISPOSED_INBOUND_STATUSES;
 
 /** The TRUE salvage-candidate predicate — the human-triage queue. Exported so
@@ -484,7 +485,7 @@ export async function runInboundExceptionNotice(env: Env): Promise<void> {
   const alertEmail = env.ALERT_EMAIL_TECHNICAL;
   if (alertEmail && env.EMAIL_JOBS) {
     try {
-      await env.EMAIL_JOBS.send({
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, {
         to: alertEmail,
         subject,
         text: textBody,

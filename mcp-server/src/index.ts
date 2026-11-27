@@ -87,7 +87,7 @@ import { runScheduledFeedPoll, runScheduledPingedFeedPass } from "./feeds/schedu
 import { ensureWeeklyDropSample } from "@takemetothefair/db-schema/feed-quality";
 import { runFeedDiscoverySlice } from "./feeds/discovery-run.js";
 import { fillDueRuleChangeFollowups } from "@takemetothefair/db-schema/feed-backtest";
-import { spillEmailJobBody } from "@takemetothefair/db-schema/email-job-body";
+import { sendEmailJob } from "./email-jobs.js";
 import { WEBSUB_CALLBACK_PATH, handleWebSubCallback } from "./feeds/websub.js";
 import { runScheduledPromoterOnboarding } from "./inbound/promoter-onboarding.js";
 import { runScheduledRepliedLedgerCheck } from "./inbound/replied-without-ledger.js";
@@ -1589,16 +1589,14 @@ async function handleInternalApi(request: Request, env: Env, url: URL): Promise<
     try {
       // OPE-1719 — same 128 KB rule as the main app's direct path: an
       // oversized body is spilled to D1 and the message carries `bodyRef`.
-      await env.EMAIL_JOBS.send(
-        await spillEmailJobBody(getDb(env.DB), {
-          to: body.to,
-          subject: body.subject,
-          html: body.html,
-          text: body.text,
-          from,
-          source,
-        })
-      );
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, {
+        to: body.to,
+        subject: body.subject,
+        html: body.html,
+        text: body.text,
+        from,
+        source,
+      });
     } catch (e) {
       await logError(env.DB, {
         source: "mcp:internal-api",
