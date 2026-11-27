@@ -3405,6 +3405,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
     },
   },
+  {
+    // OPE-1722 — every newsletter BROADCAST (approve route, admin send, vendor
+    // digest) writes one `admin_actions` row via recordNewsletterBroadcast. Two
+    // lists send weekly, so silence means either the audit writer died on all
+    // three doors at once or no newsletter went out at all — both worth a page.
+    // 240h is MEASURED: 32 broadcasts 2026-07-31 → 11-27; since both lists
+    // started (08-14) the largest gap between any two was 5.1 days (09-03 →
+    // 09-09), so 10 days is ~2x it. Seeded ENABLED in drizzle/0443.
+    name: "newsletter-broadcast-audit",
+    ownerOpe: "OPE-1722",
+    label: "Newsletter broadcasts write an admin_actions audit row",
+    priority: "P1",
+    expectedWindowHours: 240,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "newsletter.broadcast")
+      ),
+  },
 ];
 
 /** A probe joined to its enablement anchor + newest evidence — the input to the

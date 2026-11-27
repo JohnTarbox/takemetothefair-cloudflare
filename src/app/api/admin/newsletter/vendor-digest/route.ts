@@ -54,6 +54,7 @@ import { resolveUnsubscribeSecret } from "@/lib/email/newsletter-unsubscribe-tok
 import {
   selectBroadcastRecipients,
   enqueueNewsletterDigest,
+  NewsletterEnqueueError,
   newsletterLedgerSource,
   VENDOR_DIGEST_SOURCE,
 } from "@/lib/email/newsletter-broadcast";
@@ -63,11 +64,12 @@ import { getSiteUrl } from "@/lib/email/send";
 import { createSlug } from "@takemetothefair/utils";
 import { BROADCAST_CONFIRM_TOKEN } from "@takemetothefair/constants";
 import { newsletterNameForAudience } from "@/lib/newsletter-masthead";
+import { recordNewsletterBroadcast } from "@/lib/audit/record-newsletter-broadcast";
 
 /** Subject stem; the ISO date is appended so each week gets its own slug. */
 const SUBJECT_STEM = "New This Week — shows just added";
 
-export const POST = withAuthorized(async ({ request, db }) => {
+export const POST = withAuthorized(async ({ request, db, userId }) => {
   const body = (await request.json().catch(() => ({}))) as {
     test_recipient?: unknown;
     /** Compose + report what WOULD happen, writing and sending nothing. */
@@ -246,21 +248,48 @@ export const POST = withAuthorized(async ({ request, db }) => {
     );
   }
 
-  const queued = await enqueueNewsletterDigest({
-    recipients,
-    audience: "vendor",
-    subject,
-    contentHtml,
-    viewInBrowserUrl,
-    siteUrl,
-    secret,
-    mailingAddress: env.MAILING_ADDRESS,
-    // OPE-711 — audience-aware masthead + footer. Without this the issue tells
-    // a vendor subscriber they signed up for "This Weekend at the Fair", which
-    // is the OTHER list.
-    wordmark: newsletterNameForAudience("vendor"),
-    source: VENDOR_DIGEST_SOURCE,
-  });
+  // OPE-1722 — the third door into a list (the other two are /newsletter/approve
+  // and /api/admin/newsletter/send). A broadcast here leaves the same
+  // admin_actions row, from the same helper, on success and on enqueue failure.
+  // A null userId means X-Internal-Key — the MCP send_vendor_digest tool.
+  const auditBroadcast = (queuedCount: number, enqueueFailed: boolean) =>
+    isBroadcast
+      ? recordNewsletterBroadcast(db, {
+          route: "vendor_digest",
+          via: userId ? "admin_session" : "internal_key",
+          actorUserId: userId,
+          slug,
+          audience: "vendor",
+          subject,
+          total: recipients.length,
+          queued: queuedCount,
+          enqueueFailed,
+          now,
+        })
+      : Promise.resolve(false);
+
+  let queued: number;
+  try {
+    queued = await enqueueNewsletterDigest({
+      recipients,
+      audience: "vendor",
+      subject,
+      contentHtml,
+      viewInBrowserUrl,
+      siteUrl,
+      secret,
+      mailingAddress: env.MAILING_ADDRESS,
+      // OPE-711 — audience-aware masthead + footer. Without this the issue tells
+      // a vendor subscriber they signed up for "This Weekend at the Fair", which
+      // is the OTHER list.
+      wordmark: newsletterNameForAudience("vendor"),
+      source: VENDOR_DIGEST_SOURCE,
+    });
+  } catch (err) {
+    await auditBroadcast(err instanceof NewsletterEnqueueError ? err.queued : 0, true);
+    throw err;
+  }
+  await auditBroadcast(queued, false);
 
   return NextResponse.json({
     success: true,
