@@ -15,6 +15,7 @@ import { type SendEmailArgs } from "@/lib/email/send";
 import { pingIndexNow } from "@/lib/indexnow";
 import { logError } from "@/lib/logger";
 import { sanitizeEmailSubject } from "@takemetothefair/utils";
+import { spillEmailJobBody } from "@takemetothefair/db-schema/email-job-body";
 import type {
   EmailJobMessage,
   IndexNowMessage,
@@ -83,7 +84,11 @@ export async function enqueueEmail(rawArgs: SendEmailArgs & { source: string }):
       listUnsubscribe: args.listUnsubscribe,
       listUnsubscribePost: args.listUnsubscribePost,
     };
-    await env.EMAIL_JOBS.send(msg);
+    // OPE-1719 — a body that would push the message past Queues' 128 KB limit
+    // goes to D1 and the message carries `bodyRef` instead. Under the limit
+    // (nearly every send) this returns `msg` untouched and writes nothing. The
+    // Nov 27 weekend newsletter was refused here as a 136,334-byte message.
+    await env.EMAIL_JOBS.send(await spillEmailJobBody(getCloudflareDb(), msg));
     return;
   }
 

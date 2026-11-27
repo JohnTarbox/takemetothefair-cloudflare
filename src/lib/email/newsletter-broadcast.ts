@@ -169,7 +169,21 @@ export async function enqueueNewsletterDigest(args: {
   wordmark?: string;
 }): Promise<number> {
   let queued = 0;
-  for (const email of args.recipients) {
+  try {
+    for (const email of args.recipients) {
+      await enqueueOne(email);
+      queued++;
+    }
+  } catch (err) {
+    // OPE-1719 — say how far the loop got. A throw mid-list means the first
+    // `queued` recipients WILL be mailed and the rest will not; the caller
+    // must report that rather than a bare 500 (the Nov 27 issue's two failed
+    // sends left the admin with no idea whether anyone had been mailed).
+    throw new NewsletterEnqueueError(queued, args.recipients.length, err);
+  }
+  return queued;
+
+  async function enqueueOne(email: string): Promise<void> {
     // OPE-864 — scope the token to the list this send belongs to, so clicking
     // unsubscribe in the vendor digest does not also remove the person from the
     // weekend digest. OPE-1107 — from `audience`, never from the ledger source.
@@ -211,7 +225,24 @@ export async function enqueueNewsletterDigest(args: {
       listUnsubscribe: `<${unsubscribeUrl}>`,
       listUnsubscribePost: "List-Unsubscribe=One-Click",
     });
-    queued++;
   }
-  return queued;
+}
+
+/**
+ * OPE-1719 — `enqueueNewsletterDigest` failed part-way. `queued` recipients
+ * were enqueued (and will be mailed); `total - queued` were not.
+ */
+export class NewsletterEnqueueError extends Error {
+  constructor(
+    public readonly queued: number,
+    public readonly total: number,
+    cause: unknown
+  ) {
+    super(
+      `newsletter enqueue failed after ${queued} of ${total} recipients: ` +
+        (cause instanceof Error ? cause.message : String(cause)),
+      { cause }
+    );
+    this.name = "NewsletterEnqueueError";
+  }
 }

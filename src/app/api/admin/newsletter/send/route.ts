@@ -29,6 +29,8 @@ export const dynamic = "force-dynamic";
  * newsletter to 39 attendees and 0 vendors.
  */
 import { NextResponse } from "next/server";
+import { eq } from "drizzle-orm";
+import { logError } from "@/lib/logger";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { NEWSLETTER_LISTS, newsletterIssues } from "@/lib/db/schema";
@@ -36,6 +38,7 @@ import { resolveUnsubscribeSecret } from "@/lib/email/newsletter-unsubscribe-tok
 import { resolveApproveSecret, signApproveToken } from "@/lib/email/newsletter-approve-token";
 import {
   enqueueNewsletterDigest,
+  NewsletterEnqueueError,
   newsletterLedgerSource,
   parseNewsletterList,
   selectBroadcastRecipients,
@@ -227,27 +230,78 @@ export const POST = withAuthorized(async ({ request, db }) => {
     }
   }
 
-  const queued = await enqueueNewsletterDigest({
-    recipients,
-    audience,
-    subject,
-    contentHtml,
-    contentText,
-    viewInBrowserUrl,
-    siteUrl,
-    secret,
-    mailingAddress,
-    approveUrl,
-    approveDisabled,
-    // OPE-795 / OPE-711 §2 — the masthead + "you subscribed to ..." footer follow
-    // the audience on the manual path too. Without this a vendor issue sent from
-    // here would tell vendors they had signed up for the attendee newsletter,
-    // which is exactly the defect OPE-711 fixed on the generator path.
-    wordmark: newsletterNameForAudience(audience),
-    // OPE-866 — a test_recipient send is marked in the ledger; it used to write
-    // the broadcast's exact source.
-    source: newsletterLedgerSource(audience, isBroadcast ? "broadcast" : "test"),
-  });
+  let queued: number;
+  try {
+    queued = await enqueueNewsletterDigest({
+      recipients,
+      audience,
+      subject,
+      contentHtml,
+      contentText,
+      viewInBrowserUrl,
+      siteUrl,
+      secret,
+      mailingAddress,
+      approveUrl,
+      approveDisabled,
+      // OPE-795 / OPE-711 §2 — the masthead + "you subscribed to ..." footer follow
+      // the audience on the manual path too. Without this a vendor issue sent from
+      // here would tell vendors they had signed up for the attendee newsletter,
+      // which is exactly the defect OPE-711 fixed on the generator path.
+      wordmark: newsletterNameForAudience(audience),
+      // OPE-866 — a test_recipient send is marked in the ledger; it used to write
+      // the broadcast's exact source.
+      source: newsletterLedgerSource(audience, isBroadcast ? "broadcast" : "test"),
+    });
+  } catch (err) {
+    // OPE-1719 — never an unhandled 500. The Nov 27 weekend issue failed here
+    // twice (Queues 10204, message too large) and the caller got a bare 500
+    // with no way to tell whether anyone had been mailed.
+    const partial = err instanceof NewsletterEnqueueError ? err : null;
+    const queuedSoFar = partial?.queued ?? 0;
+    // sent_at was stamped by the upsert above. If nothing at all was enqueued
+    // the issue did NOT go out, so the archive must not list it as sent. A
+    // partial send keeps it: those recipients will be mailed.
+    if (isBroadcast && queuedSoFar === 0) {
+      try {
+        await db
+          .update(newsletterIssues)
+          .set({ sentAt: null })
+          .where(eq(newsletterIssues.slug, slug));
+      } catch {
+        /* the logged error below still names the failure */
+      }
+    }
+    await logError(db, {
+      level: "error",
+      source: "/api/admin/newsletter/send",
+      message: "newsletter enqueue failed",
+      error: err,
+      context: {
+        slug,
+        audience,
+        mode: isBroadcast ? "broadcast" : "test",
+        queued: queuedSoFar,
+        total: recipients.length,
+        htmlLength: contentHtml.length,
+      },
+    });
+    return NextResponse.json(
+      {
+        error: "enqueue_failed",
+        message:
+          queuedSoFar === 0
+            ? "No recipient was queued; nothing was sent."
+            : `${queuedSoFar} of ${recipients.length} recipients were queued and will be mailed; the rest were not.`,
+        mode: isBroadcast ? "broadcast" : "test",
+        issue_slug: slug,
+        queued: queuedSoFar,
+        total: recipients.length,
+        detail: err instanceof Error ? err.message : String(err),
+      },
+      { status: 502 }
+    );
+  }
 
   return NextResponse.json({
     success: true,
