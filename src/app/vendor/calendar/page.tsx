@@ -6,6 +6,7 @@ import { vendors, eventVendors, events, venues, promoters } from "@/lib/db/schem
 import { eq } from "drizzle-orm";
 import { EventsView } from "@/components/events/events-view";
 import { logError } from "@/lib/logger";
+import { publicEventColumns } from "@/lib/db/event-join-projection";
 import { PrintButton } from "@/components/print/PrintButton";
 import { PrintEventSheetFooter } from "@/components/print/PrintEventSheetFooter";
 
@@ -33,16 +34,20 @@ async function getVendorEvents(userId: string) {
       "CONFIRMED",
     ];
 
-    // Narrow venue/promoter projection — D1 caps result rows at 100
-    // columns. The default `venues`/`promoters` (full row) projection
-    // here plus events(62) crosses the limit. Field set mirrors
-    // `src/lib/db/event-join-projection.ts` (audited 2026-06-04); the
-    // shape differs slightly (singular `event:` key + extra
-    // `applicationStatus`) so the projection is inlined here rather
-    // than imported.
+    // D1 caps a result row at 100 columns. This used to select `event: events`
+    // (the whole row) beside the narrowed venue/promoter objects below, which
+    // was fine at events(62) and broke every vendor's calendar once `events`
+    // reached 83: 83 + 10 + 7 + 1 = 101 → "too many columns in result set"
+    // (OPE-1720). It now takes the PUBLIC allow-list, as every other
+    // EventsView caller does — which also stops this page shipping private
+    // event columns (suggester email, gate traces, merge pointers…) into the
+    // client component's RSC payload (OPE-1387). Venue/promoter fields mirror
+    // `src/lib/db/event-join-projection.ts`; inlined because this shape adds
+    // `applicationStatus` and uses a singular `event:` key.
+    // scripts/check-d1-100col-joins.ts counts all three objects.
     const results = await db
       .select({
-        event: events,
+        event: publicEventColumns,
         venue: {
           id: venues.id,
           name: venues.name,

@@ -300,16 +300,61 @@ function splitTopLevelCommas(body: string): string[] {
   return parts;
 }
 
+// OPE-1720 — three shapes this used to under-count, each of which reads as
+// "safe" while D1 counts every column:
+//   • a NESTED inline object (`venue: { id: venues.id, … 10 fields }`) scored
+//     1, because its value does not start with an identifier — so
+//     /vendor/calendar's events(83) + venue(10) + promoter(7) + 1 = 101 was
+//     scored 86 (a WARN) while every vendor's calendar failed;
+//   • an exported projection CONSTANT (`event: publicEventColumns`, ~55 cols)
+//     scored 1 for the same reason — the very fix for that page;
+//   • a SPREAD (`...publicEventColumns`, `...getTableColumns(events)`) was
+//     skipped outright.
+// Nested objects now recurse; constants and spreads resolve through
+// `projectionConstCounts` (parsed from src/lib/db/) or the table map.
+function spreadCount(
+  entry: string,
+  tableColCounts: Map<string, number>,
+  projectionConstCounts: Map<string, number>
+): { n: number; label: string } | null {
+  const t = entry.trim();
+  if (!t.startsWith("...")) return null;
+  const rest = t.slice(3).trim();
+  const gtc = rest.match(/^getTableColumns\(\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\)/);
+  const ident = gtc ? gtc[1] : rest.match(/^([a-zA-Z_$][a-zA-Z0-9_$]*)\s*$/)?.[1];
+  if (!ident) return null;
+  const n = tableColCounts.get(ident) ?? projectionConstCounts.get(ident);
+  return n === undefined ? null : { n, label: `...${ident}(${n})` };
+}
+
 function sumProjection(
   body: string,
-  tableColCounts: Map<string, number>
+  tableColCounts: Map<string, number>,
+  projectionConstCounts: Map<string, number> = new Map()
 ): { sum: number; tables: string[] } {
   let sum = 0;
   const tables: string[] = [];
   for (const entry of splitTopLevelCommas(body)) {
+    const spread = spreadCount(entry, tableColCounts, projectionConstCounts);
+    if (spread) {
+      sum += spread.n;
+      tables.push(spread.label);
+      continue;
+    }
     const colonIdx = entry.indexOf(":");
-    if (colonIdx === -1) continue; // shorthand/spread — not a whole-table value
+    if (colonIdx === -1) continue; // shorthand or an unresolvable spread
     const value = entry.slice(colonIdx + 1).trim();
+    if (value.startsWith("{")) {
+      // Nested inline object — every leaf is a result column.
+      const inner = sumProjection(
+        value.slice(1, value.lastIndexOf("}")),
+        tableColCounts,
+        projectionConstCounts
+      );
+      sum += inner.sum;
+      tables.push(`${entry.slice(0, colonIdx).trim()}{${inner.sum}}`);
+      continue;
+    }
     const m = value.match(/^([a-zA-Z_$][a-zA-Z0-9_$]*)/);
     if (!m) {
       sum += 1;
@@ -319,8 +364,14 @@ function sumProjection(
     const after = value.slice(ident.length).trimStart();
     const isWholeTable =
       tableColCounts.has(ident) && !after.startsWith(".") && !after.startsWith("(");
+    const isProjectionConst =
+      projectionConstCounts.has(ident) && !after.startsWith(".") && !after.startsWith("(");
     if (isWholeTable) {
       const n = tableColCounts.get(ident)!;
+      sum += n;
+      tables.push(`${ident}(${n})`);
+    } else if (isProjectionConst) {
+      const n = projectionConstCounts.get(ident)!;
       sum += n;
       tables.push(`${ident}(${n})`);
     } else {
@@ -330,7 +381,11 @@ function sumProjection(
   return { sum, tables };
 }
 
-function findProjectedViolations(file: string, tableColCounts: Map<string, number>): Violation[] {
+function findProjectedViolations(
+  file: string,
+  tableColCounts: Map<string, number>,
+  projectionConstCounts: Map<string, number> = new Map()
+): Violation[] {
   const src = readFileSync(file, "utf8");
   const out: Violation[] = [];
 
@@ -347,11 +402,13 @@ function findProjectedViolations(file: string, tableColCounts: Map<string, numbe
     if (depth !== 0) continue; // unbalanced — give up
 
     const body = src.slice(braceIdx + 1, i - 1);
-    const { sum, tables } = sumProjection(body, tableColCounts);
+    const { sum, tables } = sumProjection(body, tableColCounts, projectionConstCounts);
 
-    // Only of interest when the projection spreads at least one whole table;
-    // pure scalar projections are always safe.
-    if (tables.length === 0) continue;
+    // OPE-1720 — every projected select is checked. This used to skip any
+    // projection that spread no WHOLE table, on the theory that a scalar
+    // projection is always safe; but a projection built from a constant or
+    // spreads is not "scalar", and the skip would have exempted exactly the
+    // narrowed shape that replaced the bug.
 
     const line = lineNumberAt(src, match.index ?? 0);
     if (sum > HARD_LIMIT) {
@@ -364,6 +421,55 @@ function findProjectedViolations(file: string, tableColCounts: Map<string, numbe
   return out;
 }
 
+// ── 3c) Exported projection constants ────────────────────────────────────
+//
+// OPE-1720 — `export const publicEventColumns = { id: events.id, … }` and its
+// siblings under src/lib/db/. Each top-level entry is one result column (a
+// nested object or spread inside one is resolved the same way as in a select).
+
+const PROJECTION_DIR = resolve(ROOT, "src/lib/db");
+const PROJECTION_CONST_RE = /^export const (\w+)\s*(?::[^=]+)?=\s*\{/gm;
+
+export function parseProjectionConstCounts(
+  sources: string[],
+  tableColCounts: Map<string, number>
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const src of sources) {
+    for (const match of src.matchAll(PROJECTION_CONST_RE)) {
+      const braceIdx = (match.index ?? 0) + match[0].length - 1;
+      let i = braceIdx + 1;
+      let depth = 1;
+      while (i < src.length && depth > 0) {
+        if (src[i] === "{") depth++;
+        else if (src[i] === "}") depth--;
+        i++;
+      }
+      if (depth !== 0) continue;
+      const body = src.slice(braceIdx + 1, i - 1);
+      // Only column maps: at least one `key: table.column` entry. Anything else
+      // (config objects, enums) is not a projection.
+      if (!/:\s*[a-zA-Z_$][a-zA-Z0-9_$]*\.[a-zA-Z_$]/.test(body)) continue;
+      const { sum } = sumProjection(body, tableColCounts, out);
+      out.set(match[1], sum);
+    }
+  }
+  return out;
+}
+
+function loadProjectionConstCounts(tableColCounts: Map<string, number>): Map<string, number> {
+  let files: string[] = [];
+  try {
+    files = walk(PROJECTION_DIR).filter((f) => !f.includes("__tests__") && !f.endsWith(".test.ts"));
+  } catch {
+    return new Map();
+  }
+  return parseProjectionConstCounts(
+    files.map((f) => readFileSync(f, "utf8")),
+    tableColCounts
+  );
+}
+
 // ── 4) Main ──────────────────────────────────────────────────────────────
 
 function main() {
@@ -373,6 +479,18 @@ function main() {
     process.exit(2);
   }
   console.log(`Parsed ${tableColCounts.size} tables from canonical schema.`);
+  const projectionConstCounts = loadProjectionConstCounts(tableColCounts);
+  // Positive landmark: a resolver that silently stops matching would put every
+  // narrowed select back to "1 column" without a word.
+  if (!projectionConstCounts.has("publicEventColumns")) {
+    console.error(
+      "Could not resolve publicEventColumns from src/lib/db — the projection parser is broken"
+    );
+    process.exit(2);
+  }
+  console.log(
+    `Resolved ${projectionConstCounts.size} projection constant(s) (publicEventColumns = ${projectionConstCounts.get("publicEventColumns")}).`
+  );
 
   const allowlist = loadAllowlist();
   if (allowlist.length > 0) {
@@ -400,7 +518,11 @@ function main() {
       }
       const violations = findViolations(file, tableColCounts);
       allViolations.push(...violations);
-      const projectedViolations = findProjectedViolations(file, tableColCounts);
+      const projectedViolations = findProjectedViolations(
+        file,
+        tableColCounts,
+        projectionConstCounts
+      );
       allViolations.push(...projectedViolations);
     }
   }
