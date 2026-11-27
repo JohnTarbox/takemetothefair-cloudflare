@@ -31,6 +31,7 @@ import { jsonContent } from "../helpers.js";
 import { buildUnsubscribeUrl, unsubscribeSigningSecret } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { sendEmailJob } from "../email-jobs.js";
 
 interface EmailJobMessage {
   to: string;
@@ -50,6 +51,8 @@ export interface SendVendorEmailEnv {
   INTERNAL_API_KEY?: string;
   UNSUBSCRIBE_SECRET?: string;
   MAILING_ADDRESS?: string;
+  /** OPE-1721 — lets sendEmailJob spill an oversized body. */
+  DB?: D1Database;
 }
 
 const PUBLIC_HOST = "https://meetmeatthefair.com";
@@ -523,7 +526,7 @@ export function registerSendVendorEmailTool(
         from: FROM,
         source: "email:vendor-outreach",
       };
-      await env.EMAIL_JOBS.send(primary);
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, primary);
 
       // BCC copy to the operator (CF Email send() has no bcc field — second msg).
       const bccNote = `[BCC copy] The email below was sent to ${vendor.businessName} <${recipient}>${overrideEmail ? " [recipient OVERRIDE]" : ""} via send_vendor_email (${mode}).\n\n----------\n\n`;
@@ -535,7 +538,7 @@ export function registerSendVendorEmailTool(
         from: FROM,
         source: "email:vendor-bcc",
       };
-      await env.EMAIL_JOBS.send(bcc);
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, bcc);
 
       const now = new Date();
       const attemptId = crypto.randomUUID();

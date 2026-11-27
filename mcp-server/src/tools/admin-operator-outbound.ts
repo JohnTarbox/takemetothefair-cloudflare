@@ -45,6 +45,7 @@ import {
 } from "./admin-send-vendor-email.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { sendEmailJob } from "../email-jobs.js";
 
 /** The ledger source for this queue. NOT `reply:*` — see the header. */
 export const OPERATOR_OUTBOUND_SOURCE = "operator:outbound";
@@ -57,6 +58,8 @@ export interface OperatorOutboundEnv extends Pick<
 > {
   OPERATOR_OUTBOUND_ENABLED?: string;
   EMAIL_JOBS?: { send: (msg: unknown) => Promise<void> };
+  /** OPE-1721 — lets sendEmailJob spill an oversized body. */
+  DB?: D1Database;
 }
 
 /**
@@ -342,7 +345,7 @@ export function registerOperatorOutboundTools(
               },
             }
           );
-      await env.EMAIL_JOBS.send({
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, {
         to: row.toAddress,
         subject: row.subject,
         text: footered?.text ?? bodyText,
@@ -355,7 +358,7 @@ export function registerOperatorOutboundTools(
       // The binding has no bcc field, so the copy is a second message. A failed
       // copy must not read as a failed send.
       try {
-        await env.EMAIL_JOBS.send({
+        await sendEmailJob(env.EMAIL_JOBS, env.DB, {
           to: BCC_TO,
           subject: `[BCC] ${row.subject}`.slice(0, 200),
           text: `[BCC copy] Sent to ${row.toAddress} via review_operator_draft.\n\n----------\n\n${bodyText}`,

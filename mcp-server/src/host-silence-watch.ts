@@ -30,6 +30,7 @@ import { inArray } from "drizzle-orm";
 import { agentHeartbeats } from "./schema.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
+import { sendEmailJob } from "./email-jobs.js";
 
 /** The lanes whose host the wrapper stamps. Only these may be stamped (narrow token). */
 export const HOST_WATCHED_LANES = ["developer-claude-code"] as const;
@@ -163,7 +164,7 @@ export async function runHostSilenceWatch(
       continue;
     }
     try {
-      await env.EMAIL_JOBS.send({
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, {
         to: env.ALERT_EMAIL_TECHNICAL,
         subject,
         text: `${body.join("\n\n")}\n\nSent by the Cloudflare host-silence watch, which does not run on Battleship.\n`,

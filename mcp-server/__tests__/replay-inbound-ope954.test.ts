@@ -187,7 +187,12 @@ describe("every send site that can email about an inbound row asks heldSendReaso
   // Positive landmark: the send sites this guard covers, counted, so a new one
   // added without the gate fails here instead of passing over it.
   const SITES: Array<[string, RegExp, number]> = [
-    ["src/workflows/inbound-email.ts", /env\.EMAIL\.send\(|env\.EMAIL_JOBS\.send\(/g, 3],
+    // OPE-1721 — the queue send is now spelled `sendEmailJob(this.env.EMAIL_JOBS, …)`.
+    [
+      "src/workflows/inbound-email.ts",
+      /env\.EMAIL\.send\(|env\.EMAIL_JOBS\.send\(|sendEmailJob\(/g,
+      3,
+    ],
     ["src/inbound-email-stale-sweep.ts", /env\.EMAIL\.send\(/g, 1],
   ];
   it.each(SITES)("%s: %d send site(s), each preceded by a heldSendReason gate", (file, re, n) => {

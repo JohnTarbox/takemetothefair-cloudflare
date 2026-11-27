@@ -34,6 +34,7 @@ import { adminActions, tunableThresholds } from "./schema.js";
 import { getDb, type Db } from "./db.js";
 import type { Env } from "./index.js";
 import { logError } from "./logger.js";
+import { sendEmailJob } from "./email-jobs.js";
 
 const SOURCE = "mcp:schedule:ci-trigger-watchdog";
 export const CI_WATCHDOG_REPO = "JohnTarbox/takemetothefair-cloudflare";
@@ -247,7 +248,7 @@ export async function runCiTriggerWatchdog(
       ];
       if (env.ALERT_EMAIL_TECHNICAL && env.EMAIL_JOBS) {
         try {
-          await env.EMAIL_JOBS.send({
+          await sendEmailJob(env.EMAIL_JOBS, undefined /* env omits DB; alert is small */, {
             to: env.ALERT_EMAIL_TECHNICAL,
             subject,
             text: `${recovery.join("\n\n")}\n\nSent by the Cloudflare CI-trigger watchdog (OPE-1239).\n`,
@@ -294,7 +295,7 @@ export async function runCiTriggerWatchdog(
         ];
         if (env.ALERT_EMAIL_TECHNICAL && env.EMAIL_JOBS) {
           try {
-            await env.EMAIL_JOBS.send({
+            await sendEmailJob(env.EMAIL_JOBS, undefined /* env omits DB; alert is small */, {
               to: env.ALERT_EMAIL_TECHNICAL,
               subject,
               text: `${body.join("\n\n")}\n\nSent by the Cloudflare CI-trigger watchdog (OPE-1239).\n`,

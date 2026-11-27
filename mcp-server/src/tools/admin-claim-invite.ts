@@ -49,6 +49,7 @@ import {
 } from "./admin-send-vendor-email.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { sendEmailJob } from "../email-jobs.js";
 
 const PUBLIC_HOST = "https://meetmeatthefair.com";
 const BCC_TO = "jtarboxme@gmail.com";
@@ -767,7 +768,7 @@ export function registerCreateClaimInviteTool(
             }
           : {}),
       };
-      await env.EMAIL_JOBS.send(primary);
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, primary);
 
       // BCC copy to the operator (CF Email send() has no bcc field — second msg).
       const bccNote = `[BCC copy] Claim invite sent to ${entity.name} <${targetEmail}> via create_claim_invite (${entity_type}).\n\n----------\n\n`;
@@ -782,7 +783,7 @@ export function registerCreateClaimInviteTool(
         // BCC is not an answer to the person, so it must not be ledgered as one.
         ...(replyTo ? { inReplyTo: replyTo.inReplyTo, references: replyTo.references } : {}),
       };
-      await env.EMAIL_JOBS.send(bcc);
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, bcc);
 
       // OPE-1627 — answered, the way reply_to_inbound_email marks it: only now
       // that both messages are queued. Its support obligation is closed by the

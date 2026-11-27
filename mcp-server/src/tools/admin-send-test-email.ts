@@ -30,6 +30,7 @@ import {
   type SendVendorEmailEnv,
 } from "./admin-send-vendor-email.js";
 import { SITE_URL } from "@takemetothefair/constants";
+import { sendEmailJob } from "../email-jobs.js";
 
 /**
  * NOTE (OPE-385): this is a LOCAL re-declaration of the queue message shape —
@@ -190,7 +191,7 @@ export function registerSendTestEmailTool(
         source: "email:test",
         ...oneClickHeaders,
       };
-      await env.EMAIL_JOBS.send(msg);
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, msg);
 
       return {
         content: [

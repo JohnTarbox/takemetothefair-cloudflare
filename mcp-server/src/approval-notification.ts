@@ -16,6 +16,7 @@ import type { Db } from "./db.js";
 import { issueToken } from "./feedback-tokens.js";
 import { isEmailSuppressed } from "@takemetothefair/db-schema/email-suppression";
 import { recordWorkflowOutcome } from "@takemetothefair/db-schema/intent-feedback";
+import { sendEmailJob } from "./email-jobs.js";
 
 interface EmailJobMessage {
   to: string;
@@ -76,6 +77,8 @@ function buildHtml(
 
 export interface NotifyApprovalEnv {
   EMAIL_JOBS?: Queue<unknown>;
+  /** OPE-1721 — lets sendEmailJob spill an oversized body. */
+  DB?: D1Database;
 }
 
 export type NotifyApprovalOutcome =
@@ -158,7 +161,7 @@ export async function notifyApprovalIfNeeded(
     source: "email:submission-approved",
   };
 
-  await env.EMAIL_JOBS.send(msg);
+  await sendEmailJob(env.EMAIL_JOBS, env.DB, msg);
 
   await db
     .update(events)

@@ -35,6 +35,7 @@ import { agentHeartbeats } from "./schema.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
 import { CI_WATCHDOG_REPO } from "./ci-trigger-watchdog.js";
+import { sendEmailJob } from "./email-jobs.js";
 
 export const DEPLOY_LAG_WATCH_CODE = "watchdog:deploy-lag";
 export const DEPLOY_LAG_SOURCE = "mcp:schedule:deploy-lag-watch";
@@ -450,7 +451,7 @@ export async function runDeployLagWatch(
       recorded = prev ?? "unknown"; // retry the mail next hour rather than lose it
     } else {
       try {
-        await env.EMAIL_JOBS.send({
+        await sendEmailJob(env.EMAIL_JOBS, env.DB, {
           to: env.ALERT_EMAIL_TECHNICAL,
           subject,
           text: `${body.join("\n\n")}\n\nSent by the Cloudflare deploy-lag watch (hourly, MCP Worker).\n`,
@@ -507,7 +508,7 @@ export async function runDeployLagWatch(
       });
     } else {
       try {
-        await env.EMAIL_JOBS.send({
+        await sendEmailJob(env.EMAIL_JOBS, env.DB, {
           to: env.ALERT_EMAIL_TECHNICAL,
           subject,
           text: `${body.join("\n\n")}\n\nSent by the Cloudflare deploy-lag watch (hourly, MCP Worker).\n`,

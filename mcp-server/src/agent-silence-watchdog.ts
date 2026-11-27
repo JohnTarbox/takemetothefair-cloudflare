@@ -32,6 +32,7 @@ import { desc, eq } from "drizzle-orm";
 import { agentHeartbeats, newsletterIssues } from "./schema.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
+import { sendEmailJob } from "./email-jobs.js";
 /**
  * Only the bindings this watchdog actually touches. Narrower than the Worker's
  * full `Env` on purpose: the drill is invoked from the MCP tool layer, whose
@@ -515,7 +516,7 @@ export async function runAgentSilenceWatchdog(
     }
     if (to && env.EMAIL_JOBS) {
       try {
-        await env.EMAIL_JOBS.send({
+        await sendEmailJob(env.EMAIL_JOBS, env.DB, {
           to,
           subject,
           text: `${lines.join("\n\n")}\n\nSent by the Cloudflare watchdog, which has no Anthropic dependency.\n`,

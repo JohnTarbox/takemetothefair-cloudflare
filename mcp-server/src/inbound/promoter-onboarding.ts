@@ -50,6 +50,7 @@ import { isEmailSuppressed } from "../tools/admin-send-vendor-email.js";
 import { ref } from "./crossing-ledger.js";
 import { contactObligationTarget } from "./business-days.js";
 import { draftSubject, firstNameFrom, settleObligation } from "./contact-lane.js";
+import { sendEmailJob } from "../email-jobs.js";
 
 type InboundEmail = typeof inboundEmails.$inferSelect;
 
@@ -490,7 +491,7 @@ async function noticeToJohn(
   ]
     .filter((l) => l !== null)
     .join("\n");
-  await env.EMAIL_JOBS.send({
+  await sendEmailJob(env.EMAIL_JOBS, env.DB, {
     to: env.ALERT_EMAIL_TECHNICAL,
     subject,
     text,

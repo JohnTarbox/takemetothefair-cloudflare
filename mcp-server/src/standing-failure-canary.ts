@@ -38,6 +38,7 @@ import { errorLogs, standingFailureState } from "@takemetothefair/db-schema";
 import type { Env } from "./index.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
+import { sendEmailJob } from "./email-jobs.js";
 
 const SLACK_BUDGET_MS = 5_000;
 const SOURCE = "mcp:schedule:standing-failure-canary";
@@ -285,7 +286,7 @@ export async function runScheduledStandingFailureCanary(env: Env): Promise<void>
         `<p><strong>🟠 Standing-failure canary</strong> — <code>${source}</code> recurring across <strong>${decision.dayCount}</strong> of last ${WINDOW_DAYS} days (${decision.totalCount} errors total)</p>` +
         `<p><a href="https://meetmeatthefair.com/admin/logs?source=${encodeURIComponent(source)}">Open admin/logs filtered by source</a></p>`;
       try {
-        await env.EMAIL_JOBS.send({
+        await sendEmailJob(env.EMAIL_JOBS, env.DB, {
           to: alertEmail,
           subject,
           text: textBody,

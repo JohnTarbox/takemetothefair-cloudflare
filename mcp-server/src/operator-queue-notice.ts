@@ -72,6 +72,7 @@ import {
 } from "./events/tentative-queue.js";
 import { readLatestAutopromoteRun } from "./events/tentative-autopromote.js";
 import { readLatestElapsedExpiryRun } from "./events/elapsed-pending-expiry.js";
+import { sendEmailJob } from "./email-jobs.js";
 
 const SOURCE = "mcp:schedule:operator-queue-notice";
 /** OPE-1585 — this digest's row in `digest_change_state`. */
@@ -1156,7 +1157,7 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
   const alertEmail = env.ALERT_EMAIL_TECHNICAL;
   if (alertEmail && env.EMAIL_JOBS) {
     try {
-      await env.EMAIL_JOBS.send({
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, {
         to: alertEmail,
         subject,
         text: textBody,

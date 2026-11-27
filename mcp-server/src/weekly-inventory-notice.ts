@@ -42,6 +42,7 @@ import { formatWatchSection, readLatestWatch } from "./vendor-category-watch.js"
 import { countUnterminatedCrossings } from "./inbound/unterminated-crossings.js";
 import { readOperatorQueues, totalWaiting } from "./operator-queue-notice.js";
 import { salvageCandidateWhere } from "./inbound-exception-notice.js";
+import { sendEmailJob } from "./email-jobs.js";
 
 const SOURCE = "mcp:schedule:weekly-inventory";
 const STATE_KEY = "default";
@@ -452,7 +453,7 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
   const alertEmail = env.ALERT_EMAIL_TECHNICAL;
   if (alertEmail && env.EMAIL_JOBS) {
     try {
-      await env.EMAIL_JOBS.send({
+      await sendEmailJob(env.EMAIL_JOBS, env.DB, {
         to: alertEmail,
         subject,
         text: textBody,
